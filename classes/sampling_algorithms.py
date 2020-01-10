@@ -237,7 +237,7 @@ class Algorithm_MH:
         snapshot = Snapshot(sample=sample, G_sample=G_sample, weight=weight)
         self.Surrogate.send_snapshot(snapshot)
         
-    def _empty_function(self,data=None):
+    def _empty_function(self,**kw):
         return
     
 class Algorithm_DAMH:
@@ -358,7 +358,7 @@ class Algorithm_DAMH:
         snapshot = Snapshot(sample=sample, G_sample=G_sample, weight=weight)
         self.Surrogate.send_snapshot(snapshot)
         
-    def _empty_function(self,data=None):
+    def _empty_function(self,**kw):
         return
     
 class Snapshot:
@@ -486,6 +486,7 @@ class Solver_linker:
         
     def send_request(self, sent_data):
         self.tag += 1
+        print('debug - rank', self.rank_full_solver, self.comm.Get_size(), self.comm.Get_rank())
         self.comm.Send(sent_data, dest=self.rank_full_solver, tag=self.tag)
 #        print("Request", self.tag, sent_data)
     
@@ -497,12 +498,14 @@ class Solver_linker:
     def send_snapshot(self, sent_snapshot):
         # needed only if is_updated == True
         self.tag_data += 1
+        print('debug - sent_snapshot', self.rank_data_collector, self.comm.Get_size(), self.comm.Get_rank())
         self.comm.send(sent_snapshot, dest=self.rank_data_collector, tag=self.tag_data)
         
     def terminate(self, ):
         # assume that terminate may be called multiple times
         if not self.terminated:
             sent_data = np.zeros(self.no_parameters)
+            print('debug - terminate',self.rank_full_solver, self.comm.Get_size(), self.comm.Get_rank())
             self.comm.Send(sent_data, dest=self.rank_full_solver, tag=0)
             self.terminated = True
         if not self.terminated_data:

@@ -20,6 +20,7 @@ comm_world = MPI.COMM_WORLD
 size_world = comm_world.Get_size()
 rank_world = comm_world.Get_rank()
 
+print(size_world, rank_world)
 # waits for a request from a sampling algorithm
 # (possibly from one of several sampling algorithms)
 # - either solves the request localy 
