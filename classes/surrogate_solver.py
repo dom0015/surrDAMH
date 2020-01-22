@@ -12,8 +12,8 @@ import numpy as np
 
 from configuration import Configuration
 C = Configuration()
-no_solvers = C.no_full_solvers
-no_samplers = C.no_samplers
+no_solvers = C.no_surrogate_solvers
+no_algorithms = C.no_algorithms
 
 comm_world = MPI.COMM_WORLD
 size_world = comm_world.Get_size()
@@ -48,8 +48,8 @@ print(size_world, rank_world)
 
 Solvers = []
 for i in range(no_solvers):
-    Solvers.append(C.full_solver())
-algorithm_ranks = np.arange(no_samplers)
+    Solvers.append(C.surrogate_solver()) #(sa.Solver_external_2to2())
+algorithm_ranks = np.arange(no_algorithms)
 is_active = np.array([True] * len(algorithm_ranks))
 occupied_by_source = [None] * no_solvers
 occupied_by_tag = [None] * no_solvers

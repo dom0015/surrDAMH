@@ -8,7 +8,7 @@ Created on Tue Oct 29 12:47:09 2019
 
 from mpi4py import MPI
 import numpy as np
-import sampling_algorithms as sa
+import main_codes as sa
 
 comm = MPI.Comm.Get_parent()
 size = comm.Get_size()

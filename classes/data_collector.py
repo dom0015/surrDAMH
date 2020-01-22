@@ -7,14 +7,12 @@ Created on Thu Nov  7 13:26:55 2019
 """
 
 from mpi4py import MPI
-from collections import deque
 import numpy as np
-import sampling_algorithms as sa
+import surrogate_solver_examples as sse
 
 from configuration import Configuration
 C = Configuration()
-no_solvers = C.no_solvers
-no_algorithms = C.no_algorithms
+no_samplers = C.no_samplers
 #no_parameters = C.no_parameters
 #no_observations = C.no_observations
 
@@ -23,13 +21,14 @@ size_world = comm_world.Get_size()
 rank_world = comm_world.Get_rank()
 
 
-Surrogate = sa.Surrogate_col(2,2)
-algorithm_ranks = np.arange(no_algorithms)
+Surrogate = sse.Surrogate_col(2,2)
+algorithm_ranks = np.arange(no_samplers)
 is_active = np.array([True] * len(algorithm_ranks))
 is_free = True
 status = MPI.Status()
 snapshot_list = []
 while any(is_active): # while at least 1 sampling algorithm is active
+    print('is_active:',is_active)
     tmp = comm_world.Iprobe(source=MPI.ANY_SOURCE, tag=MPI.ANY_TAG, status=status)
     if tmp: # if there is an incoming message from any sampling algorithm
         rank_source = status.Get_source()

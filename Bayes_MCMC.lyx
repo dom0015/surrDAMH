@@ -1,0 +1,320 @@
+#LyX 2.3 created this file. For more info see http://www.lyx.org/
+\lyxformat 544
+\begin_document
+\begin_header
+\save_transient_properties true
+\origin unavailable
+\textclass article
+\use_default_options true
+\maintain_unincluded_children false
+\language english
+\language_package default
+\inputencoding auto
+\fontencoding global
+\font_roman "default" "default"
+\font_sans "default" "default"
+\font_typewriter "default" "default"
+\font_math "auto" "auto"
+\font_default_family default
+\use_non_tex_fonts false
+\font_sc false
+\font_osf false
+\font_sf_scale 100 100
+\font_tt_scale 100 100
+\use_microtype false
+\use_dash_ligatures true
+\graphics default
+\default_output_format default
+\output_sync 0
+\bibtex_command default
+\index_command default
+\paperfontsize default
+\use_hyperref false
+\papersize default
+\use_geometry false
+\use_package amsmath 1
+\use_package amssymb 1
+\use_package cancel 1
+\use_package esint 1
+\use_package mathdots 1
+\use_package mathtools 1
+\use_package mhchem 1
+\use_package stackrel 1
+\use_package stmaryrd 1
+\use_package undertilde 1
+\cite_engine basic
+\cite_engine_type default
+\use_bibtopic false
+\use_indices false
+\paperorientation portrait
+\suppress_date false
+\justification true
+\use_refstyle 1
+\use_minted 0
+\index Index
+\shortcut idx
+\color #008000
+\end_index
+\secnumdepth 3
+\tocdepth 3
+\paragraph_separation indent
+\paragraph_indentation default
+\is_math_indent 0
+\math_numbering_side default
+\quotes_style english
+\dynamic_quotes 0
+\papercolumns 1
+\papersides 1
+\paperpagestyle default
+\tracking_changes false
+\output_changes false
+\html_math_output 0
+\html_css_as_file 0
+\html_be_strict false
+\end_header
+
+\begin_body
+
+\begin_layout Title
+Bayes SurrMCMC requirements
+\end_layout
+
+\begin_layout Itemize
+main use (other cases may not be implemented now but it should be possible
+ to extend the library easily): 
+\end_layout
+
+\begin_deeper
+\begin_layout Itemize
+solver is an external MPI library with its own world communicator, to SurrMCMC
+ it is linked via a wrapper-linker interface:
+\end_layout
+
+\begin_deeper
+\begin_layout Itemize
+wrapper (
+\begin_inset Quotes eld
+\end_inset
+
+External_solver_wrapper
+\begin_inset Quotes erd
+\end_inset
+
+) is a class that substitutes a local solver - it has methods 
+\begin_inset Quotes eld
+\end_inset
+
+send_request
+\begin_inset Quotes erd
+\end_inset
+
+, 
+\begin_inset Quotes eld
+\end_inset
+
+get_solution
+\begin_inset Quotes erd
+\end_inset
+
+, 
+\begin_inset Quotes eld
+\end_inset
+
+terminate
+\begin_inset Quotes erd
+\end_inset
+
+
+\end_layout
+
+\begin_layout Itemize
+wrapper communicates with sampling process and with linker
+\end_layout
+
+\begin_layout Itemize
+wrapper spawns the linker which is a separate MPI program with specified
+ number of MPI processes, rankfile, etc.
+\end_layout
+
+\begin_layout Itemize
+linker (
+\begin_inset Quotes eld
+\end_inset
+
+External_solver_linker
+\begin_inset Quotes erd
+\end_inset
+
+) has its own MPI.COMM_WORLD and also communicates with its parent (the wrapper),
+ the external solver runs on this MPI.COMM_WORLD:
+\end_layout
+
+\begin_deeper
+\begin_layout Itemize
+sampling process — wrapper — linker — external solver
+\end_layout
+
+\end_deeper
+\begin_layout Itemize
+the linker also 
+\begin_inset Quotes eld
+\end_inset
+
+translates
+\begin_inset Quotes erd
+\end_inset
+
+ the inputs/outputs between SurrMCMC and the external solver
+\end_layout
+
+\end_deeper
+\end_deeper
+\begin_layout Itemize
+intended to run on cluster with the following processes:
+\end_layout
+
+\begin_deeper
+\begin_layout Itemize
+sampling processes - one per core?
+\end_layout
+
+\begin_layout Itemize
+surrogate - may involve data collector, model updater, model evaluator
+\end_layout
+
+\begin_layout Itemize
+solver - separate MPI library
+\end_layout
+
+\end_deeper
+\begin_layout Standard
+Solver:
+\end_layout
+
+\begin_layout Itemize
+separate MPI process, several spawned processes, one or more separate programs
+ with several MPI processes
+\end_layout
+
+\begin_layout Itemize
+given template of a wrapper - defined methods, inputs
+\end_layout
+
+\begin_layout Itemize
+can be changed during sampling - e.g.
+ iterative solver can be improved (preconditioner, deflation space, etc.)
+\end_layout
+
+\begin_layout Itemize
+Solver_linker only knows rank of the corresponding solver and possibly also
+ the rank of the data collector
+\end_layout
+
+\begin_layout Standard
+Surrogate:
+\end_layout
+
+\begin_layout Itemize
+the same as solver
+\end_layout
+
+\begin_layout Standard
+Types and functionality of the sampling methods:
+\end_layout
+
+\begin_layout Itemize
+typical use:
+\end_layout
+
+\begin_deeper
+\begin_layout Itemize
+start with the standard MH sampling - this stage only collects snapshots;
+ possibly a process for surrogate update; no process for surrogate evaluation
+\end_layout
+
+\begin_layout Itemize
+DAMH-SMU sampling - it may start when the surrogate model is good enough;
+ typically there will be one surrogate model shared by all sampling processes
+\end_layout
+
+\begin_layout Itemize
+DAMH sampling - it may start when the surrogate model uses too many snapshots
+ or does not improve any more
+\end_layout
+
+\begin_layout Itemize
+ADAMH sampling for comparison
+\end_layout
+
+\end_deeper
+\begin_layout Itemize
+if the observation operator includes linear system solution, deflation basis
+ can be constructed
+\end_layout
+
+\begin_deeper
+\begin_layout Itemize
+this can be understood as solver with updates
+\end_layout
+
+\begin_layout Itemize
+the recorded information is not only the snapshot but also the lineat system
+ solution
+\end_layout
+
+\end_deeper
+\begin_layout Standard
+\begin_inset Separator plain
+\end_inset
+
+
+\end_layout
+
+\begin_layout Standard
+Divide the codes into:
+\end_layout
+
+\begin_layout Itemize
+main (permanent) codes
+\end_layout
+
+\begin_deeper
+\begin_layout Itemize
+main_codes: Proposal_GaussRandomWalk, Problem_Gauss, Algorithm_MH, Algorithm_DAM
+H, Snapshot
+\end_layout
+
+\end_deeper
+\begin_layout Itemize
+solver-specific code (wrapper)
+\end_layout
+
+\begin_layout Itemize
+surrogate-specific code
+\end_layout
+
+\begin_layout Itemize
+solver examples
+\end_layout
+
+\begin_layout Itemize
+surrogate examples
+\end_layout
+
+\begin_layout Standard
+\begin_inset Separator plain
+\end_inset
+
+
+\end_layout
+
+\begin_layout Standard
+Other (postprocessing) codes:
+\end_layout
+
+\begin_layout Standard
+visualization
+\end_layout
+
+\end_body
+\end_document
