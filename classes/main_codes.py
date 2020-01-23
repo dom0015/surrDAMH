@@ -370,13 +370,13 @@ class Snapshot:
     def print(self):
         print("W:", self.weight, "S:", self.sample, "G:", self.G_sample)
        
-class Solver_external:
+class Solver_MPI_parent:
     def __init__(self, no_parameters, no_observations, maxprocs=1):
         self.no_parameters = no_parameters
         self.no_observations = no_observations
         self.request_solved = True
         self.max_requests = 1
-        self.comm = MPI.COMM_SELF.Spawn(sys.executable, args=['launcher.py'], maxprocs=maxprocs)
+        self.comm = MPI.COMM_SELF.Spawn(sys.executable, args=['spawned_child_solver.py'], maxprocs=maxprocs)
         self.tag = 1
     
     def send_request(self, data_par):
@@ -393,10 +393,12 @@ class Solver_external:
         print("Solver spawned by rank", MPI.COMM_WORLD.Get_rank(), "will be disconnected.")
         self.comm.Disconnect()
     
-class Solver_linker:
+class Solver_MPI_linker:
     def __init__(self, no_parameters, no_observations, rank_full_solver, is_updated=False, rank_data_collector=None):
         self.no_parameters = 2
         self.no_observations = 2
+        self.request_solved = True
+        self.max_requests = 1
         self.comm = MPI.COMM_WORLD
         self.rank_full_solver = rank_full_solver
         self.is_updated = is_updated
@@ -411,12 +413,12 @@ class Solver_linker:
         
     def send_request(self, sent_data):
         self.tag += 1
-        print('debug - rank', self.rank_full_solver, self.comm.Get_size(), self.comm.Get_rank())
         self.comm.Send(sent_data, dest=self.rank_full_solver, tag=self.tag)
 #        print("Request", self.tag, sent_data)
     
     def get_solution(self, ):
         self.comm.Recv(self.received_data, source=self.rank_full_solver, tag=self.tag)
+        print('DEBUG (LINKER) --- RANK --- SOURCE --- TAG:', self.comm.Get_rank(), self.rank_full_solver, self.tag)
 #        print("Solution", self.tag, self.received_data)
         return self.received_data
     
@@ -437,4 +439,3 @@ class Solver_linker:
             snapshot = Snapshot()
             self.comm.send(snapshot, dest=self.rank_data_collector, tag=0)
             self.terminated_data = True
-        

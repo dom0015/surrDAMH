@@ -87,20 +87,20 @@ main use (other cases may not be implemented now but it should be possible
 \begin_deeper
 \begin_layout Itemize
 solver is an external MPI library with its own world communicator, to SurrMCMC
- it is linked via a wrapper-linker interface:
+ it is linked via a linker-wrapper interface:
 \end_layout
 
 \begin_deeper
 \begin_layout Itemize
-wrapper (
+linker (
 \begin_inset Quotes eld
 \end_inset
 
-External_solver_wrapper
+Solver_MPI_linker
 \begin_inset Quotes erd
 \end_inset
 
-) is a class that substitutes a local solver - it has methods 
+) is a class with methods 
 \begin_inset Quotes eld
 \end_inset
 
@@ -124,43 +124,412 @@ terminate
 \begin_inset Quotes erd
 \end_inset
 
-
-\end_layout
-
-\begin_layout Itemize
-wrapper communicates with sampling process and with linker
-\end_layout
-
-\begin_layout Itemize
-wrapper spawns the linker which is a separate MPI program with specified
- number of MPI processes, rankfile, etc.
-\end_layout
-
-\begin_layout Itemize
-linker (
+, 
 \begin_inset Quotes eld
 \end_inset
 
-External_solver_linker
+XXX_data_for_update
 \begin_inset Quotes erd
 \end_inset
 
-) has its own MPI.COMM_WORLD and also communicates with its parent (the wrapper),
- the external solver runs on this MPI.COMM_WORLD:
+, each sampling process has an instance of this; it only knows the MPI rank
+ (
+\begin_inset Formula $R$
+\end_inset
+
+) to communicate with (typically the same rank for all sampling processes)
 \end_layout
 
-\begin_deeper
 \begin_layout Itemize
-sampling process — wrapper — linker — external solver
-\end_layout
+the process of rank 
+\begin_inset Formula $R$
+\end_inset
 
-\end_deeper
-\begin_layout Itemize
-the linker also 
+ creates 
+\begin_inset Formula $N$
+\end_inset
+
+ instances of the class 
 \begin_inset Quotes eld
 \end_inset
 
-translates
+Solver_MPI_parent
+\begin_inset Quotes erd
+\end_inset
+
+, each of them spawns its own MPI program 
+\begin_inset Quotes eld
+\end_inset
+
+spawned_child_solver.py
+\begin_inset Quotes erd
+\end_inset
+
+ with its own MPI world communicator, specified number of MPI processes,
+ rankfile, etc.
+\begin_inset Newline linebreak
+\end_inset
+
+
+\begin_inset Tabular
+<lyxtabular version="3" rows="4" columns="7">
+<features tabularvalignment="middle">
+<column alignment="center" valignment="top">
+<column alignment="center" valignment="top">
+<column alignment="center" valignment="top">
+<column alignment="center" valignment="top">
+<column alignment="center" valignment="top">
+<column alignment="center" valignment="top">
+<column alignment="center" valignment="top">
+<row>
+<cell alignment="center" valignment="top" topline="true" bottomline="true" leftline="true" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+process:
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" bottomline="true" leftline="true" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+sampler 
+\begin_inset Formula $1$
+\end_inset
+
+
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" bottomline="true" leftline="true" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+\begin_inset Formula $\cdots$
+\end_inset
+
+
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" bottomline="true" leftline="true" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+sampler 
+\begin_inset Formula $K$
+\end_inset
+
+
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" bottomline="true" leftline="true" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+rank 
+\begin_inset Formula $R$
+\end_inset
+
+
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" bottomline="true" leftline="true" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" bottomline="true" leftline="true" rightline="true" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+spawned processes:
+\end_layout
+
+\end_inset
+</cell>
+</row>
+<row>
+<cell alignment="center" valignment="top" topline="true" leftline="true" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+instances:
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" leftline="true" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+\begin_inset Formula $1$
+\end_inset
+
+st Solver_MPI_linker(
+\begin_inset Formula $R$
+\end_inset
+
+)
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" leftline="true" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+\begin_inset Formula $\cdots$
+\end_inset
+
+
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" leftline="true" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+\begin_inset Formula $K$
+\end_inset
+
+th Solver_MPI_linker(
+\begin_inset Formula $R$
+\end_inset
+
+)
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" leftline="true" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+\begin_inset Formula $1$
+\end_inset
+
+st Solver_MPI_parent
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" leftline="true" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+—
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" leftline="true" rightline="true" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+spawned_child_solver.py
+\end_layout
+
+\end_inset
+</cell>
+</row>
+<row>
+<cell alignment="center" valignment="top" topline="true" leftline="true" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" leftline="true" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" leftline="true" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" leftline="true" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" leftline="true" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+\begin_inset Formula $\vdots$
+\end_inset
+
+
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" leftline="true" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" leftline="true" rightline="true" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+\begin_inset Formula $\vdots$
+\end_inset
+
+
+\end_layout
+
+\end_inset
+</cell>
+</row>
+<row>
+<cell alignment="center" valignment="top" topline="true" bottomline="true" leftline="true" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" bottomline="true" leftline="true" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" bottomline="true" leftline="true" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" bottomline="true" leftline="true" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" bottomline="true" leftline="true" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+\begin_inset Formula $N$
+\end_inset
+
+th Solver_MPI_parent
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" bottomline="true" leftline="true" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+—
+\end_layout
+
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" bottomline="true" leftline="true" rightline="true" usebox="none">
+\begin_inset Text
+
+\begin_layout Plain Layout
+spawned_child_solver.py
+\end_layout
+
+\end_inset
+</cell>
+</row>
+</lyxtabular>
+
+\end_inset
+
+
+\end_layout
+
+\begin_layout Itemize
+each of the processes 
+\begin_inset Quotes eld
+\end_inset
+
+spawned_child_solver.py
+\begin_inset Quotes erd
+\end_inset
+
+ only communicates with its parent (rank 
+\begin_inset Formula $R$
+\end_inset
+
+)
+\end_layout
+
+\begin_layout Itemize
+each of the samplers communicates with rank 
+\begin_inset Formula $R$
+\end_inset
+
+
+\end_layout
+
+\begin_layout Itemize
+the wrappers 
+\begin_inset Quotes eld
+\end_inset
+
+spawned_child_solver.py
+\begin_inset Quotes erd
+\end_inset
+
+ also 
+\begin_inset Quotes eld
+\end_inset
+
+translate
 \begin_inset Quotes erd
 \end_inset
 
@@ -168,6 +537,14 @@ translates
 \end_layout
 
 \end_deeper
+\begin_layout Itemize
+instead of spawned child processes, rank 
+\begin_inset Formula $R$
+\end_inset
+
+may also communicate with specified ranks 
+\end_layout
+
 \end_deeper
 \begin_layout Itemize
 intended to run on cluster with the following processes:
@@ -299,6 +676,21 @@ solver examples
 
 \begin_layout Itemize
 surrogate examples
+\end_layout
+
+\begin_layout Standard
+\begin_inset Separator plain
+\end_inset
+
+
+\end_layout
+
+\begin_layout Standard
+Other (postprocessing) codes:
+\end_layout
+
+\begin_layout Standard
+visualization
 \end_layout
 
 \end_body

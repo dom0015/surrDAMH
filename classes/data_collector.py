@@ -28,7 +28,6 @@ is_free = True
 status = MPI.Status()
 snapshot_list = []
 while any(is_active): # while at least 1 sampling algorithm is active
-    print('is_active:',is_active)
     tmp = comm_world.Iprobe(source=MPI.ANY_SOURCE, tag=MPI.ANY_TAG, status=status)
     if tmp: # if there is an incoming message from any sampling algorithm
         rank_source = status.Get_source()

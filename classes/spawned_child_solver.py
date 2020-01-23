@@ -8,7 +8,7 @@ Created on Tue Oct 29 12:47:09 2019
 
 from mpi4py import MPI
 import numpy as np
-import main_codes as sa
+import full_solver_examples as fse
 
 comm = MPI.Comm.Get_parent()
 size = comm.Get_size()
@@ -23,7 +23,7 @@ print("LAUNCHER", rank, size, rank_world, size_world)
 """
 INITIALIZATION OF THE SOLVER
 """
-S = sa.Solver_local_2to2()
+S = fse.Solver_local_2to2()
 
 """
 SOLVING INCOMING REQUESTS USING LINKED SOLVER
