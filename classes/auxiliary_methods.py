@@ -36,6 +36,7 @@ from collections import deque
 #     assign the rank of the algorithms to this solver
 def initialize_and_manage_solvers(solver_init, solver_parameters, no_solvers, no_samplers):
     # solver_init ... initializes the object of the (full, surrogate) solver
+    # solver_parameters ... list of dictionaries with initialization parameters
     # no_solvers ... number of solvers to be created
     # no_samplers ... number of samplers that request solutions
     
@@ -45,8 +46,8 @@ def initialize_and_manage_solvers(solver_init, solver_parameters, no_solvers, no
     Solvers = []
     for i in range(no_solvers):
         Solvers.append(solver_init(**solver_parameters[i]))
-    algorithm_ranks = np.arange(no_samplers)
-    is_active = np.array([True] * len(algorithm_ranks))
+    samplers_rank = np.arange(no_samplers)
+    is_active = np.array([True] * len(samplers_rank))
     occupied_by_source = [None] * no_solvers
     occupied_by_tag = [None] * no_solvers
     is_free = np.array([True] * no_solvers)
@@ -59,14 +60,15 @@ def initialize_and_manage_solvers(solver_init, solver_parameters, no_solvers, no
         tmp = comm_world.Iprobe(source=MPI.ANY_SOURCE, tag=MPI.ANY_TAG, status=status)
         if tmp: # if there is an incoming message from any sampling algorithm
             rank_source = status.Get_source()
-            tag = status.Get_tag()
-            comm_world.Recv(received_data, source=rank_source, tag=tag)
-            print('DEBUG --- RANK --- SOURCE --- TAG:', rank_world, rank_source, tag)
-            if tag == 0: # if received message has tag 0, switch corresponding sampling alg. to inactive
-                # assumes that there will be no other incoming message from that source 
-                is_active[algorithm_ranks == rank_source] = False
-            else: # put the request into queue (remember source and tag)
-                request_queue.append([rank_source,tag,received_data.copy()])
+            if rank_source in samplers_rank: # if source is sampler
+                tag = status.Get_tag()
+                comm_world.Recv(received_data, source=rank_source, tag=tag)
+                print('DEBUG - MANAGER Recv request FROM sampler', rank_source, 'TO:', rank_world, "TAG:", tag)
+                if tag == 0: # if received message has tag 0, switch corresponding sampling alg. to inactive
+                    # assumes that there will be no other incoming message from that source 
+                    is_active[samplers_rank == rank_source] = False
+                else: # put the request into queue (remember source and tag)
+                    request_queue.append([rank_source,tag,received_data.copy()])
         for i in range(no_solvers):
             if not is_free[i]: # check all busy solvers if they finished the request
                 if Solvers[i].request_solved: # if so, send solution to the sampling algorithm
@@ -74,6 +76,7 @@ def initialize_and_manage_solvers(solver_init, solver_parameters, no_solvers, no
                     is_free[i] = True # mark the solver as free
                     for j in range(len(occupied_by_source[i])):
                         comm_world.Send(sent_data[j].copy(), dest=occupied_by_source[i][j], tag=occupied_by_tag[i][j])
+                        print('DEBUG - MANAGER Send solution FROM', rank_world, 'TO:', occupied_by_source[i][j], "TAG:", occupied_by_tag[i][j])
             if is_free[i]:
                 occupied_by_source[i] = []
                 occupied_by_tag[i] = []
@@ -94,4 +97,4 @@ def initialize_and_manage_solvers(solver_init, solver_parameters, no_solvers, no
             Solvers[i].terminate()
     
     comm_world.Barrier()
-    print("MPI process", rank_world, "(full solver) terminated.")
+    print("MPI process", rank_world, "(MANAGER) terminated.")

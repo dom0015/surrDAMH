@@ -337,7 +337,6 @@ class Algorithm_DAMH:
             writer_notes = csv.writer(file_notes)
             writer_notes.writerow(notes)
             file_notes.close()
-            #print(notes)
 
     def _acceptance_log_symmetric(self,log_ratio):
         temp = self.__generator.uniform(0.0,1.0)
@@ -382,10 +381,12 @@ class Solver_MPI_parent:
     def send_request(self, data_par):
         self.data_par = data_par.copy()
         self.comm.Send(self.data_par, dest=0, tag=self.tag)
+        print('DEBUG - PARENT Send request FROM', self.comm.Get_rank(), '(', MPI.COMM_WORLD.Get_rank(), ')', 'TO child:', 0, "TAG:", self.tag)
         
     def get_solution(self):
         received_data = np.empty((1,self.no_observations))
         self.comm.Recv(received_data, source=0, tag=self.tag)
+        print('DEBUG - LINKER Recv solution FROM child', 0, 'TO:', self.comm.Get_rank(), '(', MPI.COMM_WORLD.Get_rank(), ')', "TAG:", self.tag)
         return received_data
     
     def terminate(self):
@@ -405,7 +406,7 @@ class Solver_MPI_linker:
         self.rank_data_collector = rank_data_collector
         self.tag = 0
         self.tag_data = 0
-        self.received_data = np.zeros(no_parameters)
+        self.received_data = np.zeros(no_observations)
         self.terminated = None
         self.terminated_data = True
         if not rank_data_collector is None:
@@ -414,11 +415,12 @@ class Solver_MPI_linker:
     def send_request(self, sent_data):
         self.tag += 1
         self.comm.Send(sent_data, dest=self.rank_full_solver, tag=self.tag)
+        print('DEBUG - LINKER Send request FROM', self.comm.Get_rank(), 'TO:', self.rank_full_solver, "TAG:", self.tag)
 #        print("Request", self.tag, sent_data)
     
     def get_solution(self, ):
         self.comm.Recv(self.received_data, source=self.rank_full_solver, tag=self.tag)
-        print('DEBUG (LINKER) --- RANK --- SOURCE --- TAG:', self.comm.Get_rank(), self.rank_full_solver, self.tag)
+        print('DEBUG - LINKER Recv solution FROM', self.rank_full_solver, 'TO:', self.comm.Get_rank(), "TAG:", self.tag)
 #        print("Solution", self.tag, self.received_data)
         return self.received_data
     

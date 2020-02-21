@@ -32,3 +32,5 @@ class Configuration:
         self.surr_solver_parameters = {}
         if display:
             print("mpirun -n", self.no_algorithms, "--oversubscribe python3 test_sampling_algorithms_MPI.py : -n 1 python3 full_solver.py")
+            
+# mpirun -n 5 --oversubscribe python3 test_sampling_algorithms_MPI.py : -n 2 python3 process_full_solver.py : -n 1 python3 data_collector.py : -n 3 python3 process_solver_wrapper.py

@@ -22,7 +22,7 @@ rank_world = comm_world.Get_rank()
 #print(tmp.uniform(), tmp.uniform(), tmp.uniform())
 
 seed0 = max(1000,size_world)*rank_world
-print([seed0, seed0+1, seed0+2])
+print("PROCESS SAMPLER, seeds:", [seed0, seed0+1, seed0+2], "RANK:", rank_world)
 
 #my_Sol = sa.Solver_local_2to2()
 my_Sol = sa.Solver_MPI_linker(no_parameters=2, no_observations=2, rank_full_solver=no_samplers) # only knows the MPI rank to communicate with
@@ -45,7 +45,7 @@ my_Alg = sa.Algorithm_MH(my_Prob, my_Prop, my_Sol,
                          name='my_MH_alg' + str(rank_world),
                          seed=seed0+2)
 my_Alg.run()
-print("ALG:", rank_world, size_world, "- acc/rej/prerej:", my_Alg.no_accepted, my_Alg.no_rejected, my_Alg.no_prerejected, my_Alg.no_accepted/(my_Alg.no_accepted+my_Alg.no_rejected)*100, '%')
+print("SAMPLER MH:", rank_world, size_world, "- acc/rej/prerej:", my_Alg.no_accepted, my_Alg.no_rejected, my_Alg.no_prerejected, my_Alg.no_accepted/(my_Alg.no_accepted+my_Alg.no_rejected)*100, '%')
 
 comm_world.Barrier()
-print("MPI process", rank_world, "(MH algorithm) terminated.")
+print("MPI process", rank_world, "(SAMPLER) terminated.")

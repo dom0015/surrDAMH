@@ -46,11 +46,11 @@ while any(is_active): # while at least 1 sampling algorithm is active
         if len(snapshot_list)>0:
             Surrogate.add_data(snapshot_list)
             SOL, no_snapshots = Surrogate.calculate()
-            print(no_snapshots)
+            print("collected sanpshots:", no_snapshots)
             snapshot_list = []
             is_free = False
         
-print("All collected snapshots:", len(snapshot_list), len(Surrogate.alldata_par))
+print("all collected snapshots:", len(snapshot_list), len(Surrogate.alldata_par))
 
 comm_world.Barrier()
-print("MPI process", rank_world, "(full solver) terminated.")
+print("MPI process", rank_world, "(DATA COLLECTOR) terminated.")
