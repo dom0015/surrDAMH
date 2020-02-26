@@ -41,7 +41,7 @@ my_Prop = sa.Proposal_GaussRandomWalk(no_parameters=my_Sol.no_parameters,
 my_Alg = sa.Algorithm_MH(my_Prob, my_Prop, my_Sol,
                          Surrogate = my_Surr,
                          initial_sample=my_Prob.prior_mean,
-                         max_samples=10,
+                         max_samples=5,
                          name='my_MH_alg' + str(rank_world),
                          seed=seed0+2)
 my_Alg.run()

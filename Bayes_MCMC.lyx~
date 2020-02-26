@@ -81,7 +81,16 @@ Bayes SurrMCMC requirements
 
 \begin_layout Itemize
 main use (other cases may not be implemented now but it should be possible
- to extend the library easily): 
+ to extend the library easily): CO
+\begin_inset script subscript
+
+\begin_layout Plain Layout
+2
+\end_layout
+
+\end_inset
+
+
 \end_layout
 
 \begin_deeper
@@ -538,7 +547,11 @@ translate
 
 \end_deeper
 \begin_layout Itemize
-instead of spawned child processes, there may be 
+instead of spawned child processes, rank 
+\begin_inset Formula $R$
+\end_inset
+
+may also communicate with specified ranks in the same MPI.COMM_WORLD
 \end_layout
 
 \end_deeper

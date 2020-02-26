@@ -9,6 +9,7 @@ Created on Tue Oct 29 12:47:09 2019
 from mpi4py import MPI
 import numpy as np
 import full_solver_examples as fse
+import time
 
 comm = MPI.Comm.Get_parent()
 size = comm.Get_size()
@@ -42,7 +43,8 @@ if rank_world==0:
             print("External solver disconnected.")
             solver_is_active = False
         else:
-            S.send_request(received_data)
+            S.pass_parameters(received_data)
+            time.sleep(1)
             sent_data = S.get_solution()
             comm.Send(sent_data, dest=0, tag=tag)
             print('DEBUG - CHILD Send solution FROM child', rank, 'TO parent:', 0, "TAG:", tag)

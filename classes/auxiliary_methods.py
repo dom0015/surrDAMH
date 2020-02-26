@@ -58,7 +58,8 @@ def initialize_and_manage_solvers(solver_init, solver_parameters, no_solvers, no
     #temp_received_data = [received_data] * no_solvers
     while any(is_active): # while at least 1 sampling algorithm is active
         tmp = comm_world.Iprobe(source=MPI.ANY_SOURCE, tag=MPI.ANY_TAG, status=status)
-        if tmp: # if there is an incoming message from any sampling algorithm
+        # receive one message from one sampler
+        if tmp: # if there is an incoming message from any source (not only from sampler)
             rank_source = status.Get_source()
             if rank_source in samplers_rank: # if source is sampler
                 tag = status.Get_tag()
@@ -71,7 +72,7 @@ def initialize_and_manage_solvers(solver_init, solver_parameters, no_solvers, no
                     request_queue.append([rank_source,tag,received_data.copy()])
         for i in range(no_solvers):
             if not is_free[i]: # check all busy solvers if they finished the request
-                if Solvers[i].request_solved: # if so, send solution to the sampling algorithm
+                if Solvers[i].is_solved(): # if so, send solution to the sampling algorithm
                     sent_data = Solvers[i].get_solution()
                     is_free[i] = True # mark the solver as free
                     for j in range(len(occupied_by_source[i])):
@@ -88,8 +89,8 @@ def initialize_and_manage_solvers(solver_init, solver_parameters, no_solvers, no
                         temp_received_data = np.vstack((temp_received_data,received_data.copy()))
                         occupied_by_source[i].append(rank_source)
                         occupied_by_tag[i].append(tag)
-                    is_free[i] = False
                     Solvers[i].send_request(temp_received_data)
+                    is_free[i] = False
         
     for i in range(no_solvers):
         f = getattr(Solvers[i],"terminate",None)

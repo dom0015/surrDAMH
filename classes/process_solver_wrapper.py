@@ -38,7 +38,7 @@ while solver_is_active:
         print("External solver disconnected.")
         solver_is_active = False
     else:
-        S.send_request(received_data)
+        S.pass_parameters(received_data)
         # simulates random computation time
         #time.sleep(np.random.rand())
         time.sleep(1)

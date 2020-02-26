@@ -373,12 +373,12 @@ class Solver_MPI_parent:
     def __init__(self, no_parameters, no_observations, maxprocs=1):
         self.no_parameters = no_parameters
         self.no_observations = no_observations
-        self.request_solved = True
         self.max_requests = 1
         self.comm = MPI.COMM_SELF.Spawn(sys.executable, args=['spawned_child_solver.py'], maxprocs=maxprocs)
-        self.tag = 1
+        self.tag = 0
     
     def send_request(self, data_par):
+        self.tag += 1
         self.data_par = data_par.copy()
         self.comm.Send(self.data_par, dest=0, tag=self.tag)
         print('DEBUG - PARENT Send request FROM', self.comm.Get_rank(), '(', MPI.COMM_WORLD.Get_rank(), ')', 'TO child:', 0, "TAG:", self.tag)
@@ -386,8 +386,16 @@ class Solver_MPI_parent:
     def get_solution(self):
         received_data = np.empty((1,self.no_observations))
         self.comm.Recv(received_data, source=0, tag=self.tag)
-        print('DEBUG - LINKER Recv solution FROM child', 0, 'TO:', self.comm.Get_rank(), '(', MPI.COMM_WORLD.Get_rank(), ')', "TAG:", self.tag)
+        print('DEBUG - PARENT Recv solution FROM child', 0, 'TO:', self.comm.Get_rank(), '(', MPI.COMM_WORLD.Get_rank(), ')', "TAG:", self.tag)
         return received_data
+    
+    def is_solved(self):
+        # check the parent-child communicator if there is an incoming message
+        tmp = self.comm.Iprobe(source=0, tag=self.tag)
+        if tmp:
+            return True
+        else:
+            return False
     
     def terminate(self):
         self.comm.Send(np.empty((1,self.no_parameters)), dest=0, tag=0)
@@ -398,7 +406,6 @@ class Solver_MPI_linker:
     def __init__(self, no_parameters, no_observations, rank_full_solver, is_updated=False, rank_data_collector=None):
         self.no_parameters = 2
         self.no_observations = 2
-        self.request_solved = True
         self.max_requests = 1
         self.comm = MPI.COMM_WORLD
         self.rank_full_solver = rank_full_solver
@@ -415,20 +422,28 @@ class Solver_MPI_linker:
     def send_request(self, sent_data):
         self.tag += 1
         self.comm.Send(sent_data, dest=self.rank_full_solver, tag=self.tag)
-        print('DEBUG - LINKER Send request FROM', self.comm.Get_rank(), 'TO:', self.rank_full_solver, "TAG:", self.tag)
+        print('DEBUG - LINKER (', self.comm.Get_rank(), ') Send request FROM', self.comm.Get_rank(), 'TO:', self.rank_full_solver, "TAG:", self.tag)
 #        print("Request", self.tag, sent_data)
     
     def get_solution(self, ):
         self.comm.Recv(self.received_data, source=self.rank_full_solver, tag=self.tag)
-        print('DEBUG - LINKER Recv solution FROM', self.rank_full_solver, 'TO:', self.comm.Get_rank(), "TAG:", self.tag)
+        print('DEBUG - LINKER (', self.comm.Get_rank(), ') Recv solution FROM', self.rank_full_solver, 'TO:', self.comm.Get_rank(), "TAG:", self.tag)
 #        print("Solution", self.tag, self.received_data)
         return self.received_data
     
     def send_snapshot(self, sent_snapshot):
         # needed only if is_updated == True
         self.tag_data += 1
-        print('debug - sent_snapshot', self.rank_data_collector, self.comm.Get_size(), self.comm.Get_rank())
+        print('debug - LINKER (', self.comm.Get_rank(), ') - sent_snapshot', self.rank_data_collector, self.comm.Get_size(), self.comm.Get_rank())
         self.comm.send(sent_snapshot, dest=self.rank_data_collector, tag=self.tag_data)
+        
+    def is_solved(self):
+        # check COMM_WORLD if there is an incoming message from the solver
+        tmp = self.comm.Iprobe(source=self.rank_full_solver, tag=self.tag)
+        if tmp:
+            return True
+        else:
+            return False
         
     def terminate(self, ):
         # assume that terminate may be called multiple times

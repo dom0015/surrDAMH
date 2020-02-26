@@ -69,7 +69,7 @@ class Solver_local_2to2:
         self.request_solved = True
         self.max_requests = 1
     
-    def send_request(self, data_par):
+    def pass_parameters(self, data_par):
         self.data_par = data_par
         
     def get_solution(self, ):

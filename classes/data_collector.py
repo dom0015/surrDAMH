@@ -46,7 +46,7 @@ while any(is_active): # while at least 1 sampling algorithm is active
         if len(snapshot_list)>0:
             Surrogate.add_data(snapshot_list)
             SOL, no_snapshots = Surrogate.calculate()
-            print("collected sanpshots:", no_snapshots)
+            print("collected snapshots:", no_snapshots)
             snapshot_list = []
             is_free = False
         
