@@ -11,6 +11,7 @@ import os
 import csv
 from mpi4py import MPI
 import sys
+import time
 
 class Proposal_GaussRandomWalk:
     def __init__(self, no_parameters, proposal_std=1.0, proposal_cov=None, seed=0):
@@ -83,7 +84,7 @@ class Problem_Gauss:
     def _get_log_likelihood_uncorrelated(self, G_sample):
         v = self.observations - G_sample
         invCv = v/self.noise_std
-        return -0.5*np.dot(v,invCv)
+        return -0.5*np.sum(v*invCv)
     
     def __get_log_likelihood_multivariate(self, G_sample):
         v = self.observations - G_sample
@@ -165,6 +166,7 @@ class Algorithm_MH:
             return
     
     def run(self):
+        print("RANK", MPI.COMM_WORLD.Get_rank(), "SAMPLER MH starts")
         if self.is_saved:
             filename = self.Problem.name + "/" + self.name + ".csv"
             os.makedirs(os.path.dirname(filename), exist_ok=True)
@@ -198,13 +200,13 @@ class Algorithm_MH:
                 self.no_rejected_current += 1
                 self.__send_to_surrogate(sample=self.proposed_sample, G_sample=G_proposed_sample, weight=0)
                 
-        f = getattr(self.Solver,"terminate",None)
-        if callable(f):
-            self.Solver.terminate()
-            
-        f = getattr(self.Surrogate,"terminate",None)
-        if callable(f):
-            self.Surrogate.terminate()
+#        f = getattr(self.Solver,"terminate",None)
+#        if callable(f):
+#            self.Solver.terminate()
+#            
+#        f = getattr(self.Surrogate,"terminate",None)
+#        if callable(f):
+#            self.Surrogate.terminate()
                 
         self.__write_to_file()
         if self.is_saved:
@@ -216,7 +218,7 @@ class Algorithm_MH:
             writer_notes = csv.writer(file_notes)
             writer_notes.writerow(notes)
             file_notes.close()
-            #print(notes)
+        print("RANK", MPI.COMM_WORLD.Get_rank(), "SAMPLER MH finishes")
 
     def _acceptance_log_symmetric(self,log_ratio):
         temp = self.__generator.uniform(0.0,1.0)
@@ -235,7 +237,7 @@ class Algorithm_MH:
     
     def __send_to_surrogate__(self, sample, G_sample, weight):
         snapshot = Snapshot(sample=sample, G_sample=G_sample, weight=weight)
-        self.Surrogate.send_snapshot(snapshot)
+        self.Surrogate.send_to_data_collector(snapshot)
         
     def _empty_function(self,**kw):
         return
@@ -276,6 +278,7 @@ class Algorithm_DAMH:
             return
     
     def run(self):
+        print("RANK", MPI.COMM_WORLD.Get_rank(), "SAMPLER DAMH starts")
         if self.is_saved:
             filename = self.Problem.name + "/" + self.name + ".csv"
             os.makedirs(os.path.dirname(filename), exist_ok=True)
@@ -337,6 +340,7 @@ class Algorithm_DAMH:
             writer_notes = csv.writer(file_notes)
             writer_notes.writerow(notes)
             file_notes.close()
+        print("RANK", MPI.COMM_WORLD.Get_rank(), "SAMPLER DAMH finishes")
 
     def _acceptance_log_symmetric(self,log_ratio):
         temp = self.__generator.uniform(0.0,1.0)
@@ -355,7 +359,7 @@ class Algorithm_DAMH:
     
     def __send_to_surrogate__(self, sample, G_sample, weight):
         snapshot = Snapshot(sample=sample, G_sample=G_sample, weight=weight)
-        self.Surrogate.send_snapshot(snapshot)
+        self.Surrogate.send_to_data_collector(snapshot)
         
     def _empty_function(self,**kw):
         return
@@ -423,12 +427,10 @@ class Solver_MPI_linker:
         self.tag += 1
         self.comm.Send(sent_data, dest=self.rank_full_solver, tag=self.tag)
         print('DEBUG - LINKER (', self.comm.Get_rank(), ') Send request FROM', self.comm.Get_rank(), 'TO:', self.rank_full_solver, "TAG:", self.tag)
-#        print("Request", self.tag, sent_data)
     
     def get_solution(self, ):
         self.comm.Recv(self.received_data, source=self.rank_full_solver, tag=self.tag)
         print('DEBUG - LINKER (', self.comm.Get_rank(), ') Recv solution FROM', self.rank_full_solver, 'TO:', self.comm.Get_rank(), "TAG:", self.tag)
-#        print("Solution", self.tag, self.received_data)
         return self.received_data
     
     def send_snapshot(self, sent_snapshot):
@@ -451,6 +453,72 @@ class Solver_MPI_linker:
             sent_data = np.zeros(self.no_parameters)
             print('debug - terminate',self.rank_full_solver, self.comm.Get_size(), self.comm.Get_rank())
             self.comm.Send(sent_data, dest=self.rank_full_solver, tag=0)
+            self.terminated = True
+        if not self.terminated_data:
+            snapshot = Snapshot()
+            self.comm.send(snapshot, dest=self.rank_data_collector, tag=0)
+            self.terminated_data = True
+
+class Solver_local_collector_MPI:
+    # local solver (evaluated on SAMPLERs)
+    # with external data COLLECTOR (separate MPI process)
+    def __init__(self, no_parameters, no_observations, local_solver_instance, is_updated=False, rank_data_collector=None):
+        self.max_requests = 1
+        self.comm = MPI.COMM_WORLD
+        self.local_solver_instance = local_solver_instance
+        self.is_updated = is_updated
+        self.rank_data_collector = rank_data_collector
+        self.solver_data = [None] * 2       # double buffer
+        self.solver_data_idx = 0            # idx of current buffer 0/1
+        self.tag_ready_to_receive = 1
+        self.tag_sent_data = 2
+        self.terminated = None
+        self.terminated_data = True
+        if not rank_data_collector is None:
+            self.terminated_data = False
+        self.computation_in_progress = False # TO DO: remove?
+        self.empty_buffer = np.zeros(1)
+        self.comm.Isend(self.empty_buffer, dest=self.rank_data_collector, tag=self.tag_ready_to_receive)
+        self.status = MPI.Status()
+        self.req = self.comm.irecv(source=self.rank_data_collector, tag=MPI.ANY_TAG)
+
+    def send_request(self, received_parameters):
+        self.received_parameters = received_parameters # TO DO: copy?
+        self.computation_in_progress = True
+
+    def get_solution(self, ):
+        calculated_observations = self.local_solver_instance.apply(self.solver_data[self.solver_data_idx],self.received_parameters)
+        self.computation_in_progress = False
+        return calculated_observations
+
+    def send_to_data_collector(self, sent_snapshot):
+        # sends snapshot to data COLLECTOR
+        # needed only if is_updated == True
+        print('debug - SURROGATE_LINKER (', self.comm.Get_rank(), ') - sent_snapshot', self.rank_data_collector, self.comm.Get_size(), self.comm.Get_rank())
+        self.comm.send(sent_snapshot, dest=self.rank_data_collector, tag=self.tag_sent_data)
+        self.receive_update_if_ready()
+
+    def receive_update_if_ready(self):
+        # receive updated solver data (e.g. for updated surrogate model)
+        # check COMM_WORLD if there is an incoming message from the data COLLECTOR
+        # TO DO: when to check for updates
+        # TO DO: avoid copying of received data
+        r = self.req.test(status=self.status)
+        if r[0]:
+            self.solver_data[1 - self.solver_data_idx] = r[1]
+            self.solver_data_idx = 1 - self.solver_data_idx
+            self.req = self.comm.irecv(source=self.rank_data_collector, tag=MPI.ANY_TAG)
+            self.comm.Isend(self.empty_buffer, dest=self.rank_data_collector, tag=self.tag_ready_to_receive)
+            
+    def is_solved(self):
+        if self.computation_in_progress:
+            return False
+        else:
+            return True
+
+    def terminate(self, ):
+        # assume that terminate may be called multiple times
+        if not self.terminated:
             self.terminated = True
         if not self.terminated_data:
             snapshot = Snapshot()

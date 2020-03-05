@@ -44,7 +44,7 @@ if rank_world==0:
             solver_is_active = False
         else:
             S.pass_parameters(received_data)
-            time.sleep(1)
+#            time.sleep(1)
             sent_data = S.get_solution()
             comm.Send(sent_data, dest=0, tag=tag)
             print('DEBUG - CHILD Send solution FROM child', rank, 'TO parent:', 0, "TAG:", tag)

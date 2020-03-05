@@ -7,6 +7,7 @@ Created on Wed Nov  6 09:15:15 2019
 """
 
 import full_solver_examples as fse
+import surrogate_solver_examples as sse
 import main_codes
 
 class Configuration:
@@ -31,9 +32,13 @@ class Configuration:
 #            self.full_solver_parameters.append({'no_parameters':2, 'no_observations':2, 'rank_full_solver':i+5})
 
 ### SURROGATE
-        self.surr_solver_init = fse.Solver_local_2to2
-        self.surr_solver_parameters = {}
+        self.surr_solver_init = sse.Surrogate_col
+        self.surr_solver_parameters = {'no_parameters':2, 'no_observations':2}
+        self.surr_updater_init = sse.Surrogate_col
+        self.surr_updater_parameters = {'no_parameters':2, 'no_observations':2}
+        
         if display:
             print("mpirun -n", self.no_samplers, "--oversubscribe python3 test_sampling_algorithms_MPI.py : -n 1 python3 full_solver.py")
             
 # mpirun -n 2 --oversubscribe python3 test_sampling_algorithms_MPI.py : -n 2 python3 process_full_solver.py : -n 1 python3 data_collector.py : -n 2 python3 process_solver_wrapper.py
+

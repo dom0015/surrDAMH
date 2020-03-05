@@ -40,8 +40,8 @@ while solver_is_active:
     else:
         S.pass_parameters(received_data)
         # simulates random computation time
-        #time.sleep(np.random.rand())
-        time.sleep(1)
+#        time.sleep(np.random.rand())
+#        time.sleep(1)
         sent_data = S.get_solution()
         comm_world.Send(sent_data, dest=source, tag=tag)
         print('DEBUG - WRAPPER Send solution FROM', rank_world, 'TO:', source, "TAG:", tag)

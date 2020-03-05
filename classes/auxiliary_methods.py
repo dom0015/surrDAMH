@@ -47,7 +47,7 @@ def initialize_and_manage_solvers(solver_init, solver_parameters, no_solvers, no
     for i in range(no_solvers):
         Solvers.append(solver_init(**solver_parameters[i]))
     samplers_rank = np.arange(no_samplers)
-    is_active = np.array([True] * len(samplers_rank))
+    is_active_sampler = np.array([True] * len(samplers_rank))
     occupied_by_source = [None] * no_solvers
     occupied_by_tag = [None] * no_solvers
     is_free = np.array([True] * no_solvers)
@@ -56,7 +56,8 @@ def initialize_and_manage_solvers(solver_init, solver_parameters, no_solvers, no
     received_data = np.zeros(no_parameters)
     request_queue = deque()
     #temp_received_data = [received_data] * no_solvers
-    while any(is_active): # while at least 1 sampling algorithm is active
+    while any(is_active_sampler): # while at least 1 sampling algorithm is active
+#        print(is_active_sampler,"while at least 1 sampling algorithm is active - rank", rank_world)
         tmp = comm_world.Iprobe(source=MPI.ANY_SOURCE, tag=MPI.ANY_TAG, status=status)
         # receive one message from one sampler
         if tmp: # if there is an incoming message from any source (not only from sampler)
@@ -67,7 +68,7 @@ def initialize_and_manage_solvers(solver_init, solver_parameters, no_solvers, no
                 print('DEBUG - MANAGER Recv request FROM sampler', rank_source, 'TO:', rank_world, "TAG:", tag)
                 if tag == 0: # if received message has tag 0, switch corresponding sampling alg. to inactive
                     # assumes that there will be no other incoming message from that source 
-                    is_active[samplers_rank == rank_source] = False
+                    is_active_sampler[samplers_rank == rank_source] = False
                 else: # put the request into queue (remember source and tag)
                     request_queue.append([rank_source,tag,received_data.copy()])
         for i in range(no_solvers):
@@ -96,6 +97,6 @@ def initialize_and_manage_solvers(solver_init, solver_parameters, no_solvers, no
         f = getattr(Solvers[i],"terminate",None)
         if callable(f):
             Solvers[i].terminate()
-    
+            
     comm_world.Barrier()
     print("MPI process", rank_world, "(MANAGER) terminated.")

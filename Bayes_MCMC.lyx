@@ -538,6 +538,18 @@ translate
 
 \end_deeper
 \begin_layout Itemize
+probably, the 
+\begin_inset Quotes eld
+\end_inset
+
+spawned
+\begin_inset Quotes erd
+\end_inset
+
+ solver can be a separate pbs job -> required reinitialization of the solver?
+\end_layout
+
+\begin_layout Itemize
 instead of spawned child processes, rank 
 \begin_inset Formula $R$
 \end_inset
@@ -691,6 +703,62 @@ Other (postprocessing) codes:
 
 \begin_layout Standard
 visualization
+\end_layout
+
+\begin_layout Standard
+\begin_inset Separator plain
+\end_inset
+
+
+\end_layout
+
+\begin_layout Standard
+what the sampling processes may want to store/use to improve surrogate model
+ or the solvers
+\end_layout
+
+\begin_layout Itemize
+to update surrogate model (non-intrusive), the samplers send to it: parameters,
+ solution, possibly some weight
+\end_layout
+
+\begin_deeper
+\begin_layout Itemize
+note: a sampler can have its own surrogate model or share it with others
+\end_layout
+
+\end_deeper
+\begin_layout Itemize
+to update DCG solver:
+\end_layout
+
+\begin_deeper
+\begin_layout Itemize
+the solver can keep previous directions (probably only its own?)
+\end_layout
+
+\begin_layout Itemize
+the deflation basis can be build from known linear system solutions (all
+ together, i.e.
+ the solutions have do be distributed to all solvers - through the manager
+ or through the data collector?
+\end_layout
+
+\begin_layout Itemize
+few iterations of the DCG/CG solver can also be used as the surrogate model!
+\end_layout
+
+\end_deeper
+\begin_layout Standard
+\begin_inset Separator plain
+\end_inset
+
+
+\end_layout
+
+\begin_layout Standard
+in DT - methodology, what are suitable use-cases (number of parameters,
+ type and number of measurements, demands of the mathematical model)
 \end_layout
 
 \end_body

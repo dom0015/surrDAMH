@@ -32,7 +32,7 @@ class Surrogate_col:
         self.alldata_obs = np.vstack((self.alldata_obs, newdata_obs))
         self.alldata_wei = np.vstack((self.alldata_wei, newdata_wei))
     
-    def calculate(self):
+    def update(self):
         no_snapshots, no_parameters = self.alldata_par.shape
         degree = int(np.floor(np.log(no_snapshots)/np.log(no_parameters)))
 #        print("degree",degree)
@@ -60,8 +60,10 @@ class Surrogate_col:
     def apply(self, SOL, newdata_par):
         c, H, poly, degree = SOL
         N = poly.shape[0]
-        no_newdata = newdata_par.shape[0]
         no_observations = c.shape[1]
+        if len(newdata_par.shape)==1:
+            newdata_par.shape = (1,no_observations)
+        no_newdata = newdata_par.shape[0]  
         newdata_surrogate = np.zeros((no_newdata,no_observations))
         phi = np.ones((no_newdata,N))
         for i in range(N):
