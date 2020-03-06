@@ -12,9 +12,8 @@ import main_codes
 
 class Configuration:
     def __init__(self,display=False):
-        self.no_samplers = 2
+        self.no_samplers = 3
         self.no_full_solvers = 2
-        self.no_surr_solvers = 1
         
 #        self.full_solver_init = fse.Solver_local_2to2
 #        self.full_solver_parameters = {}

@@ -52,7 +52,7 @@ my_Alg = sa.Algorithm_MH(my_Prob, my_Prop, my_Sol,
 my_Alg1 = sa.Algorithm_DAMH(my_Prob, my_Prop, my_Sol,
                             Surrogate = my_Surr,
                             initial_sample=my_Prob.prior_mean,
-                            max_samples=10000,
+                            max_samples=1000,
                             name='my_DAMH_alg' + str(rank_world),
                             seed=seed0+3)
 my_Alg.run()
