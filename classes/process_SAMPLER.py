@@ -7,32 +7,25 @@ Created on Wed Oct 23 15:35:47 2019
 """
 
 from mpi4py import MPI
-import main_codes as sa
-import numpy as np
+comm_world = MPI.COMM_WORLD
+rank_world = comm_world.Get_rank()
+size_world = comm_world.Get_size()
 
 from configuration import Configuration
 C = Configuration()
-no_parameters = C.no_parameters
-no_observations = C.no_observations
 rank_full_solver = C.rank_full_solver
 rank_surr_collector = C.rank_surr_collector
+no_parameters = C.no_parameters
+no_observations = C.no_observations
 
-comm_world = MPI.COMM_WORLD
-size_world = comm_world.Get_size()
-rank_world = comm_world.Get_rank()
-
-#tmp = np.random.RandomState(44+rank_world)
-#print(tmp.uniform(), tmp.uniform(), tmp.uniform())
+import main_codes as sa
 
 seed0 = max(1000,size_world)*rank_world
 print("PROCESS SAMPLER, seeds:", [seed0, seed0+1, seed0+2], "RANK:", rank_world)
 
-# TO DO: my_Sol and my_Surr as inputs from configuration? my_surr takes the instance of surr solver!
-#my_Sol = sa.Solver_local_2to2()
 my_Sol = sa.Solver_MPI_collector_MPI(no_parameters=no_parameters, 
                               no_observations=no_observations, 
-                              rank_full_solver=rank_full_solver) # only knows the MPI rank to communicate with
-#my_Surr = sa.Solver_MPI_linker(no_parameters=2, no_observations=2, rank_full_solver=no_samplers+1, is_updated=True, rank_data_collector=no_samplers+2)
+                              rank_solver=rank_full_solver) # only knows the MPI rank to communicate with
 my_Surr_Solver = C.surr_solver_init(**C.surr_solver_parameters)
 my_Surr = sa.Solver_local_collector_MPI(no_parameters=no_parameters, 
                                         no_observations=no_observations, 
@@ -54,18 +47,26 @@ my_Prop = sa.Proposal_GaussRandomWalk(no_parameters=no_parameters,
 my_Alg = sa.Algorithm_MH(my_Prob, my_Prop, my_Sol,
                          Surrogate = my_Surr,
                          initial_sample=my_Prob.prior_mean,
-                         max_samples=50,
+                         max_samples=10,
                          name='my_MH_alg' + str(rank_world),
                          seed=seed0+2)
 my_Alg1 = sa.Algorithm_DAMH(my_Prob, my_Prop, my_Sol,
                             Surrogate = my_Surr,
                             initial_sample=my_Prob.prior_mean,
-                            max_samples=1000,
+                            max_samples=10,
                             name='my_DAMH_alg' + str(rank_world),
                             seed=seed0+3)
 my_Alg.run()
-print("SAMPLER MH:", rank_world, size_world, "- acc/rej/prerej:", my_Alg.no_accepted, my_Alg.no_rejected, my_Alg.no_prerejected, my_Alg.no_accepted/(my_Alg.no_accepted+my_Alg.no_rejected)*100, '%')
+print("SAMPLER MH:", rank_world, "- acc/rej/prerej:", my_Alg.no_accepted, my_Alg.no_rejected, my_Alg.no_prerejected, my_Alg.no_accepted/(my_Alg.no_accepted+my_Alg.no_rejected)*100, '%')
 my_Alg1.run()
+
+f = getattr(my_Sol,"terminate",None)
+if callable(f):
+    my_Sol.terminate()
+    
+f = getattr(my_Surr,"terminate",None)
+if callable(f):
+    my_Surr.terminate()
 
 comm_world.Barrier()
 print("MPI process", rank_world, "(SAMPLER) terminated.")

@@ -6,11 +6,11 @@ Created on Tue Oct 29 14:55:37 2019
 @author: simona
 """
 
-from configuration import Configuration
-import numpy as np
 from mpi4py import MPI
-from collections import deque
+comm_world = MPI.COMM_WORLD
+rank_world = comm_world.Get_rank()
 
+from configuration import Configuration
 C = Configuration()
 solver_init = C.full_solver_init
 solver_parameters = C.full_solver_parameters
@@ -21,8 +21,8 @@ no_samplers = C.no_samplers
 # no_solvers ... number of solvers to be created
 # no_samplers ... number of samplers that request solutions
 
-comm_world = MPI.COMM_WORLD
-rank_world = comm_world.Get_rank()
+import numpy as np
+from collections import deque
 
 Solvers = []
 for i in range(no_solvers):

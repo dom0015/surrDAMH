@@ -8,7 +8,7 @@ Created on Wed Jan 22 10:15:50 2020
 
 import numpy as np
             
-class Surrogate_col:
+class Surrogate_col: # initiated by SAMPLERs
     def __init__(self, no_parameters, no_observations, is_updated=True, max_degree=5):
         self.no_parameters = no_parameters
         self.no_observations = no_observations

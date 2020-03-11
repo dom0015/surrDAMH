@@ -6,14 +6,229 @@ Created on Tue Oct 22 15:00:39 2019
 @author: simona
 """
 
+from mpi4py import MPI
 import numpy as np
 import os
 import csv
-from mpi4py import MPI
 import sys
-import time
 
-class Proposal_GaussRandomWalk:
+class Algorithm_MH: # initiated by SAMPLERs
+    def __init__(self, Problem, Proposal, Solver, max_samples, name, seed=0, initial_sample=None, G_initial_sample=None, Surrogate=None, is_saved=True):
+        self.Problem = Problem
+        self.Proposal = Proposal
+        self.Solver = Solver
+        self.max_samples = max_samples
+        self.name = name
+        self.seed = seed
+        self.current_sample = initial_sample
+        if self.current_sample is None:
+            self.current_sample = self.Problem.prior_mean.copy()
+        self.G_current_sample = G_initial_sample
+        self.Surrogate = Surrogate
+        if Surrogate is None:
+            self.__send_to_surrogate = self._empty_function
+        elif Surrogate.is_updated is True:
+            self.__send_to_surrogate = self.__send_to_surrogate__
+        else:
+            self.__send_to_surrogate = self._empty_function
+        self.is_saved = is_saved
+        self.__generator = np.random.RandomState(seed)
+        self.no_accepted = 0
+        self.no_prerejected = 0
+        self.no_rejected = 0
+        if Problem.is_exponential and Proposal.is_exponential:
+            if Proposal.is_symmetric:
+                self.__is_accepted = self._acceptance_log_symmetric
+                self.__get_posterior = self.Problem.get_log_posterior
+            else:
+                # not implemented
+                return
+        else:
+            # not implemented
+            return
+    
+    def run(self):
+        print("RANK", MPI.COMM_WORLD.Get_rank(), "SAMPLER MH starts")
+        if self.is_saved:
+            filename = self.Problem.name + "/" + self.name + ".csv"
+            os.makedirs(os.path.dirname(filename), exist_ok=True)
+            self.__file = open(filename, 'w')
+            self.__writer = csv.writer(self.__file)
+            self.__write_to_file = self.__write_to_file__
+        else:
+            self.__write_to_file = self._empty_function
+        if self.G_current_sample is None:
+            self.Solver.send_request(self.current_sample)
+            self.G_current_sample = self.Solver.get_solution()
+        self.posterior_current_sample = self.__get_posterior(self.current_sample, self.G_current_sample)
+        self.no_rejected_current = 0
+        for i in range(self.max_samples):
+            self.proposed_sample = self.Proposal.propose_sample(self.current_sample)
+            self.Solver.send_request(self.proposed_sample)
+            G_proposed_sample = self.Solver.get_solution()
+            self.posterior_proposed_sample = self.__get_posterior(self.proposed_sample, G_proposed_sample)
+            if self.__is_accepted(self.posterior_proposed_sample - self.posterior_current_sample):
+                self.__write_to_file()
+                self.__send_to_surrogate(sample=self.current_sample.copy(), G_sample=self.G_current_sample.copy(), weight=self.no_rejected_current+1)    
+                self.current_sample = self.proposed_sample
+                self.G_current_sample = G_proposed_sample
+                self.posterior_current_sample = self.posterior_proposed_sample
+                self.no_accepted += 1
+                self.no_rejected_current = 0       
+            else:
+                self.no_rejected += 1
+                self.no_rejected_current += 1
+                self.__send_to_surrogate(sample=self.proposed_sample, G_sample=G_proposed_sample, weight=0)
+                
+        self.__write_to_file()
+        if self.is_saved:
+            self.__file.close()
+            filename_notes = self.Problem.name + "/notes/" + self.name + ".csv"
+            os.makedirs(os.path.dirname(filename_notes), exist_ok=True)
+            notes = [self.no_accepted, self.no_rejected, self.seed]
+            file_notes = open(filename_notes, 'w')
+            writer_notes = csv.writer(file_notes)
+            writer_notes.writerow(notes)
+            file_notes.close()
+        print("RANK", MPI.COMM_WORLD.Get_rank(), "SAMPLER MH finishes")
+
+    def _acceptance_log_symmetric(self,log_ratio):
+        temp = self.__generator.uniform(0.0,1.0)
+        #print(self.posterior_proposed_sample, self.posterior_current_sample, temp, np.log(temp))
+        temp = np.log(temp)
+        if temp<log_ratio: # accepted
+            return True
+        else:
+            return False
+        
+    def __write_to_file__(self):
+        row = [1+self.no_rejected_current]
+        for j in range(self.Problem.no_parameters):
+            row.append(self.current_sample[j])
+        self.__writer.writerow(row)
+    
+    def __send_to_surrogate__(self, sample, G_sample, weight):
+        snapshot = Snapshot(sample=sample, G_sample=G_sample, weight=weight)
+        self.Surrogate.send_to_data_collector(snapshot)
+        
+    def _empty_function(self,**kw):
+        return
+    
+class Algorithm_DAMH: # initiated by SAMPLERs
+    def __init__(self, Problem, Proposal, Solver, max_samples, name, seed=0, initial_sample=None, G_initial_sample=None, Surrogate=None, is_saved=True):
+        self.Problem = Problem
+        self.Proposal = Proposal
+        self.Solver = Solver
+        self.max_samples = max_samples
+        self.name = name
+        self.seed = seed
+        self.current_sample = initial_sample
+        if self.current_sample is None:
+            self.current_sample = self.Problem.prior_mean
+        self.G_current_sample = G_initial_sample
+        self.Surrogate = Surrogate
+        if Surrogate is None:
+            self.__send_to_surrogate = self._empty_function
+        elif Surrogate.is_updated is True:
+            self.__send_to_surrogate = self.__send_to_surrogate__
+        else:
+            self.__send_to_surrogate = self._empty_function
+        self.is_saved = is_saved
+        self.__generator = np.random.RandomState(seed)
+        self.no_accepted = 0
+        self.no_prerejected = 0
+        self.no_rejected = 0
+        if Problem.is_exponential and Proposal.is_exponential:
+            if Proposal.is_symmetric:
+                self.__is_accepted = self._acceptance_log_symmetric
+                self.__get_posterior = self.Problem.get_log_posterior
+            else:
+                # not implemented
+                return
+        else:
+            # not implemented
+            return
+    
+    def run(self):
+        print("RANK", MPI.COMM_WORLD.Get_rank(), "SAMPLER DAMH starts")
+        if self.is_saved:
+            filename = self.Problem.name + "/" + self.name + ".csv"
+            os.makedirs(os.path.dirname(filename), exist_ok=True)
+            self.__file = open(filename, 'w')
+            self.__writer = csv.writer(self.__file)
+            self.__write_to_file = self.__write_to_file__
+        else:
+            self.__write_to_file = self._empty_function
+        if self.G_current_sample is None:
+            self.Solver.send_request(self.current_sample.copy())
+            self.G_current_sample = self.Solver.get_solution()
+        self.posterior_current_sample = self.__get_posterior(self.current_sample, self.G_current_sample)
+        self.Surrogate.send_request(self.current_sample.copy())
+        GS_current_sample = self.Surrogate.get_solution()
+        pre_posterior_current_sample = self.__get_posterior(self.current_sample, GS_current_sample)
+        self.no_rejected_current = 0
+        for i in range(self.max_samples):
+            self.proposed_sample = self.Proposal.propose_sample(self.current_sample)
+            self.Surrogate.send_request(self.proposed_sample.copy())
+            GS_proposed_sample = self.Surrogate.get_solution()
+            pre_posterior_proposed_sample = self.__get_posterior(self.proposed_sample, GS_proposed_sample)
+            pre_log_ratio = pre_posterior_proposed_sample - pre_posterior_current_sample
+            if self.__is_accepted(pre_log_ratio):
+                self.Solver.send_request(self.proposed_sample.copy())
+                G_proposed_sample = self.Solver.get_solution()
+                self.posterior_proposed_sample = self.__get_posterior(self.proposed_sample, G_proposed_sample)
+                log_ratio = self.posterior_proposed_sample - self.posterior_current_sample
+#                print("log ratio:", log_ratio, pre_log_ratio)
+                if self.__is_accepted(log_ratio - pre_log_ratio):
+                    self.__write_to_file()
+                    self.__send_to_surrogate(sample=self.proposed_sample, G_sample=G_proposed_sample, weight=self.no_rejected_current+1)
+                    self.no_accepted += 1
+                    self.no_rejected_current = 0           
+                    self.current_sample = self.proposed_sample
+                    self.posterior_current_sample = self.posterior_proposed_sample
+                    pre_posterior_current_sample = pre_posterior_proposed_sample
+                else:
+                    self.no_rejected += 1
+                    self.no_rejected_current += 1
+            else:
+                self.no_prerejected += 1
+                self.no_rejected_current += 1
+       
+        self.__write_to_file()
+        if self.is_saved:
+            self.__file.close()
+            filename_notes = self.Problem.name + "/notes/" + self.name + ".csv"
+            os.makedirs(os.path.dirname(filename_notes), exist_ok=True)
+            notes = [self.no_accepted, self.no_rejected, self.seed]
+            file_notes = open(filename_notes, 'w')
+            writer_notes = csv.writer(file_notes)
+            writer_notes.writerow(notes)
+            file_notes.close()
+        print("RANK", MPI.COMM_WORLD.Get_rank(), "SAMPLER DAMH finishes")
+
+    def _acceptance_log_symmetric(self,log_ratio):
+        temp = self.__generator.uniform(0.0,1.0)
+        #print(self.posterior_proposed_sample, self.posterior_current_sample, temp, np.log(temp))
+        temp = np.log(temp)
+        if temp<log_ratio: # accepted
+            return True
+        else:
+            return False
+        
+    def __write_to_file__(self):
+        row = [1+self.no_rejected_current]
+        for j in range(self.Problem.no_parameters):
+            row.append(self.current_sample[j])
+        self.__writer.writerow(row)
+    
+    def __send_to_surrogate__(self, sample, G_sample, weight):
+        snapshot = Snapshot(sample=sample, G_sample=G_sample, weight=weight)
+        self.Surrogate.send_to_data_collector(snapshot)
+        
+    def _empty_function(self,**kw):
+        return
+
+class Proposal_GaussRandomWalk: # initiated by SAMPLERs
     def __init__(self, no_parameters, proposal_std=1.0, proposal_cov=None, seed=0):
         self.__generator = np.random.RandomState(seed)
         self.proposal_cov = proposal_cov
@@ -45,7 +260,7 @@ class Proposal_GaussRandomWalk:
         sample = generator.multivariate_normal(var_mean,var_cov)
         return sample
     
-class Problem_Gauss:
+class Problem_Gauss: # initiated by SAMPLERs
     def __init__(self, no_parameters, prior_mean=0.0, prior_std=1.0, prior_cov=None, noise_std=1.0, noise_cov=None, no_observations=None, observations=None, seed=0, name='default_problem_name'):
         self.no_parameters = no_parameters
         if np.isscalar(prior_mean):
@@ -129,242 +344,8 @@ class Problem_Gauss:
     def __sample_multivariate(self,generator,var_mean,var_cov):
         sample = generator.multivariate_normal(var_mean,var_cov)
         return sample
-        
-class Algorithm_MH:
-    def __init__(self, Problem, Proposal, Solver, max_samples, name, seed=0, initial_sample=None, G_initial_sample=None, Surrogate=None, is_saved=True):
-        self.Problem = Problem
-        self.Proposal = Proposal
-        self.Solver = Solver
-        self.max_samples = max_samples
-        self.name = name
-        self.seed = seed
-        self.current_sample = initial_sample
-        if self.current_sample is None:
-            self.current_sample = self.Problem.prior_mean
-        self.G_current_sample = G_initial_sample
-        self.Surrogate = Surrogate
-        if Surrogate is None:
-            self.__send_to_surrogate = self._empty_function
-        elif Surrogate.is_updated is True:
-            self.__send_to_surrogate = self.__send_to_surrogate__
-        else:
-            self.__send_to_surrogate = self._empty_function
-        self.is_saved = is_saved
-        self.__generator = np.random.RandomState(seed)
-        self.no_accepted = 0
-        self.no_prerejected = 0
-        self.no_rejected = 0
-        if Problem.is_exponential and Proposal.is_exponential:
-            if Proposal.is_symmetric:
-                self.__is_accepted = self._acceptance_log_symmetric
-                self.__get_posterior = self.Problem.get_log_posterior
-            else:
-                # not implemented
-                return
-        else:
-            # not implemented
-            return
     
-    def run(self):
-        print("RANK", MPI.COMM_WORLD.Get_rank(), "SAMPLER MH starts")
-        if self.is_saved:
-            filename = self.Problem.name + "/" + self.name + ".csv"
-            os.makedirs(os.path.dirname(filename), exist_ok=True)
-            self.__file = open(filename, 'w')
-            self.__writer = csv.writer(self.__file)
-            self.__write_to_file = self.__write_to_file__
-        else:
-            self.__write_to_file = self._empty_function
-        if self.G_current_sample is None:
-            self.Solver.send_request(self.current_sample.copy())
-            self.G_current_sample = self.Solver.get_solution()
-        self.posterior_current_sample = self.__get_posterior(self.current_sample, self.G_current_sample)
-        self.no_rejected_current = 0
-        for i in range(self.max_samples):
-            self.proposed_sample = self.Proposal.propose_sample(self.current_sample)
-            self.Solver.send_request(self.proposed_sample.copy())
-            G_proposed_sample = self.Solver.get_solution()
-#            if any(self.proposed_sample != G_proposed_sample):
-#                print(self.Solver.comm.Get_rank(), self.proposed_sample, G_proposed_sample, "TAG=", self.Solver.tag)
-            self.posterior_proposed_sample = self.__get_posterior(self.proposed_sample, G_proposed_sample)
-            if self.__is_accepted(self.posterior_proposed_sample - self.posterior_current_sample):
-                self.__write_to_file()
-                self.__send_to_surrogate(sample=self.current_sample, G_sample=self.G_current_sample, weight=self.no_rejected_current+1)    
-                self.current_sample = self.proposed_sample
-                self.G_current_sample = G_proposed_sample
-                self.posterior_current_sample = self.posterior_proposed_sample
-                self.no_accepted += 1
-                self.no_rejected_current = 0       
-            else:
-                self.no_rejected += 1
-                self.no_rejected_current += 1
-                self.__send_to_surrogate(sample=self.proposed_sample, G_sample=G_proposed_sample, weight=0)
-                
-#        f = getattr(self.Solver,"terminate",None)
-#        if callable(f):
-#            self.Solver.terminate()
-#            
-#        f = getattr(self.Surrogate,"terminate",None)
-#        if callable(f):
-#            self.Surrogate.terminate()
-                
-        self.__write_to_file()
-        if self.is_saved:
-            self.__file.close()
-            filename_notes = self.Problem.name + "/notes/" + self.name + ".csv"
-            os.makedirs(os.path.dirname(filename_notes), exist_ok=True)
-            notes = [self.no_accepted, self.no_rejected, self.seed]
-            file_notes = open(filename_notes, 'w')
-            writer_notes = csv.writer(file_notes)
-            writer_notes.writerow(notes)
-            file_notes.close()
-        print("RANK", MPI.COMM_WORLD.Get_rank(), "SAMPLER MH finishes")
-
-    def _acceptance_log_symmetric(self,log_ratio):
-        temp = self.__generator.uniform(0.0,1.0)
-        #print(self.posterior_proposed_sample, self.posterior_current_sample, temp, np.log(temp))
-        temp = np.log(temp)
-        if temp<log_ratio: # accepted
-            return True
-        else:
-            return False
-        
-    def __write_to_file__(self):
-        row = [1+self.no_rejected_current]
-        for j in range(self.Problem.no_parameters):
-            row.append(self.current_sample[j])
-        self.__writer.writerow(row)
-    
-    def __send_to_surrogate__(self, sample, G_sample, weight):
-        snapshot = Snapshot(sample=sample, G_sample=G_sample, weight=weight)
-        self.Surrogate.send_to_data_collector(snapshot)
-        
-    def _empty_function(self,**kw):
-        return
-    
-class Algorithm_DAMH:
-    def __init__(self, Problem, Proposal, Solver, max_samples, name, seed=0, initial_sample=None, G_initial_sample=None, Surrogate=None, is_saved=True):
-        self.Problem = Problem
-        self.Proposal = Proposal
-        self.Solver = Solver
-        self.max_samples = max_samples
-        self.name = name
-        self.seed = seed
-        self.current_sample = initial_sample
-        if self.current_sample is None:
-            self.current_sample = self.Problem.prior_mean
-        self.G_current_sample = G_initial_sample
-        self.Surrogate = Surrogate
-        if Surrogate is None:
-            self.__send_to_surrogate = self._empty_function
-        elif Surrogate.is_updated is True:
-            self.__send_to_surrogate = self.__send_to_surrogate__
-        else:
-            self.__send_to_surrogate = self._empty_function
-        self.is_saved = is_saved
-        self.__generator = np.random.RandomState(seed)
-        self.no_accepted = 0
-        self.no_prerejected = 0
-        self.no_rejected = 0
-        if Problem.is_exponential and Proposal.is_exponential:
-            if Proposal.is_symmetric:
-                self.__is_accepted = self._acceptance_log_symmetric
-                self.__get_posterior = self.Problem.get_log_posterior
-            else:
-                # not implemented
-                return
-        else:
-            # not implemented
-            return
-    
-    def run(self):
-        print("RANK", MPI.COMM_WORLD.Get_rank(), "SAMPLER DAMH starts")
-        if self.is_saved:
-            filename = self.Problem.name + "/" + self.name + ".csv"
-            os.makedirs(os.path.dirname(filename), exist_ok=True)
-            self.__file = open(filename, 'w')
-            self.__writer = csv.writer(self.__file)
-            self.__write_to_file = self.__write_to_file__
-        else:
-            self.__write_to_file = self._empty_function
-        if self.G_current_sample is None:
-            self.Solver.send_request(self.current_sample.copy())
-            self.G_current_sample = self.Solver.get_solution()
-        self.posterior_current_sample = self.__get_posterior(self.current_sample, self.G_current_sample)
-        self.Surrogate.send_request(self.current_sample.copy())
-        GS_current_sample = self.Surrogate.get_solution()
-        pre_posterior_current_sample = self.__get_posterior(self.current_sample, GS_current_sample)
-        self.no_rejected_current = 0
-        for i in range(self.max_samples):
-            self.proposed_sample = self.Proposal.propose_sample(self.current_sample)
-            self.Surrogate.send_request(self.proposed_sample.copy())
-            GS_proposed_sample = self.Surrogate.get_solution()
-            pre_posterior_proposed_sample = self.__get_posterior(self.proposed_sample, GS_proposed_sample)
-            pre_log_ratio = pre_posterior_proposed_sample - pre_posterior_current_sample
-            if self.__is_accepted(pre_log_ratio):
-                self.Solver.send_request(self.proposed_sample.copy())
-                G_proposed_sample = self.Solver.get_solution()
-                self.posterior_proposed_sample = self.__get_posterior(self.proposed_sample, G_proposed_sample)
-                log_ratio = self.posterior_proposed_sample - self.posterior_current_sample
-#                print("log ratio:", log_ratio, pre_log_ratio)
-                if self.__is_accepted(log_ratio - pre_log_ratio):
-                    self.__write_to_file()
-                    self.__send_to_surrogate(sample=self.proposed_sample, G_sample=G_proposed_sample, weight=self.no_rejected_current+1)
-                    self.no_accepted += 1
-                    self.no_rejected_current = 0           
-                    self.current_sample = self.proposed_sample
-                    self.posterior_current_sample = self.posterior_proposed_sample
-                    pre_posterior_current_sample = pre_posterior_proposed_sample
-                else:
-                    self.no_rejected += 1
-                    self.no_rejected_current += 1
-            else:
-                self.no_prerejected += 1
-                self.no_rejected_current += 1
-    
-        f = getattr(self.Solver,"terminate",None)
-        if callable(f):
-            self.Solver.terminate()
-            
-        f = getattr(self.Surrogate,"terminate",None)
-        if callable(f):
-            self.Surrogate.terminate()
-                
-        self.__write_to_file()
-        if self.is_saved:
-            self.__file.close()
-            filename_notes = self.Problem.name + "/notes/" + self.name + ".csv"
-            os.makedirs(os.path.dirname(filename_notes), exist_ok=True)
-            notes = [self.no_accepted, self.no_rejected, self.seed]
-            file_notes = open(filename_notes, 'w')
-            writer_notes = csv.writer(file_notes)
-            writer_notes.writerow(notes)
-            file_notes.close()
-        print("RANK", MPI.COMM_WORLD.Get_rank(), "SAMPLER DAMH finishes")
-
-    def _acceptance_log_symmetric(self,log_ratio):
-        temp = self.__generator.uniform(0.0,1.0)
-        #print(self.posterior_proposed_sample, self.posterior_current_sample, temp, np.log(temp))
-        temp = np.log(temp)
-        if temp<log_ratio: # accepted
-            return True
-        else:
-            return False
-        
-    def __write_to_file__(self):
-        row = [1+self.no_rejected_current]
-        for j in range(self.Problem.no_parameters):
-            row.append(self.current_sample[j])
-        self.__writer.writerow(row)
-    
-    def __send_to_surrogate__(self, sample, G_sample, weight):
-        snapshot = Snapshot(sample=sample, G_sample=G_sample, weight=weight)
-        self.Surrogate.send_to_data_collector(snapshot)
-        
-    def _empty_function(self,**kw):
-        return
-    
-class Snapshot:
+class Snapshot: # initiated by SAMPLERs (if surrogate is updated) and
     def __init__(self, sample=None, G_sample=None, weight=None):
         self.sample = sample
         self.G_sample = G_sample
@@ -373,13 +354,14 @@ class Snapshot:
     def print(self):
         print("W:", self.weight, "S:", self.sample, "G:", self.G_sample)
        
-class Solver_MPI_parent:
+class Solver_MPI_parent: # initiated by full SOLVER
     def __init__(self, no_parameters, no_observations, maxprocs=1):
         self.no_parameters = no_parameters
         self.no_observations = no_observations
         self.max_requests = 1
         self.comm = MPI.COMM_SELF.Spawn(sys.executable, args=['spawned_child_solver.py'], maxprocs=maxprocs)
         self.tag = 0
+        self.received_data = np.zeros(self.no_observations)
     
     def send_request(self, data_par):
         self.tag += 1
@@ -388,10 +370,9 @@ class Solver_MPI_parent:
         print('DEBUG - PARENT Send request FROM', self.comm.Get_rank(), '(', MPI.COMM_WORLD.Get_rank(), ')', 'TO child:', 0, "TAG:", self.tag)
         
     def get_solution(self):
-        received_data = np.empty((1,self.no_observations))
-        self.comm.Recv(received_data, source=0, tag=self.tag)
+        self.comm.Recv(self.received_data, source=0, tag=self.tag)
         print('DEBUG - PARENT Recv solution FROM child', 0, 'TO:', self.comm.Get_rank(), '(', MPI.COMM_WORLD.Get_rank(), ')', "TAG:", self.tag)
-        return received_data
+        return self.received_data.copy()
     
     def is_solved(self):
         # check the parent-child communicator if there is an incoming message
@@ -406,42 +387,43 @@ class Solver_MPI_parent:
         print("Solver spawned by rank", MPI.COMM_WORLD.Get_rank(), "will be disconnected.")
         self.comm.Disconnect()
     
-class Solver_MPI_linker:
-    def __init__(self, no_parameters, no_observations, rank_full_solver, is_updated=False, rank_data_collector=None):
-        self.no_parameters = 2
-        self.no_observations = 2
+class Solver_MPI_collector_MPI: # initiated by SAMPLERs
+    def __init__(self, no_parameters, no_observations, rank_solver, is_updated=False, rank_data_collector=None):
+        self.no_parameters = no_parameters
+        self.no_observations = no_observations
         self.max_requests = 1
         self.comm = MPI.COMM_WORLD
-        self.rank_full_solver = rank_full_solver
+        self.rank = self.comm.Get_rank()
+        self.rank_solver = rank_solver
         self.is_updated = is_updated
         self.rank_data_collector = rank_data_collector
-        self.tag = 0
-        self.tag_data = 0
-        self.received_data = np.zeros(no_observations)
-        self.terminated = None
-        self.terminated_data = True
+        self.tag_solver = 0
+        self.tag_collector = 0
+        self.received_data = np.zeros(self.no_observations)
+        self.terminated_solver = None
+        self.terminated_collector = True
         if not rank_data_collector is None:
-            self.terminated_data = False
+            self.terminated_collector = False
         
     def send_request(self, sent_data):
-        self.tag += 1
-        self.comm.Send(sent_data, dest=self.rank_full_solver, tag=self.tag)
-        print('DEBUG - LINKER (', self.comm.Get_rank(), ') Send request FROM', self.comm.Get_rank(), 'TO:', self.rank_full_solver, "TAG:", self.tag)
+        self.tag_solver += 1
+        self.comm.Send(sent_data, dest=self.rank_solver, tag=self.tag_solver)
+        print('DEBUG - Solver_MPI_collector_MPI (', self.rank, ') Send request FROM', self.rank, 'TO:', self.rank_solver, "TAG:", self.tag_solver)
     
     def get_solution(self, ):
-        self.comm.Recv(self.received_data, source=self.rank_full_solver, tag=self.tag)
-        print('DEBUG - LINKER (', self.comm.Get_rank(), ') Recv solution FROM', self.rank_full_solver, 'TO:', self.comm.Get_rank(), "TAG:", self.tag)
-        return self.received_data
+        self.comm.Recv(self.received_data, source=self.rank_solver, tag=self.tag_solver)
+        print('DEBUG - Solver_MPI_collector_MPI (', self.rank, ') Recv solution FROM', self.rank_solver, 'TO:', self.rank, "TAG:", self.tag_solver)
+        return self.received_data.copy()
     
-    def send_snapshot(self, sent_snapshot):
-        # needed only if is_updated == True
-        self.tag_data += 1
-        print('debug - LINKER (', self.comm.Get_rank(), ') - sent_snapshot', self.rank_data_collector, self.comm.Get_size(), self.comm.Get_rank())
-        self.comm.send(sent_snapshot, dest=self.rank_data_collector, tag=self.tag_data)
+    def send_to_data_collector(self, sent_snapshot):
+        # needed only if self.is_updated == True
+        self.tag_collector += 1
+        print('debug - Solver_MPI_collector_MPI (', self.rank, ') - sent_snapshot', self.rank_data_collector, self.comm.Get_size(), self.rank)
+        self.comm.send(sent_snapshot, dest=self.rank_data_collector, tag=self.tag_collector)
         
     def is_solved(self):
         # check COMM_WORLD if there is an incoming message from the solver
-        tmp = self.comm.Iprobe(source=self.rank_full_solver, tag=self.tag)
+        tmp = self.comm.Iprobe(source=self.rank_solver, tag=self.tag_solver)
         if tmp:
             return True
         else:
@@ -449,17 +431,17 @@ class Solver_MPI_linker:
         
     def terminate(self, ):
         # assume that terminate may be called multiple times
-        if not self.terminated:
+        if not self.terminated_solver:
             sent_data = np.zeros(self.no_parameters)
-            print('debug - terminate',self.rank_full_solver, self.comm.Get_size(), self.comm.Get_rank())
-            self.comm.Send(sent_data, dest=self.rank_full_solver, tag=0)
-            self.terminated = True
-        if not self.terminated_data:
+            print('debug - Solver_MPI_collector_MPI terminate',self.rank_solver, self.comm.Get_size(), self.rank)
+            self.comm.Send(sent_data, dest=self.rank_solver, tag=0)
+            self.terminated_solver = True
+        if not self.terminated_collector:
             snapshot = Snapshot()
             self.comm.send(snapshot, dest=self.rank_data_collector, tag=0)
-            self.terminated_data = True
+            self.terminated_collector = True
 
-class Solver_local_collector_MPI:
+class Solver_local_collector_MPI: # initiated by SAMPLERs
     # local solver (evaluated on SAMPLERs)
     # with external data COLLECTOR (separate MPI process)
     def __init__(self, no_parameters, no_observations, local_solver_instance, is_updated=False, rank_data_collector=None):
@@ -496,6 +478,7 @@ class Solver_local_collector_MPI:
         # needed only if is_updated == True
         print('debug - SURROGATE_LINKER (', self.comm.Get_rank(), ') - sent_snapshot', self.rank_data_collector, self.comm.Get_size(), self.comm.Get_rank())
         self.comm.send(sent_snapshot, dest=self.rank_data_collector, tag=self.tag_sent_data)
+        # TO DO: isend
         self.receive_update_if_ready()
 
     def receive_update_if_ready(self):
