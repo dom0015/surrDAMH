@@ -28,27 +28,41 @@ is_active_sampler = np.array([True] * no_samplers)
 send_buffers = [None] * no_samplers
 is_ready_sampler = np.array([False] * no_samplers) # ready to receive updated data
 is_free_updater = True
-status = MPI.Status()
+tag_terminate = 0
+tag_ready_to_receive = 1
+tag_sent_data = 2
 list_received_data = []
+empty_buffer = np.zeros(1)
+requests = [None] * no_samplers
+if any(is_active_sampler):
+    for i in np.nditer(np.where(is_active_sampler)):
+        requests[i] = comm_world.irecv(source=samplers_ranks[i], tag=tag_sent_data)
+        comm_world.Isend(empty_buffer, dest=samplers_ranks[i], tag=tag_ready_to_receive)
+status = MPI.Status()
 while any(is_active_sampler): # while at least 1 sampling algorithm is active
 #    print(is_active_sampler,"while at least 1 sampling algorithm is active - rank", rank_world)
     tmp = comm_world.Iprobe(source=MPI.ANY_SOURCE, tag=MPI.ANY_TAG, status=status)
     if tmp: # if there is an incoming message from any sampling algorithm
         rank_source = status.Get_source()
         tag = status.Get_tag()
-        if tag == 0: # if received message has tag 0, switch corresponding sampler to inactive
+        if tag == tag_terminate: # if received message has tag 0, switch corresponding sampler to inactive
             # assumes that there will be no other incoming message from that source 
             is_active_sampler[samplers_ranks == rank_source] = False
             received_data = comm_world.recv(source=rank_source, tag=tag)
-        elif tag == 1: # if received message has tag 1, the corresponding sampler
+        elif tag == tag_ready_to_receive: # if received message has tag 1, the corresponding sampler
             # is ready to receive updated data
             is_ready_sampler[rank_source] = True
             tmp = np.zeros(1) # TO DO: useless pointer / cancel message
             comm_world.Recv(tmp,source=rank_source, tag=tag)
-        else: # put the request into queue (remember source and tag)
-            received_data = comm_world.recv(source=rank_source, tag=tag)
-            list_received_data.append(received_data)
-            received_data.print() # DEBUG PRINT
+    if any(is_active_sampler):
+        for i in np.nditer(np.where(is_active_sampler)):
+            tmp = requests[i].test(status=status)
+            if tmp[0]:
+                received_data = tmp[1]
+                requests[i] = comm_world.irecv(source=samplers_ranks[i], tag=tag_sent_data)
+                comm_world.Isend(empty_buffer, dest=rank_source, tag=tag_ready_to_receive)
+                list_received_data.extend(received_data) # TO DO: a list is received
+#            received_data.print() # DEBUG PRINT
     if not is_free_updater: # check if the surrogate update is done
         if local_updater_instance.update_finished:
             is_free_updater = True
@@ -62,9 +76,8 @@ while any(is_active_sampler): # while at least 1 sampling algorithm is active
             is_free_updater = False
             for i in samplers_ranks[is_active_sampler & is_ready_sampler]:
                 # TO DO: buffers (avoid memory copying)
-                # TO DO: tag
                 send_buffers[i]=SOL.copy() # TO DO: copy?
-                comm_world.isend(send_buffers[i], dest=i, tag=no_snapshots)
+                comm_world.isend(send_buffers[i], dest=i, tag=tag_sent_data)
                 is_ready_sampler[i] = False
 
 print("RANK", rank_world, "all collected snapshots:", len(list_received_data), len(local_updater_instance.alldata_par))

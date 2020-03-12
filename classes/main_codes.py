@@ -359,7 +359,7 @@ class Solver_MPI_parent: # initiated by full SOLVER
         self.no_parameters = no_parameters
         self.no_observations = no_observations
         self.max_requests = 1
-        self.comm = MPI.COMM_SELF.Spawn(sys.executable, args=['spawned_child_solver.py'], maxprocs=maxprocs)
+        self.comm = MPI.COMM_SELF.Spawn(sys.executable, args=['process_CHILD.py'], maxprocs=maxprocs)
         self.tag = 0
         self.received_data = np.zeros(self.no_observations)
     
@@ -452,6 +452,7 @@ class Solver_local_collector_MPI: # initiated by SAMPLERs
         self.rank_data_collector = rank_data_collector
         self.solver_data = [None] * 2       # double buffer
         self.solver_data_idx = 0            # idx of current buffer 0/1
+        self.tag_terminate = 0
         self.tag_ready_to_receive = 1
         self.tag_sent_data = 2
         self.terminated = None
@@ -460,25 +461,33 @@ class Solver_local_collector_MPI: # initiated by SAMPLERs
             self.terminated_data = False
         self.computation_in_progress = False # TO DO: remove?
         self.empty_buffer = np.zeros(1)
+        self.req = self.comm.irecv(source=self.rank_data_collector, tag=self.tag_sent_data)
         self.comm.Isend(self.empty_buffer, dest=self.rank_data_collector, tag=self.tag_ready_to_receive)
+        self.list_snapshots_to_send = []
         self.status = MPI.Status()
-        self.req = self.comm.irecv(source=self.rank_data_collector, tag=MPI.ANY_TAG)
 
     def send_request(self, received_parameters):
         self.received_parameters = received_parameters # TO DO: copy?
         self.computation_in_progress = True
 
     def get_solution(self, ):
+        print("SOLVER_DATA taken", self.solver_data_idx)
         calculated_observations = self.local_solver_instance.apply(self.solver_data[self.solver_data_idx],self.received_parameters)
         self.computation_in_progress = False
         return calculated_observations
 
-    def send_to_data_collector(self, sent_snapshot):
-        # sends snapshot to data COLLECTOR
+    def send_to_data_collector(self, snapshot_to_send):
+        # sends list of snapshots to data COLLECTOR
         # needed only if is_updated == True
-        print('debug - SURROGATE_LINKER (', self.comm.Get_rank(), ') - sent_snapshot', self.rank_data_collector, self.comm.Get_size(), self.comm.Get_rank())
-        self.comm.send(sent_snapshot, dest=self.rank_data_collector, tag=self.tag_sent_data)
-        # TO DO: isend
+        self.list_snapshots_to_send.append(snapshot_to_send)
+        tmp = self.comm.Iprobe(source=self.rank_data_collector, tag=self.tag_ready_to_receive)
+        if tmp: # if the collector is ready to receive new snapshots
+            tmp = np.zeros(1) # TO DO: useless pointer / cancel message
+            self.comm.Recv(tmp,source=self.rank_data_collector, tag=self.tag_ready_to_receive)
+            print('DEBUG - Solver_local_collector_MPI (', self.comm.Get_rank(), ') - sent_snapshots to', self.rank_data_collector)
+            self.comm.isend(self.list_snapshots_to_send.copy(), dest=self.rank_data_collector, tag=self.tag_sent_data)
+            self.list_snapshots_to_send = []
+            # TO DO: isend
         self.receive_update_if_ready()
 
     def receive_update_if_ready(self):
@@ -490,7 +499,7 @@ class Solver_local_collector_MPI: # initiated by SAMPLERs
         if r[0]:
             self.solver_data[1 - self.solver_data_idx] = r[1]
             self.solver_data_idx = 1 - self.solver_data_idx
-            self.req = self.comm.irecv(source=self.rank_data_collector, tag=MPI.ANY_TAG)
+            self.req = self.comm.irecv(source=self.rank_data_collector, tag=self.tag_sent_data)
             self.comm.Isend(self.empty_buffer, dest=self.rank_data_collector, tag=self.tag_ready_to_receive)
             
     def is_solved(self):
@@ -505,5 +514,5 @@ class Solver_local_collector_MPI: # initiated by SAMPLERs
             self.terminated = True
         if not self.terminated_data:
             snapshot = Snapshot()
-            self.comm.send(snapshot, dest=self.rank_data_collector, tag=0)
+            self.comm.send(snapshot, dest=self.rank_data_collector, tag=self.tag_terminate)
             self.terminated_data = True
