@@ -8,7 +8,7 @@ Created on Wed Nov  6 09:15:15 2019
 
 import full_solver_examples as fse
 import surrogate_solver_examples as sse
-import main_codes
+import classes_communication
 
 class Configuration:
     def __init__(self,display=False):
@@ -24,13 +24,13 @@ class Configuration:
 #        self.full_solver_parameters = {}
         
 ### TYPE 1 - solvers are spawned
-        self.full_solver_init = main_codes.Solver_MPI_parent
+        self.full_solver_init = classes_communication.Solver_MPI_parent
         self.full_solver_parameters = []
         for i in range(self.no_full_solvers):
             self.full_solver_parameters.append({'no_parameters':self.no_parameters, 'no_observations':self.no_observations})
     
 ### TYPE 2 - solvers are in the same COMM_WORLD
-#        self.full_solver_init = main_codes.Solver_MPI_linker
+#        self.full_solver_init = classes_communication.Solver_MPI_linker
 #        self.full_solver_parameters = []
 #        for i in range(self.no_full_solvers):
 #            self.full_solver_parameters.append({'no_parameters':2, 'no_observations':2, 'rank_full_solver':i+5})

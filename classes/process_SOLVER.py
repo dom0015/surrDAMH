@@ -55,7 +55,7 @@ while any(is_active_sampler): # while at least 1 sampling algorithm is active
     for i in range(no_solvers):
         if not is_free[i]: # check all busy solvers if they finished the request
             if Solvers[i].is_solved(): # if so, send solution to the sampling algorithm
-                sent_data = Solvers[i].get_solution()
+                sent_data = Solvers[i].recv_observations()
                 is_free[i] = True # mark the solver as free
                 for j in range(len(occupied_by_source[i])):
                     comm_world.Send(sent_data[j].copy(), dest=occupied_by_source[i][j], tag=occupied_by_tag[i][j])
@@ -71,7 +71,7 @@ while any(is_active_sampler): # while at least 1 sampling algorithm is active
                     temp_received_data = np.vstack((temp_received_data,received_data.copy()))
                     occupied_by_source[i].append(rank_source)
                     occupied_by_tag[i].append(tag)
-                Solvers[i].send_request(temp_received_data)
+                Solvers[i].send_parameters(temp_received_data)
                 is_free[i] = False
     
 for i in range(no_solvers):

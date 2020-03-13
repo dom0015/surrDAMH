@@ -61,24 +61,17 @@ while any(is_active_sampler): # while at least 1 sampling algorithm is active
                 received_data = tmp[1]
                 requests[i] = comm_world.irecv(source=samplers_ranks[i], tag=tag_sent_data)
                 comm_world.Isend(empty_buffer, dest=rank_source, tag=tag_ready_to_receive)
-                list_received_data.extend(received_data) # TO DO: a list is received
-#            received_data.print() # DEBUG PRINT
-    if not is_free_updater: # check if the surrogate update is done
-        if local_updater_instance.update_finished:
-            is_free_updater = True
-    if is_free_updater: # if surrogate updater is free
-        # TO DO: surrogate updater is always free...
-        if len(list_received_data)>0:
-            local_updater_instance.add_data(list_received_data)
-            SOL, no_snapshots = local_updater_instance.update()
-            print("RANK", rank_world, "collected snapshots:", no_snapshots)
-            list_received_data = []
-            is_free_updater = False
-            for i in samplers_ranks[is_active_sampler & is_ready_sampler]:
-                # TO DO: buffers (avoid memory copying)
-                send_buffers[i]=SOL.copy() # TO DO: copy?
-                comm_world.isend(send_buffers[i], dest=i, tag=tag_sent_data)
-                is_ready_sampler[i] = False
+                list_received_data.extend(received_data)
+    if len(list_received_data)>0:
+        local_updater_instance.add_data(list_received_data)
+        SOL, no_snapshots = local_updater_instance.update()
+        print("RANK", rank_world, "collected snapshots:", no_snapshots)
+        list_received_data = []
+        is_free_updater = False
+        for i in samplers_ranks[is_active_sampler & is_ready_sampler]:
+            send_buffers[i]=SOL.copy() # TO DO: copy?
+            comm_world.isend(send_buffers[i], dest=i, tag=tag_sent_data)
+            is_ready_sampler[i] = False
 
 print("RANK", rank_world, "all collected snapshots:", len(list_received_data), len(local_updater_instance.alldata_par))
 

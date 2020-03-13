@@ -9,7 +9,7 @@ Created on Tue Oct 29 12:47:09 2019
 from mpi4py import MPI
 import numpy as np
 import full_solver_examples as fse
-import time
+#import time
 
 comm_world = MPI.COMM_WORLD
 size_world = comm_world.Get_size()

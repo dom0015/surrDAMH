@@ -17,7 +17,6 @@ class Surrogate_col: # initiated by SAMPLERs
         self.alldata_par = np.empty((0,self.no_parameters))
         self.alldata_obs = np.empty((0,self.no_observations))
         self.alldata_wei = np.empty((0,1))
-        self.update_finished = True
         
     def add_data(self,snapshots):
         L = len(snapshots)

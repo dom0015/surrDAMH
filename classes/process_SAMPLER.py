@@ -18,21 +18,22 @@ rank_surr_collector = C.rank_surr_collector
 no_parameters = C.no_parameters
 no_observations = C.no_observations
 
-import main_codes as sa
+import classes_SAMPLER as cS
+import classes_communication as cCOMM
 
 seed0 = max(1000,size_world)*rank_world
 print("PROCESS SAMPLER, seeds:", [seed0, seed0+1, seed0+2], "RANK:", rank_world)
 
-my_Sol = sa.Solver_MPI_collector_MPI(no_parameters=no_parameters, 
+my_Sol = cCOMM.Solver_MPI_collector_MPI(no_parameters=no_parameters, 
                               no_observations=no_observations, 
                               rank_solver=rank_full_solver) # only knows the MPI rank to communicate with
 my_Surr_Solver = C.surr_solver_init(**C.surr_solver_parameters)
-my_Surr = sa.Solver_local_collector_MPI(no_parameters=no_parameters, 
+my_Surr = cCOMM.Solver_local_collector_MPI(no_parameters=no_parameters, 
                                         no_observations=no_observations, 
                                         local_solver_instance=my_Surr_Solver, 
                                         is_updated=True, 
-                                        rank_data_collector=rank_surr_collector)
-my_Prob = sa.Problem_Gauss(no_parameters=no_parameters,
+                                        rank_collector=rank_surr_collector)
+my_Prob = cS.Problem_Gauss(no_parameters=no_parameters,
                            noise_std=[2.0, 0.1],
                            prior_mean=0.0, 
                            prior_std=1.0,
@@ -40,17 +41,17 @@ my_Prob = sa.Problem_Gauss(no_parameters=no_parameters,
                            observations=[66.4, 2],
                            seed=seed0,
                            name='my_problem2')
-my_Prop = sa.Proposal_GaussRandomWalk(no_parameters=no_parameters,
+my_Prop = cS.Proposal_GaussRandomWalk(no_parameters=no_parameters,
                                       proposal_std=0.8,
                                       seed=seed0+1)
 # TO DO: time limit
-my_Alg = sa.Algorithm_MH(my_Prob, my_Prop, my_Sol,
+my_Alg = cS.Algorithm_MH(my_Prob, my_Prop, my_Sol,
                          Surrogate = my_Surr,
                          initial_sample=my_Prob.prior_mean,
                          max_samples=10,
                          name='my_MH_alg' + str(rank_world),
                          seed=seed0+2)
-my_Alg1 = sa.Algorithm_DAMH(my_Prob, my_Prop, my_Sol,
+my_Alg1 = cS.Algorithm_DAMH(my_Prob, my_Prop, my_Sol,
                             Surrogate = my_Surr,
                             initial_sample=my_Prob.prior_mean,
                             max_samples=10,
