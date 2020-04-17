@@ -538,6 +538,18 @@ translate
 
 \end_deeper
 \begin_layout Itemize
+probably, the 
+\begin_inset Quotes eld
+\end_inset
+
+spawned
+\begin_inset Quotes erd
+\end_inset
+
+ solver can be a separate pbs job -> required reinitialization of the solver?
+\end_layout
+
+\begin_layout Itemize
 instead of spawned child processes, rank 
 \begin_inset Formula $R$
 \end_inset
@@ -747,6 +759,349 @@ few iterations of the DCG/CG solver can also be used as the surrogate model!
 \begin_layout Standard
 in DT - methodology, what are suitable use-cases (number of parameters,
  type and number of measurements, demands of the mathematical model)
+\end_layout
+
+\begin_layout Section*
+Functionality required be thesis:
+\end_layout
+
+\begin_layout Itemize
+zpracování a vizualizace dat
+\end_layout
+
+\begin_deeper
+\begin_layout Itemize
+histograms of 1d, 2d marginal posterior distributions
+\end_layout
+
+\begin_layout Itemize
+chains of samples (componentwise)
+\end_layout
+
+\begin_layout Itemize
+computational complexity
+\end_layout
+
+\begin_deeper
+\begin_layout Itemize
+average computation time needed to produce one almost uncorrelated sample
+\end_layout
+
+\begin_layout Itemize
+autocorrelation computation - discussed by Foreman-Mackey (emcee), originally
+ proposed by Sokal (1989) - problems with shorter chains!
+\end_layout
+
+\end_deeper
+\begin_layout Itemize
+identify initial period
+\end_layout
+
+\begin_layout Itemize
+analysis of
+\begin_inset space ~
+\end_inset
+
+the convergence to the stationary distribution and monitoring the convergence
+ of averages
+\end_layout
+
+\begin_deeper
+\begin_layout Itemize
+monitoring of the empirical average 
+\begin_inset Formula 
+\begin{equation}
+\frac{1}{T}\sum_{t=1}^{T}h\left(\mathbf{u}^{\left(t\right)}\right)\label{eq:monitor_averages}
+\end{equation}
+
+\end_inset
+
+with increasing value of 
+\begin_inset Formula $T$
+\end_inset
+
+; 
+\begin_inset Formula $h:\mathbb{R}^{n}\rightarrow\mathbb{R}$
+\end_inset
+
+ is an arbitrary function.
+ As an example, the convergence of the averages of all components of the
+ (Markov) chain with increasing length 
+\begin_inset Formula $T$
+\end_inset
+
+
+\end_layout
+
+\begin_layout Itemize
+graphical diagnosis of the empirical cumulative distribution function derived
+ from the Markov chain
+\end_layout
+
+\begin_layout Itemize
+For monitoring the convergence to the stationary distribution, it is useful
+ to compare more Markov chains generated in parallel
+\end_layout
+
+\end_deeper
+\begin_layout Itemize
+autocorrelation of the resulting chain (serves to determine a
+\begin_inset space ~
+\end_inset
+
+sub-chain of almost uncorrelated samples and to estimate the length of the
+ burn-in period)
+\end_layout
+
+\end_deeper
+\begin_layout Itemize
+rbf
+\end_layout
+
+\begin_layout Itemize
+initial samples - I can generate 100*N independent samples from prior; and
+ than choose only N of those that are far from each other and have high
+ posterior; these (100*N) evaluations can be used to create an initial surrogate
+ model - instead of calculating posterior for all of these samples, I should
+ first choose those that are far from each other and than evaluate only
+ here; (the 
+\begin_inset Quotes eld
+\end_inset
+
+distinct
+\begin_inset Quotes erd
+\end_inset
+
+ samples can still be chosen using the lhs)
+\end_layout
+
+\begin_layout Itemize
+iterative solution of underlying linear systems
+\end_layout
+
+\begin_deeper
+\begin_layout Itemize
+choice of methods/preconditioners for sequences of linear systems inside
+ G (deflated CG)
+\end_layout
+
+\begin_layout Itemize
+effective iterative solution of RBF, SCM systems
+\end_layout
+
+\end_deeper
+\begin_layout Standard
+deflated CG, recyclation of Krylov subspace; Application - straightforward
+ when G is solution of linear system; more complicated, when G includes
+ newton steps
+\end_layout
+
+\begin_layout Section*
+Workflow:
+\end_layout
+
+\begin_layout Standard
+NEZABÝVAT SE (ASPOŇ ZATÍM) NIČÍM, CO NEBYLO EXPLICITNĚ SLÍBENO V TEZÍCH
+\end_layout
+
+\begin_layout Itemize
+doplnit do programu vyžadovanou funkcionalitu - jen to nutné
+\end_layout
+
+\begin_layout Itemize
+nachystat modelové úlohy - všechny!
+\end_layout
+
+\begin_deeper
+\begin_layout Itemize
+není vůbec nutné jít do složitých úloh s trhlinami, dá se jen odkázat na
+ publikovaný článek, případně ho celý přiložit
+\end_layout
+
+\begin_layout Itemize
+The Bayesian identification of materials in the form of a
+\begin_inset space ~
+\end_inset
+
+GRF will be an important part of the dissertation thesis.
+ The DAMH-SMU algorithm will be applied to
+\begin_inset space ~
+\end_inset
+
+provide samples of GRFs given by the resulting posterior distribution.
+\end_layout
+
+\end_deeper
+\begin_layout Itemize
+rozmyslet si experimenty, jaká data ukládat
+\end_layout
+
+\begin_deeper
+\begin_layout Itemize
+jakou používat 
+\begin_inset Quotes eld
+\end_inset
+
+diagnostiku
+\begin_inset Quotes erd
+\end_inset
+
+ - ve všech úlohách stejnou!
+\end_layout
+
+\begin_deeper
+\begin_layout Itemize
+vše replikovatelné!
+\end_layout
+
+\end_deeper
+\end_deeper
+\begin_layout Itemize
+navrhnout osnovu - rozvržení sekcí, tak aby bylo zahrnuto vše slíbené (to
+ 
+\begin_inset Quotes eld
+\end_inset
+
+neslíbené
+\begin_inset Quotes erd
+\end_inset
+
+ jen minimálně), dobře 
+\begin_inset Quotes eld
+\end_inset
+
+značit
+\begin_inset Quotes erd
+\end_inset
+
+, kde jsou popsány slíbené části - uvést v rozcestníku na začátku práce,
+ rozlišit 
+\begin_inset Quotes eld
+\end_inset
+
+slíbené
+\begin_inset Quotes erd
+\end_inset
+
+ a 
+\begin_inset Quotes eld
+\end_inset
+
+navíc
+\begin_inset Quotes erd
+\end_inset
+
+ (= částečně experimenty, částečně software)
+\end_layout
+
+\begin_deeper
+\begin_layout Itemize
+počítat i se zařazením části o důkazu konvegrence, ale prozatím úplně vynechat
+ a jako opodstatnění uvažovaných algoritmů brát možnost 
+\begin_inset Quotes eld
+\end_inset
+
+zastavení po určitém čase
+\begin_inset Quotes erd
+\end_inset
+
+
+\end_layout
+
+\end_deeper
+\begin_layout Itemize
+postupně zaplňovat sekce
+\end_layout
+
+\begin_layout Standard
+\begin_inset Separator plain
+\end_inset
+
+
+\end_layout
+
+\begin_layout Subsection*
+Autocorrelation time
+\end_layout
+
+\begin_layout Standard
+(report taken from following literature; theory and some codes (python emcee
+ library) and maybe some for AR applied to this case)
+\end_layout
+
+\begin_layout Standard
+The lecture notes of Sokal, 199?:
+\end_layout
+
+\begin_layout Itemize
+generally, Monte Carlo methods cannot have better convergence properties
+ than 
+\begin_inset Formula $1/\sqrt{n}$
+\end_inset
+
+
+\end_layout
+
+\begin_layout Itemize
+cite: 
+\begin_inset Quotes eld
+\end_inset
+
+All Monte Carlo work has the same general structure: given some probability
+ measure 
+\begin_inset Formula $\pi$
+\end_inset
+
+ on some conguration space 
+\begin_inset Formula $S$
+\end_inset
+
+, we wish to generate many random samples from 
+\begin_inset Formula $\pi$
+\end_inset
+
+.
+ How is this to be done? 
+\end_layout
+
+\begin_layout Itemize
+\begin_inset Quotes eld
+\end_inset
+
+invent
+\begin_inset Quotes erd
+\end_inset
+
+ stochastic (Markov) process with state space 
+\begin_inset Formula $S$
+\end_inset
+
+ and 
+\begin_inset Quotes eld
+\end_inset
+
+unique equilibrium distribution
+\begin_inset Quotes erd
+\end_inset
+
+ 
+\begin_inset Formula $\pi$
+\end_inset
+
+
+\end_layout
+
+\begin_layout Itemize
+assumes 
+\begin_inset Formula $S$
+\end_inset
+
+is discrete; reference - Nummelin, 1984, General Irreducible Markov Chains
+ and Non-Negative Operators (Markov chains, general state space)
+\end_layout
+
+\begin_layout Itemize
+slightly different definition of tau_int (1/2)
 \end_layout
 
 \end_body

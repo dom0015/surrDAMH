@@ -862,18 +862,7 @@ rbf
 initial samples - I can generate 100*N independent samples from prior; and
  than choose only N of those that are far from each other and have high
  posterior; these (100*N) evaluations can be used to create an initial surrogate
- model - instead of calculating posterior for all of these samples, I should
- first choose those that are far from each other and than evaluate only
- here; (the 
-\begin_inset Quotes eld
-\end_inset
-
-distinct
-\begin_inset Quotes erd
-\end_inset
-
- samples can still be chosen using the lhs); Is it really beneficial to
- start from samples with high posterior???
+ model
 \end_layout
 
 \begin_layout Itemize

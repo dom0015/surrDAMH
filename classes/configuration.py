@@ -12,6 +12,7 @@ import classes_communication
 
 class Configuration:
     def __init__(self,display=False):
+        self.problem_name = "my_prob"
         self.no_samplers = 3
         self.no_full_solvers = 2
         self.no_parameters = 2

@@ -17,9 +17,11 @@ rank_full_solver = C.rank_full_solver
 rank_surr_collector = C.rank_surr_collector
 no_parameters = C.no_parameters
 no_observations = C.no_observations
+problem_name = C.problem_name
 
 import classes_SAMPLER as cS
 import classes_communication as cCOMM
+import time
 
 seed0 = max(1000,size_world)*rank_world
 print("PROCESS SAMPLER, seeds:", [seed0, seed0+1, seed0+2], "RANK:", rank_world)
@@ -40,21 +42,22 @@ my_Prob = cS.Problem_Gauss(no_parameters=no_parameters,
                            no_observations=no_observations, 
                            observations=[66.4, 2],
                            seed=seed0,
-                           name='my_problem2')
+                           name=problem_name)
 my_Prop = cS.Proposal_GaussRandomWalk(no_parameters=no_parameters,
                                       proposal_std=0.8,
                                       seed=seed0+1)
-# TO DO: time limit
 my_Alg = cS.Algorithm_MH(my_Prob, my_Prop, my_Sol,
                          Surrogate = my_Surr,
                          initial_sample=my_Prob.prior_mean,
-                         max_samples=10,
+                         max_samples=100,
+                         time_limit=20,
                          name='my_MH_alg' + str(rank_world),
                          seed=seed0+2)
 my_Alg1 = cS.Algorithm_DAMH(my_Prob, my_Prop, my_Sol,
                             Surrogate = my_Surr,
                             initial_sample=my_Prob.prior_mean,
-                            max_samples=10,
+                            max_samples=10000,
+                            time_limit=20,
                             name='my_DAMH_alg' + str(rank_world),
                             seed=seed0+3)
 my_Alg.run()

@@ -10,9 +10,10 @@ from mpi4py import MPI
 import numpy as np
 import os
 import csv
+import time
 
 class Algorithm_PARENT:
-    def __init__(self, Problem, Proposal, Solver, max_samples, name, seed=0, initial_sample=None, G_initial_sample=None, Surrogate=None, is_saved=True):
+    def __init__(self, Problem, Proposal, Solver, max_samples, name, seed=0, initial_sample=None, G_initial_sample=None, Surrogate=None, is_saved=True, time_limit=float('inf')):
         self.Problem = Problem
         self.Proposal = Proposal
         self.Solver = Solver
@@ -31,6 +32,7 @@ class Algorithm_PARENT:
         else:
             self.__send_to_surrogate = self._empty_function
         self.is_saved = is_saved
+        self.time_limit = time_limit
         self.__generator = np.random.RandomState(seed)
         self.no_accepted = 0
         self.no_prerejected = 0
@@ -47,6 +49,7 @@ class Algorithm_PARENT:
             return
                 
     def prepare(self):
+        self.time_start = time.time()
         if self.is_saved:
             filename = self.Problem.name + "/" + self.name + ".csv"
             os.makedirs(os.path.dirname(filename), exist_ok=True)
@@ -87,9 +90,12 @@ class Algorithm_PARENT:
             self.__file.close()
             filename_notes = self.Problem.name + "/notes/" + self.name + ".csv"
             os.makedirs(os.path.dirname(filename_notes), exist_ok=True)
-            notes = [self.no_accepted, self.no_rejected, self.seed]
+            labels = ["accepted", "rejected", "pre-rejected", "sum", "seed"]
+            no_all = self.no_accepted + self.no_rejected + self.no_prerejected
+            notes = [self.no_accepted, self.no_rejected, self.no_prerejected, no_all, self.seed]
             file_notes = open(filename_notes, 'w')
             writer_notes = csv.writer(file_notes)
+            writer_notes.writerow(labels)
             writer_notes.writerow(notes)
             file_notes.close()
 
@@ -115,8 +121,8 @@ class Algorithm_PARENT:
         return
     
 class Algorithm_MH(Algorithm_PARENT): # initiated by SAMPLERs
-    def __init__(self, Problem, Proposal, Solver, max_samples, name, seed=0, initial_sample=None, G_initial_sample=None, Surrogate=None, is_saved=True):
-        super().__init__(Problem, Proposal, Solver, max_samples, name, seed, initial_sample, G_initial_sample, Surrogate, is_saved)
+    def __init__(self, Problem, Proposal, Solver, max_samples, name, seed=0, initial_sample=None, G_initial_sample=None, Surrogate=None, is_saved=True, time_limit=float('inf')):
+        super().__init__(Problem, Proposal, Solver, max_samples, name, seed, initial_sample, G_initial_sample, Surrogate, is_saved, time_limit)
 
     def run(self):
         print("SAMPLER at RANK", MPI.COMM_WORLD.Get_rank(), "starts (MH)")
@@ -128,12 +134,15 @@ class Algorithm_MH(Algorithm_PARENT): # initiated by SAMPLERs
                 self.if_accepted()
             else:
                 self.if_not_accepted()
+            if time.time() - self.time_start > self.time_limit:
+                print("SAMPLER at RANK", MPI.COMM_WORLD.Get_rank(), "time limit reached - loop",i)
+                break
         self.close_files()
         print("SAMPLER at RANK", MPI.COMM_WORLD.Get_rank(), "finishes (MH)")
         
 class Algorithm_DAMH(Algorithm_PARENT): # initiated by SAMPLERs
-    def __init__(self, Problem, Proposal, Solver, max_samples, name, seed=0, initial_sample=None, G_initial_sample=None, Surrogate=None, is_saved=True):
-        super().__init__(Problem, Proposal, Solver, max_samples, name, seed, initial_sample, G_initial_sample, Surrogate, is_saved)
+    def __init__(self, Problem, Proposal, Solver, max_samples, name, seed=0, initial_sample=None, G_initial_sample=None, Surrogate=None, is_saved=True, time_limit=float('inf')):
+        super().__init__(Problem, Proposal, Solver, max_samples, name, seed, initial_sample, G_initial_sample, Surrogate, is_saved, time_limit)
 
     def run(self):
         print("SAMPLER at RANK", MPI.COMM_WORLD.Get_rank(), "starts (DAMH)")
@@ -157,6 +166,9 @@ class Algorithm_DAMH(Algorithm_PARENT): # initiated by SAMPLERs
             else:
                 self.no_prerejected += 1
                 self.no_rejected_current += 1
+            if time.time() - self.time_start > self.time_limit:
+                print("SAMPLER at RANK", MPI.COMM_WORLD.Get_rank(), "time limit reached - loop",i)
+                break
         self.close_files()
         print("SAMPLER at RANK", MPI.COMM_WORLD.Get_rank(), "finishes (DAMH)")
 
