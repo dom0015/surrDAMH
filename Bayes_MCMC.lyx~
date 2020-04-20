@@ -872,7 +872,8 @@ distinct
 \begin_inset Quotes erd
 \end_inset
 
- samples can still be chosen using the lhs)
+ samples can still be chosen using the lhs); Is it really beneficial to
+ start from samples with high posterior???
 \end_layout
 
 \begin_layout Itemize
