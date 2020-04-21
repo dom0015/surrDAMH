@@ -11,6 +11,101 @@ Created on Tue Apr 14 11:24:11 2020
 import numpy as np
 import emcee
 import time
+from scipy.optimize import minimize
+
+# from https://dfm.io/posts/autocorr/ Foreman-Mackey
+def _next_pow_two(n):
+    i = 1
+    while i < n:
+        i = i << 1
+    return i
+
+# from https://dfm.io/posts/autocorr/ Foreman-Mackey
+def autocorr_func_1d(x, norm=True):
+    x = np.atleast_1d(x)
+    n = _next_pow_two(len(x))
+    # Compute the FFT and then (from that) the auto-correlation function
+    f = np.fft.fft(x - np.mean(x), n=2*n)
+    acf = np.fft.ifft(f * np.conjugate(f))[:len(x)].real
+    acf /= 4*n
+    # Optionally normalize
+    if norm:
+        acf /= acf[0]
+    return acf
+
+# Automated windowing procedure following Sokal (1989)
+# from https://dfm.io/posts/autocorr/ Foreman-Mackey
+def auto_window(taus, c):
+    m = np.arange(len(taus)) < c * taus
+    if np.any(m):
+        return np.argmin(m)
+    return len(taus) - 1
+
+# Following the suggestion from Goodman & Weare (2010)
+# from https://dfm.io/posts/autocorr/ Foreman-Mackey
+def autocorr_gw2010(y, c=5.0):
+    # first averages all chains, than calculates autocorr. func.
+    f = autocorr_func_1d(np.mean(y, axis=0))
+    taus = 2.0*np.cumsum(f)-1.0
+    window = auto_window(taus, c)
+    return taus[window]
+
+# from https://dfm.io/posts/autocorr/ Foreman-Mackey
+def autocorr_new(y, c=5.0):
+    # first calculates all autocorr. functions, than averages them
+    f = np.zeros(y.shape[1])
+    for yy in y:
+        f += autocorr_func_1d(yy)
+    f /= len(y)
+    taus = 2.0*np.cumsum(f)-1.0
+    window = auto_window(taus, c)
+    return taus[window]
+
+### different autocorrelation time estimation (suitable for shorter chains)
+# from https://dfm.io/posts/autocorr/ Foreman-Mackey
+def autocorr_ml(y, thin=1, c=5.0):
+    # Compute the initial estimate of tau using the standard method
+    init = autocorr_new(y, c=c)
+    z = y[:, ::thin]
+    N = z.shape[1]
+    
+    # Build the GP model
+    tau = max(1.0, init/thin)
+    import celerite
+    from celerite import terms
+    kernel = terms.RealTerm(np.log(0.9*np.var(z)), -np.log(tau),
+                        bounds=[(-5.0, 5.0), (-np.log(N), 0.0)])
+    kernel += terms.RealTerm(np.log(0.1*np.var(z)), -np.log(0.5*tau),
+                            bounds=[(-5.0, 5.0), (-np.log(N), 0.0)])
+    gp = celerite.GP(kernel, mean=np.mean(z))
+    gp.compute(np.arange(z.shape[1]))
+
+    # Define the objective
+    def nll(p):
+        # Update the GP model
+        gp.set_parameter_vector(p)
+        
+        # Loop over the chains and compute likelihoods
+        v, g = zip(*(
+            gp.grad_log_likelihood(z0, quiet=True)
+            for z0 in z
+        ))
+        
+        # Combine the datasets
+        return -np.sum(v), -np.sum(g, axis=0)
+
+    # Optimize the model
+    p0 = gp.get_parameter_vector()
+    bounds = gp.get_parameter_bounds()
+    soln = minimize(nll, p0, jac=True, bounds=bounds)
+#    soln = minimize(nll, p0, jac=False, bounds=bounds)
+    gp.set_parameter_vector(soln.x)
+    
+    # Compute the maximum likelihood tau
+    a, c = kernel.coefficients[:2]
+    tau = thin * 2*np.sum(a / c) / np.sum(a)
+    return tau
+
 
 class Samples:
     def __init__(self, samples = None):
@@ -66,7 +161,7 @@ class Samples:
         t = np.arange(length)
         gp.compute(t)
         self.x = gp.sample(size=no_chains)
-
+        
     def plot_segment(self, no_chains_disp=1, length_disp=1000):
         import matplotlib.pyplot as plt
         if isinstance(self.x,np.ndarray):
@@ -129,20 +224,44 @@ class Samples:
         if not quiet:
             print(['emcee', time.time()-t])
         return res
-        
-    def ac_manual(self,xp,max_lag):
+    
+    def autocorr_function(self,max_lag):
+        if isinstance(self.x,np.ndarray):
+            if self.x.ndim==1:
+                self.autocorr_f = self._ac_fft1(self.x,max_lag)
+            else:
+                self.autocorr_f = np.zeros((self.no_chains,max_lag))
+                for i in range(self.no_chains):
+                    self.autocorr_f[i,:] = self._ac_fft1(self.x[i,:],max_lag,var=self.var[i])
+        else: #assumes list of 1d numpy arrays
+            self.autocorr_f = np.zeros((self.no_chains,max_lag))
+            for i in range(self.no_chains):
+                for i in range(self.no_chains):
+                    self.autocorr_f[i,:] = self._ac_fft1(self.x[i],max_lag)
+    
+    # integrated autocorr time calculation:
+    def integrated_time_emcee(self, c=5, tol=50, quiet=False):
+        # used automated windowing procedure following Sokal (1989), i.e. c=5
+        # tol=50 follows Foreman-Mackey assuming 32 independent chains
+        # tol=1000 follows Sokal assuming one chain
+        # TO DO: in DAMH-SMU with parallel chains - can we assume equal 
+        #        autocorr. time for all parallel chains?
+        it = emcee.autocorr.integrated_time(self.x, c=c, tol=tol, quiet=quiet)
+        return it
+    
+    def _ac_manual(self,xp,max_lag):
         '''manualy compute, non partial'''
         '''takes xp'''
         corr=[1. if l==0 else np.sum(self.xp[l:]*self.xp[:-l])/self.length/self.var for l in range(max_lag)]
         return np.array(corr)
     
-    def ac_corrcoef1(self,x,max_lag):
+    def _ac_corrcoef1(self,x,max_lag):
         '''numpy.corrcoef, partial'''
         '''takes x'''
         corr=[1. if l==0 else np.corrcoef(self.x[l:],self.x[:-l])[0][1] for l in range(max_lag)]
         return np.array(corr)
     
-    def ac_fft1(self,xp,max_lag,n=None,var=None):
+    def _ac_fft1(self,xp,max_lag,n=None,var=None):
         '''fft, pad 0s, non partial'''
         '''takes xp'''
         if n==None:
@@ -158,7 +277,7 @@ class Samples:
         corr=corr/var/n
         return corr[:max_lag]
     
-    def ac_fft2(self,xp,max_lag):
+    def _ac_fft2(self,xp,max_lag):
         '''fft, don't pad 0s, non partial'''
         '''takes xp'''
         cf=np.fft.fft(self.xp)
@@ -166,13 +285,13 @@ class Samples:
         corr=np.fft.ifft(sf).real/self.var/self.n
         return corr[:max_lag]
     
-    def ac_correlate1(self,xp,max_lag):
+    def _ac_correlate1(self,xp,max_lag):
         '''np.correlate, non partial'''
         '''takes xp'''
         corr=np.correlate(self.xp,self.xp,'full')[self.n-1:]/self.var/self.n
         return corr[:max_lag]
     
-    def ac_fft3 (self,xp,max_lag):
+    def _ac_fft3 (self,xp,max_lag):
         """Compute the autocorrelation of the signal, based on the properties
         of the power spectral density of the signal. """
         '''takes xp'''
@@ -182,49 +301,25 @@ class Samples:
         corr = np.real(pi)[:self.n]/np.sum(self.xp**2)
         return corr[:max_lag]
     
-    def ac_fft4(self,x,max_lag):
+    def _ac_fft4(self,x,max_lag):
         '''takes x'''
         r2=np.fft.ifft(np.abs(np.fft.fft(self.x))**2).real
         corr=(r2/self.x.shape-self.mean**2)/self.std**2
         return corr[:max_lag]
     
-    def ac_corrcoef2(self,x,max_lag):
+    def _ac_corrcoef2(self,x,max_lag):
         '''takes x'''
         return np.array([1]+[np.corrcoef(self.x[:-i], self.x[i:])[0,1]  \
             for i in range(1, max_lag)])
     
-    def ac_correlate2(self,x,max_lag):
+    def _ac_correlate2(self,x,max_lag):
         '''takes x'''
         corr = np.correlate(self.x,self.x,mode='full')
         corr = corr[corr.size//2:]
         corr = corr/corr[0]
         return corr[:max_lag]
     
-    def ac_autocorr_emcee(self,x,max_lag):
+    def _ac_autocorr_emcee(self,x,max_lag):
         '''takes x'''
         corr = emcee.autocorr.function_1d(x)
         return corr
-    
-    def autocorr_function(self,max_lag):
-        if isinstance(self.x,np.ndarray):
-            if self.x.ndim==1:
-                self.autocorr_f = self.ac_fft1(self.x,max_lag)
-            else:
-                self.autocorr_f = np.zeros((self.no_chains,max_lag))
-                for i in range(self.no_chains):
-                    self.autocorr_f[i,:] = self.ac_fft1(self.x[i,:],max_lag,var=self.var[i])
-        else: #assumes list of 1d numpy arrays
-            self.autocorr_f = np.zeros((self.no_chains,max_lag))
-            for i in range(self.no_chains):
-                for i in range(self.no_chains):
-                    self.autocorr_f[i,:] = self.ac_fft1(self.x[i],max_lag)
-    
-    # integrated autocorr time calculation:
-    def integrated_time_emcee(self, c=5, tol=50, quiet=False):
-        # used automated windowing procedure following Sokal (1989), i.e. c=5
-        # tol=50 follows Foreman-Mackey assuming 32 independent chains
-        # tol=100% follows Sokal assuming one chain
-        # TO DO: in DAMH-SMU with parallel chains - can we assume equal 
-        #        autocorr. time for all parallel chains?
-        it = emcee.autocorr.integrated_time(self.x, c=c, tol=tol, quiet=quiet)
-        return it
