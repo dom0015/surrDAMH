@@ -11,6 +11,7 @@ Created on Tue Apr 14 11:24:11 2020
 import numpy as np
 import emcee
 import time
+import matplotlib.pyplot as plt
 from scipy.optimize import minimize
 
 # from https://dfm.io/posts/autocorr/ Foreman-Mackey
@@ -163,7 +164,6 @@ class Samples:
         self.x = gp.sample(size=no_chains)
         
     def plot_segment(self, no_chains_disp=1, length_disp=1000):
-        import matplotlib.pyplot as plt
         if isinstance(self.x,np.ndarray):
             if self.x.ndim == 1:
                 plt.plot(self.x[:length_disp])
@@ -178,7 +178,22 @@ class Samples:
         if self.known_autocorr_time:
             plt.title("$\\tau_\mathrm{{true}} = {0:.0f}$".format(self.autocorr_time_true), fontsize=14);
         plt.show()
-        
+
+    def autocorr_time_single(self, indices=None, c=5, tol=50, quiet=False):
+        if indices==None:
+            indices = range(self.no_chains)
+        self.autocorr_time_est = [None] * self.no_chains
+        if isinstance(self.x,np.ndarray):
+            if self.x.ndim == 1:
+                self.autocorr_time_est[0] = emcee.autocorr.integrated_time(self.x, c=c, tol=tol, quiet=quiet)
+            else:
+                for i in indices:
+                    self.autocorr_time_est[i] = emcee.autocorr.integrated_time(self.x[i,:], c=c, tol=tol, quiet=quiet)
+        else: #assumes list of 1d numpy arrays
+           for i in indices:
+                self.autocorr_time_est[i] = emcee.autocorr.integrated_time(self.x[i], c=c, tol=tol, quiet=quiet)
+        return self.autocorr_time_est
+
     def autocorr_all(self, max_lag = None, quiet = False):
         if max_lag == None:
             max_lag = self.length-1
@@ -238,7 +253,12 @@ class Samples:
             for i in range(self.no_chains):
                 for i in range(self.no_chains):
                     self.autocorr_f[i,:] = self._ac_fft1(self.x[i],max_lag)
-    
+                    
+    def plot_autocorr_function(self, l_disp):
+        plt.plot(self.autocorr_f[:,:l_disp].transpose())
+        plt.legend(np.arange(self.no_chains))
+        plt.show()
+
     # integrated autocorr time calculation:
     def integrated_time_emcee(self, c=5, tol=50, quiet=False):
         # used automated windowing procedure following Sokal (1989), i.e. c=5
