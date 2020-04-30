@@ -24,7 +24,7 @@ length = [10*m, 6*m, 8*m, 10*m, 6*m]
 
 S.load_MH('my_problem3')
 S.calculate_properties()
-length_disp = [100] * S.no_parameters
+length_disp = [1000] * S.no_parameters
 
 S.calculate_properties()
 S.print_properties()

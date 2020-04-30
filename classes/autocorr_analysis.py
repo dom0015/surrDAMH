@@ -91,13 +91,9 @@ class Samples:
             path_samples = folder_samples + "/" + file_samples[i]
             print(path_samples)
             df_samples = pd.read_csv(path_samples, header=None)
-#            weights = np.array(df_samples[0])
-            # TO DO: decompress
-            self.x[i] = np.array(df_samples.iloc[:,1:])
-#            self.no_parameters = self.values.shape[1]
-#            self.no_samples = sum(self.weights)
-#            self.no_samples_unique = len(self.weights)
-#            self.mean = self.values.mean()
+            weights = np.array(df_samples[0])
+            tmp = np.array(df_samples.iloc[:,1:])
+            self.x[i] = decompress(tmp, weights)
         
     def generate_samples_rand(self,no_parameters,length):
         # no_parameters ... scalar
@@ -205,3 +201,14 @@ def autocorr_new(f, c=5.0):
     taus = 2.0*np.cumsum(f)-1.0
     window = auto_window(taus, c)
     return taus[window]
+
+def decompress(x, w):
+    # x ... "compressed" samples from DAMH-SMU
+    # w ... weights
+    sum_w = np.sum(w)
+    cumsum_w = np.append(0,np.cumsum(w))
+    no_unique, no_parameters = x.shape
+    xd = np.zeros((sum_w,no_parameters))
+    for i in range(no_unique):
+        xd[cumsum_w[i]:cumsum_w[i+1],:] = x[i,:]
+    return xd
