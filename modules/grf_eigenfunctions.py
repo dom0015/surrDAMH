@@ -171,7 +171,7 @@ def demo_generate_and_save():
     lam = 1 # autocorrelation length
     Cov = calculate_Cov(nx,ny,lx,ly,sigma,lam,show=False)
     D,V = calculate_eig(Cov)
-    filename = 'demo.pckl'
+    filename = 'demo50.pckl'
     save_eig(filename,D, V, Cov, nx, ny, lx, ly, sigma, lam)
     indices = [0,1,3,4,5]#,6,8,10,11,12,13,15,17,19]
     plot_eigenvectors(V,indices,nx)
@@ -186,14 +186,16 @@ def demo_load_and_show():
     y = np.linspace(0,ly,120)
     z = evaluate_eigenfunctions(f,x,y,show=True,indices=indices)
     # correlation length lam higher than original:
-#    f = eigenfunctions(V,indices,nx,ny,lx,ly,lam_new=2,lam_orig=lam)
-#    z = evaluate_eigenfunctions(f,x,y,show=True,indices=indices)
+    f = eigenfunctions(V,indices,nx,ny,lx,ly,lam_new=lam*2,lam_orig=lam)
+    z = evaluate_eigenfunctions(f,x,y,show=True,indices=indices)
+    
+def demo_realization():   
+    filename='demo.pckl'
+    D, V, Cov, nx, ny, lx, ly, sigma, lam = load_eig(filename)
+    for i in [20,100,None]:
+        realization(D,V,nx,ny,lx,ly,2,i,show=True)
+#        realization(D,V,nx,ny,lx,ly,2,i,show=True,lam_new=lam*2,lam_orig=lam)
 
 demo_generate_and_save()
-#demo_load_and_show()
-
-filename='demo.pckl'
-D, V, Cov, nx, ny, lx, ly, sigma, lam = load_eig(filename)
-for i in [10,20,100,1000,2000,None]:
-    realization(D,V,nx,ny,lx,ly,2,i,show=True)
-    realization(D,V,nx,ny,lx,ly,2,i,show=True,lam_new=lam*2,lam_orig=lam)
+demo_load_and_show()
+demo_realization()

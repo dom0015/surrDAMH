@@ -15,7 +15,7 @@ class Solver_MPI_parent: # initiated by full SOLVER
         self.no_parameters = no_parameters
         self.no_observations = no_observations
         self.max_requests = 1
-        self.comm = MPI.COMM_SELF.Spawn(sys.executable, args=['process_CHILD.py'], maxprocs=maxprocs)
+        self.comm = MPI.COMM_SELF.Spawn(sys.executable, args=['modules/process_CHILD.py'], maxprocs=maxprocs)
         self.tag = 0
         self.received_data = np.zeros(self.no_observations)
     
@@ -78,6 +78,7 @@ class Solver_MPI_collector_MPI: # initiated by SAMPLERs
 #        print('DEBUG - Solver_MPI_collector_MPI (', self.rank, ') - sent_snapshot', self.rank_collector, self.comm.Get_size(), self.rank)
 #        self.comm.send(sent_snapshot, dest=self.rank_collector, tag=self.tag_collector)
         
+#TO DO: implement is_solved method (for non-spawned full solvers)
 #    def is_solved(self):
 #        # check COMM_WORLD if there is an incoming message from the solver
 #        tmp = self.comm.Iprobe(source=self.rank_solver, tag=self.tag_solver)

@@ -51,7 +51,7 @@ class Algorithm_PARENT:
     def prepare(self):
         self.time_start = time.time()
         if self.is_saved:
-            filename = self.Problem.name + "/" + self.name + ".csv"
+            filename = "saved_samples/" + self.Problem.name + "/" + self.name + ".csv"
             os.makedirs(os.path.dirname(filename), exist_ok=True)
             self.__file = open(filename, 'w')
             self.__writer = csv.writer(self.__file)
@@ -88,7 +88,7 @@ class Algorithm_PARENT:
         self.__write_to_file()
         if self.is_saved:
             self.__file.close()
-            filename_notes = self.Problem.name + "/notes/" + self.name + ".csv"
+            filename_notes = "saved_samples/" + self.Problem.name + "/notes/" + self.name + ".csv"
             os.makedirs(os.path.dirname(filename_notes), exist_ok=True)
             labels = ["accepted", "rejected", "pre-rejected", "sum", "seed"]
             no_all = self.no_accepted + self.no_rejected + self.no_prerejected

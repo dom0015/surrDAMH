@@ -19,8 +19,8 @@ no_parameters = C.no_parameters
 no_observations = C.no_observations
 problem_name = C.problem_name
 
-import classes_SAMPLER as cS
-import classes_communication as cCOMM
+from modules import classes_SAMPLER as cS
+from modules import classes_communication as cCOMM
 import time
 
 seed0 = max(1000,size_world)*rank_world

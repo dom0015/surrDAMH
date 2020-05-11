@@ -6,13 +6,13 @@ Created on Wed Nov  6 09:15:15 2019
 @author: simona
 """
 
-import full_solver_examples as fse
-import surrogate_solver_examples as sse
-import classes_communication
+#import full_solver_examples as fse
+from modules import surrogate_solver_examples as sse
+from modules import classes_communication
 
 class Configuration:
     def __init__(self,display=False):
-        self.problem_name = "my_prob"
+        self.problem_name = "my_prob01"
         self.no_samplers = 3
         self.no_full_solvers = 2
         self.no_parameters = 2
@@ -30,11 +30,11 @@ class Configuration:
         for i in range(self.no_full_solvers):
             self.full_solver_parameters.append({'no_parameters':self.no_parameters, 'no_observations':self.no_observations})
     
-### TYPE 2 - solvers are in the same COMM_WORLD
-#        self.full_solver_init = classes_communication.Solver_MPI_linker
+### TYPE 2 - solvers are in the same COMM_WORLD (TO DO)
+#        self.full_solver_init = classes_communication.Solver_MPI_collector_MPI
 #        self.full_solver_parameters = []
 #        for i in range(self.no_full_solvers):
-#            self.full_solver_parameters.append({'no_parameters':2, 'no_observations':2, 'rank_full_solver':i+5})
+#            self.full_solver_parameters.append({'no_parameters':2, 'no_observations':2, 'rank_solver':i+5})
 
 ### SURROGATE
         self.surr_solver_init = sse.Surrogate_col
