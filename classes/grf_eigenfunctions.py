@@ -68,7 +68,6 @@ def calculate_eig(Cov):
     return Dsorted,Vsorted
     
 def eigenfunctions(V,indices,nx,ny,lx,ly,lam_new=None,lam_orig=None):
-    # TO DO: lambda
     if lam_new is None:      
         x = np.linspace(0,lx,nx)
         y = np.linspace(0,ly,ny)
@@ -132,16 +131,21 @@ def load_eig(filename):
     f.close()
     return obj
 
-def realization(D,V,nx,ny,lx,ly,seed=None,truncate=None,show=False):
+def realization(D,V,nx,ny,lx,ly,seed=None,truncate=None,show=False,lam_new=None,lam_orig=None):
+    # TO DO: lambda
     if truncate is None:
         truncate=len(D)
-    D = D[:truncate]
-    V = V[:,:truncate]
+    D_new = D[:truncate].copy()
+    V_new = V[:,:truncate].copy()
     np.random.seed(seed)
     eta = np.random.randn(truncate)
-    M = np.matmul(V,eta*np.sqrt(D)).reshape((ny,nx))
     x = np.linspace(0,lx,nx)
     y = np.linspace(0,ly,ny)
+    if lam_new is not None:    
+        eig_list = eigenfunctions(V_new,range(truncate),nx,ny,lx,ly,lam_new,lam_orig)
+        for i in range(truncate):
+            V_new[:,i] = eig_list[i](x,y).reshape((nx*ny,))
+    M = np.matmul(V_new,eta*np.sqrt(D_new)).reshape((ny,nx))
     f = scipy.interpolate.interp2d(x,y,M,kind='cubic')
     if show:
         fig, axes = plt.subplots(1, 2)
@@ -153,6 +157,7 @@ def realization(D,V,nx,ny,lx,ly,seed=None,truncate=None,show=False):
         axes[1].imshow(z)
         axes[1].set_xlabel('smooth')
         plt.show()
+    print(D_new.shape,V_new.shape,truncate)
     return M,f
 
 def demo_generate_and_save():
@@ -181,13 +186,14 @@ def demo_load_and_show():
     y = np.linspace(0,ly,120)
     z = evaluate_eigenfunctions(f,x,y,show=True,indices=indices)
     # correlation length lam higher than original:
-    f = eigenfunctions(V,indices,nx,ny,lx,ly,lam_new=2,lam_orig=lam)
-    z = evaluate_eigenfunctions(f,x,y,show=True,indices=indices)
+#    f = eigenfunctions(V,indices,nx,ny,lx,ly,lam_new=2,lam_orig=lam)
+#    z = evaluate_eigenfunctions(f,x,y,show=True,indices=indices)
 
 demo_generate_and_save()
-demo_load_and_show()
+#demo_load_and_show()
 
 filename='demo.pckl'
 D, V, Cov, nx, ny, lx, ly, sigma, lam = load_eig(filename)
-for i in [10,20,100,1000,None]:
+for i in [10,20,100,1000,2000,None]:
     realization(D,V,nx,ny,lx,ly,2,i,show=True)
+    realization(D,V,nx,ny,lx,ly,2,i,show=True,lam_new=lam*2,lam_orig=lam)
