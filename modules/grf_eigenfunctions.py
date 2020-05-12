@@ -131,14 +131,15 @@ def load_eig(filename):
     f.close()
     return obj
 
-def realization(D,V,nx,ny,lx,ly,seed=None,truncate=None,show=False,lam_new=None,lam_orig=None):
+def realization(D,V,nx,ny,lx,ly,seed=None,eta=None,truncate=None,show=False,lam_new=None,lam_orig=None):
     # TO DO: lambda
     if truncate is None:
         truncate=len(D)
     D_new = D[:truncate].copy()
     V_new = V[:,:truncate].copy()
     np.random.seed(seed)
-    eta = np.random.randn(truncate)
+    if eta is None:
+        eta = np.random.randn(truncate)
     x = np.linspace(0,lx,nx)
     y = np.linspace(0,ly,ny)
     if lam_new is not None:    
@@ -193,9 +194,58 @@ def demo_realization():
     filename='demo.pckl'
     D, V, Cov, nx, ny, lx, ly, sigma, lam = load_eig(filename)
     for i in [20,100,None]:
-        realization(D,V,nx,ny,lx,ly,2,i,show=True)
-#        realization(D,V,nx,ny,lx,ly,2,i,show=True,lam_new=lam*2,lam_orig=lam)
+        realization(D,V,nx,ny,lx,ly,seed=2,truncate=i,show=True)
+#        realization(D,V,nx,ny,lx,ly,seed=2,truncate=i,show=True,lam_new=lam*2,lam_orig=lam)
 
-demo_generate_and_save()
-demo_load_and_show()
-demo_realization()
+class GRF:
+    def __init__(self, filename, truncate = None, lam_new = None, sigma_new = None):
+        D, V, Cov, self.nx, self.ny, self.lx, self.ly, sigma_orig, lam_orig = load_eig(filename)
+        # self.nx, self.ny ... grid of the eigenfunctions (possibly coarse)
+        self.x = np.linspace(0,self.lx,self.nx)
+        self.y = np.linspace(0,self.ly,self.ny)
+        if truncate is None:
+            self.D = D.copy()
+            self.V = V.copy()
+        else:
+            self.D = D[:truncate].copy()
+            self.V = V[:,:truncate].copy()
+        if sigma_new is None:
+            self.sigma = sigma_orig
+        else:
+            self.D = self.D*sigma_new*sigma_new/sigma_orig/sigma_orig
+            self.sigma = sigma_new
+        if lam_new is None:
+            self.lam = lam_orig
+        else:
+            eig_list = eigenfunctions(self.V,range(truncate),self.nx,self.ny,self.lx,self.ly,lam_new,lam_orig)
+            for i in range(truncate):
+                self.V[:,i] = eig_list[i](self.x,self.y).reshape((self.nx*self.ny,))
+            self.lam = lam_new
+    
+    def truncate(self, truncate):
+        self.D = self.D[:truncate]
+        self.V = self.V[:,:truncate]
+        
+    def realization_grid_orig(self, eta):
+        # V, D already has sigma_new and lam_new
+        M = np.matmul(self.V,eta*np.sqrt(self.D)).reshape((self.ny,self.nx))
+        return M
+    
+    def realization_as_function(self, eta):
+        # V, D already has sigma_new and lam_new
+        M = np.matmul(self.V,eta*np.sqrt(self.D)).reshape((self.ny,self.nx))
+#        f = scipy.interpolate.interp2d(self.x,self.y,M,kind='cubic')
+        f = scipy.interpolate.RectBivariateSpline(self.x,self.y,M)
+        return f
+    
+    def realization_grid_new(self, eta, x_new, y_new):
+        # V, D already has sigma_new and lam_new
+        M = np.matmul(self.V,eta*np.sqrt(self.D)).reshape((self.ny,self.nx))
+#        f = scipy.interpolate.interp2d(self.x,self.y,M,kind='cubic')
+        f = scipy.interpolate.RectBivariateSpline(self.x,self.y,M)
+        M_new = f(x_new,y_new)
+        return M_new
+
+#demo_generate_and_save()
+#demo_load_and_show()
+#demo_realization()
