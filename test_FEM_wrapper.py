@@ -12,10 +12,12 @@ from modules import FEM_wrapper
 import numpy as np
 
 n = 40
-no_parameters = 100
-FEM_instance = FEM_wrapper.FEM(no_parameters,n)
+no_parameters = 2
+no_observations = 2
+FEM_instance = FEM_wrapper.FEM(no_parameters,no_observations,n)
 eta = np.random.randn(no_parameters)
-flow = FEM_instance.solve(eta)
+FEM_instance.pass_parameters(eta)
+flow = FEM_instance.get_solution()
 print('flow through windows:', flow, 'sum:', sum(flow))
 
 if n <= 30:

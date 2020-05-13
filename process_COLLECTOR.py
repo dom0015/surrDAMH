@@ -70,6 +70,8 @@ while any(is_active_sampler): # while at least 1 sampling algorithm is active
         is_free_updater = False
         for i in samplers_ranks[is_active_sampler & is_ready_sampler]:
             send_buffers[i]=SOL.copy() # TO DO: copy?
+            print("=========================PICKLE:")
+            print("=========================PICKLE:",type(send_buffers[i]),len(send_buffers[i]))
             comm_world.isend(send_buffers[i], dest=i, tag=tag_sent_data)
             is_ready_sampler[i] = False
 

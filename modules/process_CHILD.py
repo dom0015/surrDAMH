@@ -9,6 +9,7 @@ Created on Tue Oct 29 12:47:09 2019
 from mpi4py import MPI
 import numpy as np
 import full_solver_examples as fse
+import FEM_wrapper
 import time
 
 comm = MPI.Comm.Get_parent()
@@ -24,7 +25,8 @@ print("LAUNCHER", rank, size, rank_world, size_world)
 """
 INITIALIZATION OF THE SOLVER
 """
-S = fse.Solver_local_2to2()
+#S = fse.Solver_local_2to2()
+S = FEM_wrapper.FEM(no_parameters = 3, no_observations = 6, n = 50)
 
 """
 SOLVING INCOMING REQUESTS USING LINKED SOLVER
@@ -43,7 +45,7 @@ if rank_world==0:
             print("External solver disconnected.")
             solver_is_active = False
         else:
-            S.pass_parameters(received_data)
+            S.pass_parameters(received_data.reshape((S.no_parameters,)))
 #            time.sleep(1)
             sent_data = S.get_solution()
             comm.Send(sent_data, dest=0, tag=tag)

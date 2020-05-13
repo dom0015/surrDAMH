@@ -57,13 +57,14 @@ class Surrogate_col: # initiated by SAMPLERs
         return SOL, no_snapshots
 
     def apply(self, SOL, newdata_par):
+        print("=====================SOL",type(SOL),len(SOL))
         c, H, poly, degree = SOL
         N = poly.shape[0]
-        no_observations = c.shape[1]
+        no_parameters = poly.shape[1]
         if len(newdata_par.shape)==1:
-            newdata_par.shape = (1,no_observations)
+            newdata_par.shape = (1,no_parameters)
         no_newdata = newdata_par.shape[0]  
-        newdata_surrogate = np.zeros((no_newdata,no_observations))
+        newdata_surrogate = np.zeros((no_newdata,no_parameters))
         phi = np.ones((no_newdata,N))
         for i in range(N):
             for j in range(self.no_parameters):

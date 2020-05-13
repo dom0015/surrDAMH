@@ -64,6 +64,7 @@ class Solver_MPI_collector_MPI: # initiated by SAMPLERs
         
     def send_parameters(self, sent_data):
         self.tag_solver += 1
+        print('---------------------------SENDING DATA:',sent_data)
         self.comm.Send(sent_data, dest=self.rank_solver, tag=self.tag_solver)
         print('DEBUG - Solver_MPI_collector_MPI (', self.rank, ') Send request FROM', self.rank, 'TO:', self.rank_solver, "TAG:", self.tag_solver)
     

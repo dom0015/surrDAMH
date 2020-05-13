@@ -13,9 +13,29 @@ import numpy as np
 from MyFEM import Mesh, ProblemSetting, Assemble, Solvers
 from modules import grf_eigenfunctions as grf
 
+#class Solver_local_2to2:
+#    def __init__(self, ):
+#        self.no_parameters = 2
+#        self.no_observations = 2
+#        self.request_solved = True
+#        self.max_requests = 1
+#    
+#    def pass_parameters(self, data_par):
+#        self.data_par = data_par
+#        
+#    def get_solution(self, ):
+#        x1 = self.data_par[0,0]
+#        x2 = self.data_par[0,1]
+#        y1 = (x1*x1 + x2 - 11)**2 + (x1 + x2*x2 - 7)**2
+#        y2 = x1 + x2
+#        return np.array([[y1,y2]])
+#    
+#    def terminate(self):
+#        print("Terminate function is empty.")
+
 class FEM:
     # FEM solver preparation
-    def __init__(self, no_parameters = 5, n = 100):    
+    def __init__(self, no_parameters = 5, no_observations = 5, n = 100):    
         petsc4py.init()
         
         # TRIANGULAR MESH SETTING -----------------------------------------------------
@@ -24,19 +44,12 @@ class FEM:
         # PROBLEM SETTING (BOUNDARY + RHS) --------------------------------------
         self.my_problem = ProblemSetting.BoundaryValueProblem2D(my_mesh)  # init ProblemSetting obj
         # Dirichlet boundary condition settins:
-#        dirichlet_boundary = [["right",[0.2, 0.5]],
-#                              ["top",[0.2, 0.5]],
-#                              ["bottom",[0.4, 0.6]],
-#                              ["left", [0.2, 0.8]]]  # select boundary
-#        dirichlet_boundary_val = [0, 0, 0, 1]  # boundary value
-        # Dirichlet boundary condition settins:
-        dirichlet_boundary = [["left",[0, 1]],
-                              ["right",[0.0, 0.2]],
-                              ["right",[0.2, 0.4]],
-                              ["right",[0.4, 0.6]],
-                              ["right",[0.6, 0.8]],
-                              ["right",[0.8, 1.0]]] # select boundary
-        dirichlet_boundary_val = [1e6,0,0,0,0,0] # boundary value
+        bounds = np.linspace(0,1,no_observations)
+        dirichlet_boundary = [None] * no_observations
+        dirichlet_boundary[0] = ["left",[0, 1]]
+        for i in range(no_observations-1):
+            dirichlet_boundary[i+1] = ["right",[bounds[i], bounds[i+1]]]
+        dirichlet_boundary_val = [1e1] + [0] * (no_observations-1)
         self.my_problem.set_dirichlet_boundary(dirichlet_boundary, dirichlet_boundary_val)
         # Neumann boundary condition settins:
         neumann_boundary = ["top"]  # select boundary
@@ -47,10 +60,13 @@ class FEM:
         
         self.no_parameters = no_parameters
         self.grf_instance = grf.GRF('modules/unit50.pckl', truncate=no_parameters)
-    
-    def solve(self,parameters):
+        
+    def pass_parameters(self, data_par):
+        self.data_par = data_par
+
+    def get_solution(self,):
         # material setting:
-        f_grf = self.grf_instance.realization_as_function(parameters)
+        f_grf = self.grf_instance.realization_as_function(self.data_par)
         def material_function(x,y):
             no_points = len(x)
             result = np.zeros((no_points,))
@@ -68,14 +84,15 @@ class FEM:
         FEM_assembly.assemble_rhs_dirichlet()
         FEM_assembly.dirichlet_cut_and_sum_rhs(duplicate=True)
         
-        print(FEM_assembly.times_assembly)
+#        print(FEM_assembly.times_assembly)
         
         # SOLVING using KSP ----------------------------------------------------------
         self.solver = Solvers.LaplaceSteady(FEM_assembly)  # init
         self.solver.ksp_direct_type('petsc')
-        print(self.solver.times_assembly)
+#        print(self.solver.times_assembly)
         self.solver.calculate_window_flow()
-        return self.solver.window_flow
+        # TO DO: initialize window_flow as numpy array in MyFEM library
+        return np.array(self.solver.window_flow)
     
 def demo_prepare_and_solve():
     no_parameters = 10

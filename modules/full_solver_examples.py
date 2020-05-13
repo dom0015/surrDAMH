@@ -72,12 +72,19 @@ class Solver_local_2to2:
     def pass_parameters(self, data_par):
         self.data_par = data_par
         
+#    def get_solution(self, ):
+#        x1 = self.data_par[0,0]
+#        x2 = self.data_par[0,1]
+#        y1 = (x1*x1 + x2 - 11)**2 + (x1 + x2*x2 - 7)**2
+#        y2 = x1 + x2
+#        return np.array([[y1,y2]])
+        
     def get_solution(self, ):
-        x1 = self.data_par[0,0]
-        x2 = self.data_par[0,1]
+        x1 = self.data_par[0]
+        x2 = self.data_par[1]
         y1 = (x1*x1 + x2 - 11)**2 + (x1 + x2*x2 - 7)**2
         y2 = x1 + x2
-        return np.array([[y1,y2]])
+        return np.array([y1,y2])
     
     def terminate(self):
         print("Terminate function is empty.")

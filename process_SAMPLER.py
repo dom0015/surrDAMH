@@ -36,11 +36,11 @@ my_Surr = cCOMM.Solver_local_collector_MPI(no_parameters=no_parameters,
                                         is_updated=True, 
                                         rank_collector=rank_surr_collector)
 my_Prob = cS.Problem_Gauss(no_parameters=no_parameters,
-                           noise_std=[2.0, 0.1],
+                           noise_std=[1.0, 1.0, 1.0, 1.0, 1.0, 1.0],#, 1.0],
                            prior_mean=0.0, 
                            prior_std=1.0,
                            no_observations=no_observations, 
-                           observations=[66.4, 2],
+                           observations=[20.0,20.0,20.0,20.0,20.0,-100.0],#,10.0],#[66.4, 2],
                            seed=seed0,
                            name=problem_name)
 my_Prop = cS.Proposal_GaussRandomWalk(no_parameters=no_parameters,
@@ -57,7 +57,7 @@ my_Alg1 = cS.Algorithm_DAMH(my_Prob, my_Prop, my_Sol,
                             Surrogate = my_Surr,
                             initial_sample=my_Prob.prior_mean,
                             max_samples=10000,
-                            time_limit=20,
+                            time_limit=40, # TO DO: does not finish properly on time limit
                             name='my_DAMH_alg' + str(rank_world),
                             seed=seed0+3)
 my_Alg.run()
