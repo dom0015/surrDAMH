@@ -53,11 +53,9 @@ class Surrogate_col: # initiated by SAMPLERs
         RHS = np.matmul(coefs_wei,self.alldata_obs)
         c = np.matmul(np.linalg.pinv(A),RHS)
         SOL = [c, H, poly, degree]
-#        print("C",c,"H",H,"poly",poly,"degree",degree,"wei",alldata_wei)
         return SOL, no_snapshots
 
     def apply(self, SOL, newdata_par):
-        print("=====================SOL",type(SOL),len(SOL))
         c, H, poly, degree = SOL
         N = poly.shape[0]
         no_parameters = poly.shape[1]

@@ -88,3 +88,23 @@ class Solver_local_2to2:
     
     def terminate(self):
         print("Terminate function is empty.")
+        
+class Solver_local_ntom:
+    def __init__(self, no_parameters = 2, no_observations = 2):
+        self.no_parameters = no_parameters
+        self.no_observations = no_observations
+        self.request_solved = True
+        self.max_requests = 1
+    
+    def pass_parameters(self, data_par):
+        self.data_par = data_par
+        
+    def get_solution(self, ):
+        x = self.data_par
+        y = np.zeros((self.no_observations,))
+        for i in range(self.no_observations):
+            y[i] = x[min(i,self.no_parameters-1)]
+        return y
+    
+    def terminate(self):
+        print("Terminate function is empty.")

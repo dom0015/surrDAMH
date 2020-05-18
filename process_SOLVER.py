@@ -46,7 +46,7 @@ while any(is_active_sampler): # while at least 1 sampling algorithm is active
         if rank_source in samplers_rank: # if source is sampler
             tag = status.Get_tag()
             comm_world.Recv(received_data, source=rank_source, tag=tag)
-            print('DEBUG - MANAGER Recv request FROM sampler', rank_source, 'TO:', rank_world, "TAG:", tag)
+#            print('DEBUG - MANAGER Recv request FROM sampler', rank_source, 'TO:', rank_world, "TAG:", tag)
             if tag == 0: # if received message has tag 0, switch corresponding sampling alg. to inactive
                 # assumes that there will be no other incoming message from that source 
                 is_active_sampler[samplers_rank == rank_source] = False
@@ -59,7 +59,7 @@ while any(is_active_sampler): # while at least 1 sampling algorithm is active
                 is_free[i] = True # mark the solver as free
                 for j in range(len(occupied_by_source[i])):
                     comm_world.Send(sent_data[j].copy(), dest=occupied_by_source[i][j], tag=occupied_by_tag[i][j])
-                    print('DEBUG - MANAGER Send solution FROM', rank_world, 'TO:', occupied_by_source[i][j], "TAG:", occupied_by_tag[i][j])
+#                    print('DEBUG - MANAGER Send solution FROM', rank_world, 'TO:', occupied_by_source[i][j], "TAG:", occupied_by_tag[i][j])
         if is_free[i]:
             occupied_by_source[i] = []
             occupied_by_tag[i] = []

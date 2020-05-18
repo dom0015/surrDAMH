@@ -23,11 +23,11 @@ class Solver_MPI_parent: # initiated by full SOLVER
         self.tag += 1
         self.data_par = data_par.copy()
         self.comm.Send(self.data_par, dest=0, tag=self.tag)
-        print('DEBUG - PARENT Send request FROM', self.comm.Get_rank(), '(', MPI.COMM_WORLD.Get_rank(), ')', 'TO child:', 0, "TAG:", self.tag)
+#        print('DEBUG - PARENT Send request FROM', self.comm.Get_rank(), '(', MPI.COMM_WORLD.Get_rank(), ')', 'TO child:', 0, "TAG:", self.tag)
         
     def recv_observations(self):
         self.comm.Recv(self.received_data, source=0, tag=self.tag)
-        print('DEBUG - PARENT Recv solution FROM child', 0, 'TO:', self.comm.Get_rank(), '(', MPI.COMM_WORLD.Get_rank(), ')', "TAG:", self.tag)
+#        print('DEBUG - PARENT Recv solution FROM child', 0, 'TO:', self.comm.Get_rank(), '(', MPI.COMM_WORLD.Get_rank(), ')', "TAG:", self.tag)
         return self.received_data.copy()
     
     def is_solved(self):
@@ -64,13 +64,12 @@ class Solver_MPI_collector_MPI: # initiated by SAMPLERs
         
     def send_parameters(self, sent_data):
         self.tag_solver += 1
-        print('---------------------------SENDING DATA:',sent_data)
         self.comm.Send(sent_data, dest=self.rank_solver, tag=self.tag_solver)
-        print('DEBUG - Solver_MPI_collector_MPI (', self.rank, ') Send request FROM', self.rank, 'TO:', self.rank_solver, "TAG:", self.tag_solver)
+#        print('DEBUG - Solver_MPI_collector_MPI (', self.rank, ') Send request FROM', self.rank, 'TO:', self.rank_solver, "TAG:", self.tag_solver)
     
     def recv_observations(self, ):
         self.comm.Recv(self.received_data, source=self.rank_solver, tag=self.tag_solver)
-        print('DEBUG - Solver_MPI_collector_MPI (', self.rank, ') Recv solution FROM', self.rank_solver, 'TO:', self.rank, "TAG:", self.tag_solver)
+#        print('DEBUG - Solver_MPI_collector_MPI (', self.rank, ') Recv solution FROM', self.rank_solver, 'TO:', self.rank, "TAG:", self.tag_solver)
         return self.received_data.copy()
     
 #    def send_to_data_collector(self, sent_snapshot):
@@ -91,7 +90,7 @@ class Solver_MPI_collector_MPI: # initiated by SAMPLERs
     def terminate(self, ):
         # assume that terminate may be called multiple times
         if not self.terminated_solver:
-            print('DEBUG - Solver_MPI_collector_MPI terminate',self.rank_solver, self.comm.Get_size(), self.rank)
+#            print('DEBUG - Solver_MPI_collector_MPI terminate',self.rank_solver, self.comm.Get_size(), self.rank)
             self.comm.Send(self.empty_buffer, dest=self.rank_solver, tag=0)
             self.terminated_solver = True
         if not self.terminated_collector:
@@ -101,6 +100,7 @@ class Solver_MPI_collector_MPI: # initiated by SAMPLERs
 class Solver_local_collector_MPI: # initiated by SAMPLERs
     # local solver (evaluated on SAMPLERs)
     # with external data COLLECTOR (separate MPI process)
+    # communicates with: COLLECTOR
     def __init__(self, no_parameters, no_observations, local_solver_instance, is_updated=False, rank_collector=None):
         self.max_requests = 1
         self.comm = MPI.COMM_WORLD
@@ -118,7 +118,7 @@ class Solver_local_collector_MPI: # initiated by SAMPLERs
             self.terminated_data = False
         self.computation_in_progress = False # TO DO: remove?
         self.req = self.comm.irecv(source=self.rank_collector, tag=self.tag_sent_data)
-        self.empty_buffer = np.zeros(1)
+        self.empty_buffer = np.zeros((1,))
         self.comm.Isend(self.empty_buffer, dest=self.rank_collector, tag=self.tag_ready_to_receive)
         self.list_snapshots_to_send = []
         self.status = MPI.Status()
@@ -133,27 +133,34 @@ class Solver_local_collector_MPI: # initiated by SAMPLERs
         return computed_observations
 
     def send_to_data_collector(self, snapshot_to_send):
-        # sends list of snapshots to data COLLECTOR
-        # needed only if is_updated == True
+        # Adds new snapsahot to a list; if COLLECTOR is ready to receive new
+        # snapshots, sends list of snapshots to COLLECTOR and empties the list.
+        # (needed only if is_updated == True)
+        # TO DO: double buffer for list of snapshots
         self.list_snapshots_to_send.append(snapshot_to_send)
         tmp = self.comm.Iprobe(source=self.rank_collector, tag=self.tag_ready_to_receive)
-        if tmp: # if the collector is ready to receive new snapshots
-            tmp = np.zeros(1) # TO DO: useless pointer / cancel message
+        if tmp: # if COLLECTOR is ready to receive new snapshots
+            tmp = np.zeros((1,)) # TO DO: useless pointer / cancel message
             self.comm.Recv(tmp,source=self.rank_collector, tag=self.tag_ready_to_receive)
-            print('DEBUG - Solver_local_collector_MPI (', self.comm.Get_rank(), ') - sent_snapshots to', self.rank_collector)
-            self.comm.isend(self.list_snapshots_to_send.copy(), dest=self.rank_collector, tag=self.tag_sent_data)
+#            print('DEBUG - Solver_local_collector_MPI (', self.comm.Get_rank(), ') - sent_snapshots to', self.rank_collector)
+            data_to_pickle = self.list_snapshots_to_send.copy()
+            self.comm.isend(data_to_pickle, dest=self.rank_collector, tag=self.tag_sent_data)
             self.list_snapshots_to_send = []
-            # TO DO: isend
         self.receive_update_if_ready()
 
     def receive_update_if_ready(self):
-        # receive updated solver data (e.g. for updated surrogate model)
-        # check COMM_WORLD if there is an incoming message from the data COLLECTOR
+        # Receives updated solver data (e.g. for updated surrogate model).
         # TO DO: when to check for updates
         # TO DO: avoid copying of received data
-        r = self.req.test(status=self.status)
-        if r[0]:
-            self.solver_data[1 - self.solver_data_idx] = r[1]
+        # check COMM_WORLD if there is an incoming message from COLLECTOR:
+#        r = self.req.test()#status=self.status)
+#        if r[0]:
+        if self.req.Get_status():
+            r = self.req.wait()
+            print("RECEIVED A",type(r))
+            print("RECEIVED B",len(r))
+            print("RECEIVED C",r[3])
+            self.solver_data[1 - self.solver_data_idx] = r
             self.solver_data_idx = 1 - self.solver_data_idx
             self.req = self.comm.irecv(source=self.rank_collector, tag=self.tag_sent_data)
             self.comm.Isend(self.empty_buffer, dest=self.rank_collector, tag=self.tag_ready_to_receive)
@@ -169,5 +176,6 @@ class Solver_local_collector_MPI: # initiated by SAMPLERs
         if not self.terminated:
             self.terminated = True
         if not self.terminated_data:
-            self.comm.send([], dest=self.rank_collector, tag=self.tag_terminate)
+#            self.comm.send([], dest=self.rank_collector, tag=self.tag_terminate)
+            self.comm.Isend(self.empty_buffer, dest=self.rank_collector, tag=self.tag_terminate)
             self.terminated_data = True
