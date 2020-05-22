@@ -7,6 +7,7 @@ Created on Thu Nov  7 13:26:55 2019
 """
 
 from mpi4py import MPI
+from tqdm import tqdm
 comm_world = MPI.COMM_WORLD
 rank_world = comm_world.Get_rank()
 
@@ -35,14 +36,17 @@ tag_ready_to_receive = 1
 tag_sent_data = 2
 list_received_data = []
 empty_buffer = np.zeros((1,))
-requests = [None] * no_samplers
+request_recv = [None] * no_samplers
+request_send = [None] * no_samplers
 if any(is_active_sampler):
     for i in np.nditer(np.where(is_active_sampler)):
         # expects to receive data from this (active) sampler later:
-        requests[i] = comm_world.irecv(source=samplers_ranks[i], tag=tag_sent_data)
+        request_recv[i] = comm_world.irecv(source=samplers_ranks[i], tag=tag_sent_data)
         # sends signal to this (active) sampler that he is ready to receive data:
         comm_world.Isend(empty_buffer.copy(), dest=samplers_ranks[i], tag=tag_ready_to_receive)
 status = MPI.Status()
+progress_bar = tqdm(total=10000)
+no_snapshots_old = 0
 while any(is_active_sampler): # while at least 1 sampling algorithm is active
     # checks if there is an incoming message from any sampling algorithm:
     tmp = comm_world.Iprobe(source=MPI.ANY_SOURCE, tag=MPI.ANY_TAG, status=status)
@@ -67,27 +71,30 @@ while any(is_active_sampler): # while at least 1 sampling algorithm is active
     if any(is_active_sampler):
         for i in np.nditer(np.where(is_active_sampler)):
             # checks if there are incoming data from this active sampler:
-#            tmp = requests[i].test()#status=status)
+#            tmp = request_recv[i].test()#status=status)
 #            if tmp[0]:
-            if requests[i].Get_status():
-                received_data = requests[i].wait()
+            if request_recv[i].Get_status():
+                received_data = request_recv[i].wait()
                 # expects to receive data from this active sampler later:
-                requests[i] = comm_world.irecv(source=samplers_ranks[i], tag=tag_sent_data)
+                request_recv[i] = comm_world.irecv(source=samplers_ranks[i], tag=tag_sent_data)
                 # sends signal to this active sampler that he is ready to receive data:
                 comm_world.Isend(empty_buffer.copy(), dest=samplers_ranks[i], tag=tag_ready_to_receive)
                 list_received_data.extend(received_data)
     if len(list_received_data)>0:
         local_updater_instance.add_data(list_received_data)
         SOL, no_snapshots = local_updater_instance.update()
-        print("RANK", rank_world, "collected snapshots:", no_snapshots)
+#        print("RANK", rank_world, "collected snapshots:", no_snapshots)
+        progress_bar.update(no_snapshots-no_snapshots_old)
+        no_snapshots_old = no_snapshots
         list_received_data = []
         is_free_updater = False
-        for i in samplers_ranks[is_active_sampler & is_ready_sampler]:
-            send_buffers[i]=SOL.copy() # TO DO: copy?
-#            print("=========================PICKLE:",type(send_buffers[i][0]),type(send_buffers[i][1]),type(send_buffers[i][2]),type(send_buffers[i][3]))
-            print("=========================PICKLE:",type(send_buffers[i]),len(send_buffers[i]),send_buffers[i][3])
-            comm_world.isend(send_buffers[i], dest=i, tag=tag_sent_data)
-            is_ready_sampler[i] = False
+        if any(is_active_sampler & is_ready_sampler):
+            for i in np.nditer(np.where(is_active_sampler & is_ready_sampler)):
+                send_buffers[i]=SOL.copy() # TO DO: copy?
+                if request_send[i] is not None:
+                    request_send[i].wait()
+                request_send[i] = comm_world.isend(send_buffers[i], dest=samplers_ranks[i], tag=tag_sent_data)
+                is_ready_sampler[i] = False
 
 print("RANK", rank_world, "all collected snapshots:", len(list_received_data), len(local_updater_instance.alldata_par))
 

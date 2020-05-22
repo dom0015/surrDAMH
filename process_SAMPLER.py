@@ -40,7 +40,7 @@ my_Prob = cS.Problem_Gauss(no_parameters=no_parameters,
                            prior_mean=0.0, 
                            prior_std=1.0,
                            no_observations=no_observations, 
-                           observations=[20.0,20.0,20.0,20.0,20.0,-100.0],#,10.0],#[66.4, 2],
+                           observations=[100.0,-20.0,-20.0,-20.0,-20.0,-20.0],#,10.0],#[66.4, 2],
                            seed=seed0,
                            name=problem_name)
 my_Prop = cS.Proposal_GaussRandomWalk(no_parameters=no_parameters,
@@ -49,15 +49,15 @@ my_Prop = cS.Proposal_GaussRandomWalk(no_parameters=no_parameters,
 my_Alg = cS.Algorithm_MH(my_Prob, my_Prop, my_Sol,
                          Surrogate = my_Surr,
                          initial_sample=my_Prob.prior_mean,
-                         max_samples=100,
-                         time_limit=20,
+                         max_samples=1000,
+                         time_limit=200,
                          name='my_MH_alg' + str(rank_world),
                          seed=seed0+2)
 my_Alg1 = cS.Algorithm_DAMH(my_Prob, my_Prop, my_Sol,
                             Surrogate = my_Surr,
                             initial_sample=my_Prob.prior_mean,
                             max_samples=10000,
-                            time_limit=40, # TO DO: does not finish properly on time limit
+                            time_limit=400, # TO DO: does not finish properly on time limit
                             name='my_DAMH_alg' + str(rank_world),
                             seed=seed0+3)
 my_Alg.run()

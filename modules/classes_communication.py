@@ -117,7 +117,8 @@ class Solver_local_collector_MPI: # initiated by SAMPLERs
         if not rank_collector is None:
             self.terminated_data = False
         self.computation_in_progress = False # TO DO: remove?
-        self.req = self.comm.irecv(source=self.rank_collector, tag=self.tag_sent_data)
+        self.request_recv = self.comm.irecv(source=self.rank_collector, tag=self.tag_sent_data)
+        self.request_send = None
         self.empty_buffer = np.zeros((1,))
         self.comm.Isend(self.empty_buffer, dest=self.rank_collector, tag=self.tag_ready_to_receive)
         self.list_snapshots_to_send = []
@@ -144,7 +145,9 @@ class Solver_local_collector_MPI: # initiated by SAMPLERs
             self.comm.Recv(tmp,source=self.rank_collector, tag=self.tag_ready_to_receive)
 #            print('DEBUG - Solver_local_collector_MPI (', self.comm.Get_rank(), ') - sent_snapshots to', self.rank_collector)
             data_to_pickle = self.list_snapshots_to_send.copy()
-            self.comm.isend(data_to_pickle, dest=self.rank_collector, tag=self.tag_sent_data)
+            if self.request_send is not None:
+                self.request_send.wait()
+            self.request_send = self.comm.isend(data_to_pickle, dest=self.rank_collector, tag=self.tag_sent_data)
             self.list_snapshots_to_send = []
         self.receive_update_if_ready()
 
@@ -153,16 +156,13 @@ class Solver_local_collector_MPI: # initiated by SAMPLERs
         # TO DO: when to check for updates
         # TO DO: avoid copying of received data
         # check COMM_WORLD if there is an incoming message from COLLECTOR:
-#        r = self.req.test()#status=self.status)
+#        r = self.request_recv.test()#status=self.status)
 #        if r[0]:
-        if self.req.Get_status():
-            r = self.req.wait()
-            print("RECEIVED A",type(r))
-            print("RECEIVED B",len(r))
-            print("RECEIVED C",r[3])
+        if self.request_recv.Get_status():
+            r = self.request_recv.wait()
             self.solver_data[1 - self.solver_data_idx] = r
             self.solver_data_idx = 1 - self.solver_data_idx
-            self.req = self.comm.irecv(source=self.rank_collector, tag=self.tag_sent_data)
+            self.request_recv = self.comm.irecv(source=self.rank_collector, tag=self.tag_sent_data)
             self.comm.Isend(self.empty_buffer, dest=self.rank_collector, tag=self.tag_ready_to_receive)
             
 #    def is_solved(self):
