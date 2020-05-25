@@ -28,7 +28,7 @@ class Solver_MPI_parent: # initiated by full SOLVER
     def recv_observations(self):
         self.comm.Recv(self.received_data, source=0, tag=self.tag)
 #        print('DEBUG - PARENT Recv solution FROM child', 0, 'TO:', self.comm.Get_rank(), '(', MPI.COMM_WORLD.Get_rank(), ')', "TAG:", self.tag)
-        return self.received_data.copy()
+        return self.received_data.reshape((1,-1)).copy()
     
     def is_solved(self):
         # check the parent-child communicator if there is an incoming message

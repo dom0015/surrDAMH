@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 from configuration import Configuration
 C = Configuration()
 problem_name = C.problem_name
+#problem_name =  "my_prob01"
 
 S = aa.Samples()
 #m = int(1e5)
@@ -44,7 +45,6 @@ print(S.autocorr_time)
 print(S.autocorr_time_mean)
 print(S.autocorr_time_mean_beta)
 
-
 from modules import FEM_wrapper
 G = FEM_wrapper.FEM(no_parameters = 5, no_observations = 6, n = 50)
 G.pass_parameters(S.mean[3])
@@ -57,3 +57,14 @@ z = grf_instance.realization_grid_new(eta,np.linspace(0,1,50),np.linspace(0,1,50
 plt.show()
 plt.imshow(z)
 plt.show()
+
+## generate material shample and calculate observation:
+#no_parame = 5
+#grf_instance = grf.GRF('modules/unit50.pckl', truncate=no_parame)
+#eta = np.random.randn(no_parame)*1
+#z = grf_instance.realization_grid_new(eta,np.linspace(0,1,50),np.linspace(0,1,50))
+#plt.imshow(z)
+#plt.show()
+#G = FEM_wrapper.FEM(no_parameters = no_parame, no_observations = 6, n = 50)
+#G.pass_parameters(eta)
+#print("observation:",G.get_solution())

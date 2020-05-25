@@ -103,8 +103,10 @@ class Algorithm_PARENT:
         temp = self.__generator.uniform(0.0,1.0)
         temp = np.log(temp)
         if temp<log_ratio: # accepted
+#            print("class_SAMPLER acceptance - log(rand) =",temp,"< log_ratio =",log_ratio)
             return True
         else:
+#            print("class_SAMPLER acceptance - log(rand) =",temp,"> log_ratio =",log_ratio, "REJECTED")
             return False
         
     def __write_to_file__(self):
@@ -158,12 +160,18 @@ class Algorithm_DAMH(Algorithm_PARENT): # initiated by SAMPLERs
             pre_log_ratio = pre_posterior_proposed_sample - pre_posterior_current_sample
             if self.is_accepted_sample(pre_log_ratio):
                 self.request_observations()
+#                print("abs((G-GS)/G):",np.abs((self.G_proposed_sample-GS_proposed_sample)/self.G_proposed_sample))
+                tmp = np.abs((self.G_proposed_sample-GS_proposed_sample)/self.G_proposed_sample)
+                tmp_error = np.sqrt(np.sum(np.power(tmp,2)))*100
                 if self.is_accepted_sample(self.log_ratio - pre_log_ratio):
                     self.if_accepted()
                     pre_posterior_current_sample = pre_posterior_proposed_sample
+                    print(self.posterior_proposed_sample, "-", self.posterior_current_sample, "-", pre_posterior_proposed_sample, "+", pre_posterior_current_sample, "--------accepted", tmp_error, "%")
                 else:
+                    print(self.posterior_proposed_sample, "-", self.posterior_current_sample, "-", pre_posterior_proposed_sample, "+", pre_posterior_current_sample, "------------------------REJECTED", tmp_error, "%")
                     self.if_not_accepted()
             else:
+                print("prerejected")
                 self.no_prerejected += 1
                 self.no_rejected_current += 1
             if time.time() - self.time_start > self.time_limit:

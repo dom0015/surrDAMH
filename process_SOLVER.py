@@ -58,7 +58,7 @@ while any(is_active_sampler): # while at least 1 sampling algorithm is active
                 sent_data = Solvers[i].recv_observations()
                 is_free[i] = True # mark the solver as free
                 for j in range(len(occupied_by_source[i])):
-                    comm_world.Send(sent_data[j].copy(), dest=occupied_by_source[i][j], tag=occupied_by_tag[i][j])
+                    comm_world.Send(sent_data[j,:].copy(), dest=occupied_by_source[i][j], tag=occupied_by_tag[i][j])
 #                    print('DEBUG - MANAGER Send solution FROM', rank_world, 'TO:', occupied_by_source[i][j], "TAG:", occupied_by_tag[i][j])
         if is_free[i]:
             occupied_by_source[i] = []

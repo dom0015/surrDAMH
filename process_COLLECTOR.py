@@ -45,7 +45,7 @@ if any(is_active_sampler):
         # sends signal to this (active) sampler that he is ready to receive data:
         comm_world.Isend(empty_buffer.copy(), dest=samplers_ranks[i], tag=tag_ready_to_receive)
 status = MPI.Status()
-progress_bar = tqdm(total=10000)
+#progress_bar = tqdm(total=10000)
 no_snapshots_old = 0
 while any(is_active_sampler): # while at least 1 sampling algorithm is active
     # checks if there is an incoming message from any sampling algorithm:
@@ -84,7 +84,7 @@ while any(is_active_sampler): # while at least 1 sampling algorithm is active
         local_updater_instance.add_data(list_received_data)
         SOL, no_snapshots = local_updater_instance.update()
 #        print("RANK", rank_world, "collected snapshots:", no_snapshots)
-        progress_bar.update(no_snapshots-no_snapshots_old)
+#        progress_bar.update(no_snapshots-no_snapshots_old)
         no_snapshots_old = no_snapshots
         list_received_data = []
         is_free_updater = False
