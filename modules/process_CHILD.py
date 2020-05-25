@@ -27,7 +27,7 @@ INITIALIZATION OF THE SOLVER
 """
 #S = fse.Solver_local_2to2()
 #S = fse.Solver_local_ntom(no_parameters = 3, no_observations = 6)
-S = FEM_wrapper.FEM(no_parameters = 5, no_observations = 6, n = 50)
+S = FEM_wrapper.FEM(no_parameters = 10, no_observations = 6, n = 50)
 
 """
 SOLVING INCOMING REQUESTS USING LINKED SOLVER

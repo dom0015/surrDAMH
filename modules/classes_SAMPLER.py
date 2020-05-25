@@ -152,26 +152,27 @@ class Algorithm_DAMH(Algorithm_PARENT): # initiated by SAMPLERs
         self.Surrogate.send_parameters(self.current_sample)
         GS_current_sample = self.Surrogate.recv_observations()
         pre_posterior_current_sample = self.compute_posterior(self.current_sample, GS_current_sample)
+        pre_posterior_current_sample_old_surrogate = pre_posterior_current_sample
         for i in range(self.max_samples):
             self.proposed_sample = self.Proposal.propose_sample(self.current_sample)
-            self.Surrogate.send_parameters(self.proposed_sample.copy())
-            GS_proposed_sample = self.Surrogate.recv_observations()
+            # it is necessary to recalculate GS_current_cample,
+            # because the surrogate model may have changed
+            self.Surrogate.send_parameters(np.array([self.current_sample,self.proposed_sample]))
+            tmp = self.Surrogate.recv_observations()
+            GS_current_sample = tmp[0,:]
+            # TO DO: do not recalculate posterior if GS_current_sample did not change
+            pre_posterior_current_sample = self.compute_posterior(self.current_sample, GS_current_sample)
+            GS_proposed_sample = tmp[1,:]
             pre_posterior_proposed_sample = self.compute_posterior(self.proposed_sample, GS_proposed_sample)
             pre_log_ratio = pre_posterior_proposed_sample - pre_posterior_current_sample
             if self.is_accepted_sample(pre_log_ratio):
                 self.request_observations()
-#                print("abs((G-GS)/G):",np.abs((self.G_proposed_sample-GS_proposed_sample)/self.G_proposed_sample))
-                tmp = np.abs((self.G_proposed_sample-GS_proposed_sample)/self.G_proposed_sample)
-                tmp_error = np.sqrt(np.sum(np.power(tmp,2)))*100
                 if self.is_accepted_sample(self.log_ratio - pre_log_ratio):
                     self.if_accepted()
-                    pre_posterior_current_sample = pre_posterior_proposed_sample
-                    print(self.posterior_proposed_sample, "-", self.posterior_current_sample, "-", pre_posterior_proposed_sample, "+", pre_posterior_current_sample, "--------accepted", tmp_error, "%")
                 else:
-                    print(self.posterior_proposed_sample, "-", self.posterior_current_sample, "-", pre_posterior_proposed_sample, "+", pre_posterior_current_sample, "------------------------REJECTED", tmp_error, "%")
                     self.if_not_accepted()
             else:
-                print("prerejected")
+#                print("prerejected")
                 self.no_prerejected += 1
                 self.no_rejected_current += 1
             if time.time() - self.time_start > self.time_limit:

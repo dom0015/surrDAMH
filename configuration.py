@@ -15,7 +15,7 @@ class Configuration:
         self.problem_name = "my_prob02"
         self.no_samplers = 3
         self.no_full_solvers = 2
-        self.no_parameters = 5
+        self.no_parameters = 10
         self.no_observations = 6
         self.rank_full_solver = self.no_samplers
         self.rank_surr_collector = self.no_samplers + 1

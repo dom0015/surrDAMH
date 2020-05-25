@@ -40,7 +40,9 @@ my_Prob = cS.Problem_Gauss(no_parameters=no_parameters,
                            prior_mean=0.0, 
                            prior_std=1.0,
                            no_observations=no_observations, 
-                           observations=[22.0,-2.0,-14.0,-2.0,-2.0,-2.0],#,10.0],#[66.4, 2],
+#                           observations=[12.0,-2.0,-4.0,-2.0,-2.0,-2.0],#,10.0],#[66.4, 2],
+                           observations=[ 7.4837606, -1.68701975, -1.81545499, -1.65487159, -1.28726334, -1.03915092], # 10 par.
+#                           observations=[ 8.82241556, -1.90702699, -1.82779399, -1.73531779, -1.68027744, -1.67199935], #  5 par. [-0.1619718 , -0.07180041, -0.14519628, -0.05503798,  0.10185466]
                            seed=seed0,
                            name=problem_name)
 my_Prop = cS.Proposal_GaussRandomWalk(no_parameters=no_parameters,
@@ -50,13 +52,13 @@ my_Alg = cS.Algorithm_MH(my_Prob, my_Prop, my_Sol,
                          Surrogate = my_Surr,
                          initial_sample=my_Prob.prior_mean,
                          max_samples=100,
-                         time_limit=200,
+                         time_limit=20,
                          name='my_MH_alg' + str(rank_world),
                          seed=seed0+2)
 my_Alg1 = cS.Algorithm_DAMH(my_Prob, my_Prop, my_Sol,
                             Surrogate = my_Surr,
-                            initial_sample=my_Prob.prior_mean,
-                            max_samples=1000,
+                            initial_sample=my_Prob.prior_mean+0.2,
+                            max_samples=10000,
                             time_limit=400, # TO DO: does not finish properly on time limit
                             name='my_DAMH_alg' + str(rank_world),
                             seed=seed0+3)

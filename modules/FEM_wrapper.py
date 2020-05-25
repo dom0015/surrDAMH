@@ -6,8 +6,10 @@ Created on Tue May 12 10:48:13 2020
 @author: simona
 """
 
-#import sys
-#sys.path.append("/home/simona/GIT/Simple_Python_PETSc_FEM")
+import sys # REMOVE!
+# sys.path.append("/home/simona/GIT/Simple_Python_PETSc_FEM") 
+sys.path.append("/home/ber0061/Repositories_dom0015/Simple_Python_PETSc_FEM")
+sys.path.append("/home/ber0061/Repositories_dom0015/MCMC-Bayes-python")
 import petsc4py
 import numpy as np
 from MyFEM import Mesh, ProblemSetting, Assemble, Solvers
