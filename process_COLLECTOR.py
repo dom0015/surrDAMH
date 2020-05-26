@@ -96,7 +96,7 @@ while any(is_active_sampler): # while at least 1 sampling algorithm is active
                 request_send[i] = comm_world.isend(send_buffers[i], dest=samplers_ranks[i], tag=tag_sent_data)
                 is_ready_sampler[i] = False
 
-print("RANK", rank_world, "all collected snapshots:", len(list_received_data), len(local_updater_instance.alldata_par))
+print("RANK", rank_world, "all collected snapshots:", len(list_received_data), len(local_updater_instance.processed_par))
 
 comm_world.Barrier()
 print("MPI process", rank_world, "(DATA COLLECTOR) terminated.")

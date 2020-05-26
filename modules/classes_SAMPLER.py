@@ -152,7 +152,7 @@ class Algorithm_DAMH(Algorithm_PARENT): # initiated by SAMPLERs
         self.Surrogate.send_parameters(self.current_sample)
         GS_current_sample = self.Surrogate.recv_observations()
         pre_posterior_current_sample = self.compute_posterior(self.current_sample, GS_current_sample)
-        pre_posterior_current_sample_old_surrogate = pre_posterior_current_sample
+#        pre_posterior_current_sample_old_surrogate = pre_posterior_current_sample
         for i in range(self.max_samples):
             self.proposed_sample = self.Proposal.propose_sample(self.current_sample)
             # it is necessary to recalculate GS_current_cample,

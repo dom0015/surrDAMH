@@ -37,9 +37,9 @@ class Configuration:
 #            self.full_solver_parameters.append({'no_parameters':2, 'no_observations':2, 'rank_solver':i+5})
 
 ### SURROGATE
-        self.surr_solver_init = sse.Surrogate_col
+        self.surr_solver_init = sse.Surrogate_apply
         self.surr_solver_parameters = {'no_parameters':self.no_parameters, 'no_observations':self.no_observations}
-        self.surr_updater_init = sse.Surrogate_col
+        self.surr_updater_init = sse.Surrogate_update
         self.surr_updater_parameters = {'no_parameters':self.no_parameters, 'no_observations':self.no_observations}
         
         if display:
