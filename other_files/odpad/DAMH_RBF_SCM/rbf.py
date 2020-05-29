@@ -24,6 +24,7 @@ class rbf(Surrogate_parent):
         print('RBF surrogate model will be constructed.')
         
     def calculate(self,alldata_par, alldata_obs, alldata_wei):
+        
         no_snapshots, no_parameters = alldata_par.shape
         TEMP = np.zeros([no_snapshots,no_snapshots])
         for i in range(no_parameters):

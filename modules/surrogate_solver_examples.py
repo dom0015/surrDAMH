@@ -12,22 +12,17 @@ class Surrogate_apply: # initiated by all SAMPLERs
     def __init__(self, no_parameters, no_observations):
         self.no_parameters = no_parameters
         self.no_observations = no_observations
-#        self.is_updated = is_updated
-#        self.max_degree = max_degree
-#        self.alldata_par = np.empty((0,self.no_parameters))
-#        self.alldata_obs = np.empty((0,self.no_observations))
-#        self.alldata_wei = np.empty((0,1))
         self.current_degree = 1;
         self.on_degree_change()
         
     def apply(self, SOL, datapoints):
+        if len(datapoints.shape)==1:
+            datapoints.shape = (1,self.no_parameters)
+        no_datapoints = datapoints.shape[0]  
         c, degree = SOL
         if degree > self.current_degree:
             self.current_degree = degree
             self.on_degree_change()
-        if len(datapoints.shape)==1:
-            datapoints.shape = (1,self.no_parameters)
-        no_datapoints = datapoints.shape[0]  
         GS_datapoints = np.zeros((no_datapoints,self.no_parameters))
         phi = np.ones((no_datapoints,self.no_poly))
         for i in range(self.no_poly):

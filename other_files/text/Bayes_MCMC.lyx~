@@ -1021,5 +1021,62 @@ postupně zaplňovat sekce
 
 \end_layout
 
+\begin_layout Section*
+Současná implementace surrogate modelu (polynomy):
+\end_layout
+
+\begin_layout Standard
+COLLECTOR i všechny SAMPLERy mají vlastní instanci surrogate modelu, COLLECTOR
+ využívá pouze metody 
+\begin_inset Quotes eld
+\end_inset
+
+update
+\begin_inset Quotes erd
+\end_inset
+
+ a 
+\begin_inset Quotes eld
+\end_inset
+
+add_data
+\begin_inset Quotes erd
+\end_inset
+
+, SAMPLER pouze metodu 
+\begin_inset Quotes eld
+\end_inset
+
+apply
+\begin_inset Quotes erd
+\end_inset
+
+
+\end_layout
+
+\begin_layout Standard
+–> rozdělím surrogate model na třídy 
+\begin_inset Quotes eld
+\end_inset
+
+Surrogate_update
+\begin_inset Quotes erd
+\end_inset
+
+ a 
+\begin_inset Quotes eld
+\end_inset
+
+Surrogate_apply
+\begin_inset Quotes erd
+\end_inset
+
+ a na samostatné metody
+\end_layout
+
+\begin_layout Standard
+–> pokusím se zredukovat množství operací a dat posílaných přes MPI
+\end_layout
+
 \end_body
 \end_document

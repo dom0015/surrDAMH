@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Created on Tue May 26 15:28:42 2020
+Created on Wed May 27 10:21:47 2020
 
 @author: simona
 """
 
-import metis
 
 ## create sample FEM matrix:
 import sys # REMOVE!
+import time
 sys.path.append("/home/simona/GIT/Simple_Python_PETSc_FEM") 
 #sys.path.append("/home/ber0061/Repositories_dom0015/Simple_Python_PETSc_FEM")
 #sys.path.append("/home/ber0061/Repositories_dom0015/MCMC-Bayes-python")
@@ -18,7 +18,7 @@ from MyFEM import Mesh, ProblemSetting, Assemble, Solvers
 from modules import grf_eigenfunctions as grf
 no_parameters = 5
 no_observations = 5
-n = 100
+n = 50
 my_mesh = Mesh.RectUniTri(n, n)
 my_problem = ProblemSetting.BoundaryValueProblem2D(my_mesh) 
 bounds = np.linspace(0,1,no_observations)
@@ -53,46 +53,50 @@ FEM_assembly.assemble_rhs_dirichlet()
 FEM_assembly.dirichlet_cut_and_sum_rhs(duplicate=True)
 # SOLVING using KSP ----------------------------------------------------------
 solver = Solvers.LaplaceSteady(FEM_assembly)  # init
-solver.ksp_direct_type('petsc')
-solver.plot_solution_image()  # plot solution as image
-A = solver.assembled_matrices.matrices["A"]
+#t = time.time()
+#solver.ksp_direct_type('petsc')
+#print(time.time()-t)
+#solver.plot_solution_image()  # plot solution as image
+#solver = Solvers.LaplaceSteady(FEM_assembly)  # init
+#t = time.time()
+#solver.ksp_cg_with_pc('mg')
+#print(time.time()-t)
+#solver.plot_solution_image()  # plot solution as image
+#solver = Solvers.LaplaceSteady(FEM_assembly)  # init
+#t = time.time()
+#solver.ksp_cg_with_pc('deflation')
+#print(time.time()-t)
+#solver.plot_solution_image()  # plot solution as image
+#solver = Solvers.LaplaceSteady(FEM_assembly)  # init
+#t = time.time()
+#solver.ksp_cg_with_pc('ilu')
+#print(time.time()-t)
+#solver.plot_solution_image()  # plot solution as image
+#solver = Solvers.LaplaceSteady(FEM_assembly)  # init
+#t = time.time()
+#solver.ksp_cg_with_pc('icc')
+#print(time.time()-t)
+#solver.plot_solution_image()  # plot solution as image
+#solver = Solvers.LaplaceSteady(FEM_assembly)  # init
+#t = time.time()
+#solver.ksp_cg_with_pc('jacobi')
+#print(time.time()-t)
+#solver.plot_solution_image()  # plot solution as image
+#solver = Solvers.LaplaceSteady(FEM_assembly)  # init
+#t = time.time()
+#solver.ksp_cg_with_pc('none')
+#print(time.time()-t)
+#solver.plot_solution_image()  # plot solution as image
 
-
-A.convert("dense")
-A = A.getDenseArray()
-A[A!=0]=1
-
-N = (n+1)*(n+1)
-sqrtN = n+1
-NS = 12 # number of subdomains
-SO = 2 # size of overlap
-#A = A - np.eye(N)
-adjlist = [None] * N
-for i in range(N):
-    tmp = np.where(A[i,:]!=0)[0]
-#    for j in range(N):
-#        if A[i,j]!=0:
-#            tmp.append(j)
-    adjlist[i] = tmp
-metis_graph = metis.adjlist_to_metis(adjlist)
-[cost, parts] = metis.part_graph(metis_graph, nparts=NS, recursive=True)
-
+## CG
 import matplotlib.pyplot as plt
-parts_numpy = np.array(parts)
-tmp = parts_numpy.reshape((sqrtN,sqrtN))#,order='F')
-plt.imshow(tmp, extent=[0, 1, 1, 0])
-plt.gca().invert_yaxis()
-plt.show()
-
-
-indices = np.zeros((N,NS))
-for i in range(NS):
-    indices[:,i] = (parts_numpy==i)
-for i in range(SO):
-    indices = np.matmul(A,indices)>0
-overlap = np.sum(indices,axis=1)
-
-tmp = overlap.reshape((sqrtN,sqrtN))#,order='F')
-plt.imshow(tmp, extent=[0, 1, 1, 0])
+A = solver.assembled_matrices.matrices["A_dirichlet"]
+Anp = A.convert("dense")
+Anp = Anp.getDenseArray()
+b= solver.assembled_matrices.rhss["final"]
+bnp = np.array(b)
+x = np.linalg.solve(Anp,bnp)
+x = x.reshape((n + 1, n + 1), order='F')
+plt.imshow(x, extent=[0, 1, 1, 0])
 plt.gca().invert_yaxis()
 plt.show()

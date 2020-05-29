@@ -8,6 +8,7 @@ Created on Wed Nov  6 09:15:15 2019
 
 #import full_solver_examples as fse
 from modules import surrogate_solver_examples as sse
+from modules import surrogate_solver_rbf as rbf
 from modules import classes_communication
 
 class Configuration:
@@ -37,9 +38,9 @@ class Configuration:
 #            self.full_solver_parameters.append({'no_parameters':2, 'no_observations':2, 'rank_solver':i+5})
 
 ### SURROGATE
-        self.surr_solver_init = sse.Surrogate_apply
+        self.surr_solver_init = rbf.Surrogate_apply
         self.surr_solver_parameters = {'no_parameters':self.no_parameters, 'no_observations':self.no_observations}
-        self.surr_updater_init = sse.Surrogate_update
+        self.surr_updater_init = rbf.Surrogate_update
         self.surr_updater_parameters = {'no_parameters':self.no_parameters, 'no_observations':self.no_observations}
         
         if display:

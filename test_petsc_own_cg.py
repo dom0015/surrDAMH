@@ -1,24 +1,28 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Created on Tue May 26 15:28:42 2020
+Created on Wed May 27 10:21:47 2020
 
 @author: simona
 """
 
-import metis
 
 ## create sample FEM matrix:
 import sys # REMOVE!
+import time
 sys.path.append("/home/simona/GIT/Simple_Python_PETSc_FEM") 
 #sys.path.append("/home/ber0061/Repositories_dom0015/Simple_Python_PETSc_FEM")
 #sys.path.append("/home/ber0061/Repositories_dom0015/MCMC-Bayes-python")
 import numpy as np
 from MyFEM import Mesh, ProblemSetting, Assemble, Solvers
 from modules import grf_eigenfunctions as grf
+import matplotlib.pyplot as plt
+from petsc4py import PETSc
+
+""" ASSEMBLY A, b """
 no_parameters = 5
 no_observations = 5
-n = 100
+n = 50
 my_mesh = Mesh.RectUniTri(n, n)
 my_problem = ProblemSetting.BoundaryValueProblem2D(my_mesh) 
 bounds = np.linspace(0,1,no_observations)
@@ -43,7 +47,6 @@ def material_function(x,y):
         result[i] = np.exp(f_grf(x[i],y[i]))
     return result
 my_problem.set_material(material_function)
-
 # MATRIX ASSEMBLER (SYSTEM MAT + RHS) assemble all parts necessary for solution:
 FEM_assembly = Assemble.LaplaceSteady(my_problem)  # init assemble obj
 FEM_assembly.assemble_matrix_generalized()
@@ -53,46 +56,73 @@ FEM_assembly.assemble_rhs_dirichlet()
 FEM_assembly.dirichlet_cut_and_sum_rhs(duplicate=True)
 # SOLVING using KSP ----------------------------------------------------------
 solver = Solvers.LaplaceSteady(FEM_assembly)  # init
-solver.ksp_direct_type('petsc')
-solver.plot_solution_image()  # plot solution as image
-A = solver.assembled_matrices.matrices["A"]
+A = solver.assembled_matrices.matrices["A_dirichlet"]
+b = solver.assembled_matrices.rhss["final"]
 
-
-A.convert("dense")
-A = A.getDenseArray()
-A[A!=0]=1
-
-N = (n+1)*(n+1)
-sqrtN = n+1
-NS = 12 # number of subdomains
-SO = 2 # size of overlap
-#A = A - np.eye(N)
-adjlist = [None] * N
-for i in range(N):
-    tmp = np.where(A[i,:]!=0)[0]
-#    for j in range(N):
-#        if A[i,j]!=0:
-#            tmp.append(j)
-    adjlist[i] = tmp
-metis_graph = metis.adjlist_to_metis(adjlist)
-[cost, parts] = metis.part_graph(metis_graph, nparts=NS, recursive=True)
-
-import matplotlib.pyplot as plt
-parts_numpy = np.array(parts)
-tmp = parts_numpy.reshape((sqrtN,sqrtN))#,order='F')
-plt.imshow(tmp, extent=[0, 1, 1, 0])
+""" SOLVE Ax=b USING NUMPY AND SHOW """
+Anp = A.convert("dense")
+Anp = Anp.getDenseArray()
+bnp = np.array(b)
+x = np.linalg.solve(Anp,bnp)
+x_reshaped = x.reshape((n + 1, n + 1), order='F')
+plt.imshow(x_reshaped, extent=[0, 1, 1, 0])
 plt.gca().invert_yaxis()
 plt.show()
 
+""" IMPLEMENT OWN CG WITH PETSC MATRICES AND VECTORS """
+""" INPUTS (A,b) defined above """
+def Afun(x):
+    res = A*x
+    return res
+""" OTHER INPUTS (x0, W, Q, M, tol, maxiter): """
+N = A.size[1]
+x0 = PETSc.Vec().create()
+x0.setSizes(N)
+x0.setType("mpi")
+x0.set(0)
+x0.setUp()
+Wnp = np.zeros((N,1))
+W = PETSc.Mat().create()
+W.setSizes((N,1))
+W.setType("dense")
+W.setUp()
+W.assemblyBegin()
+W.setValues(range(N),range(1),Wnp)
+W.assemblyEnd()
+WTAW = PETSc.Mat.transposeMatMult(W,A).matMult(W)
+WTAWksp = PETSc.KSP().create()
+WTAWksp.setOperators(WTAW)
+WTAWksp.setType('preonly')
+WTAWkspPC = WTAWksp.getPC()
+WTAWkspPC.setType('lu')
+WTAWkspPC.setFactorSolverType('umfpack')
+WTAWkspPC.setFactorSetUpSolverType()
+WTAWksp.ksp.setFromOptions()
+def Qfun(x):
+    tmp = W.transposeMult(x)
+    sol = x.copy()
+    WTAWksp.solve(tmp, sol)
+    return W*sol
+def PCfun(x): # TO DO
+    return x.copy()
+maxiter = 10
+""" PREPARATION: """
+b_norm = b.norm()
+x_old = x0.copy()
+r_old = b - Afun(x0)
+z_old = PCfun(r_old)
+resvec = PETSc.Vec().create()
+resvec.setSizes(maxiter)
+resvec.setType("mpi")
+resvec.set(0)
+resvec.setUp()
+gamma_old = r_old.dot(z_old)
+tag = 3
+""" CG ITERATIONS: """
+#for i in range(maxiter):
+#    t = Afun(p_old)
 
-indices = np.zeros((N,NS))
-for i in range(NS):
-    indices[:,i] = (parts_numpy==i)
-for i in range(SO):
-    indices = np.matmul(A,indices)>0
-overlap = np.sum(indices,axis=1)
-
-tmp = overlap.reshape((sqrtN,sqrtN))#,order='F')
-plt.imshow(tmp, extent=[0, 1, 1, 0])
-plt.gca().invert_yaxis()
-plt.show()
+    
+    
+    
+    

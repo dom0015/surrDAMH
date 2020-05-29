@@ -160,7 +160,7 @@ class Solver_local_collector_MPI: # initiated by SAMPLERs
 #        if r[0]:
         if self.request_recv.Get_status():
             r = self.request_recv.wait()
-            print("r:",r[0].shape,r[1])
+            print("received updete:", r[0].shape, r[1].shape)
             self.solver_data[1 - self.solver_data_idx] = r
             self.solver_data_idx = 1 - self.solver_data_idx
             self.request_recv = self.comm.irecv(source=self.rank_collector, tag=self.tag_sent_data)

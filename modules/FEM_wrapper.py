@@ -66,7 +66,7 @@ class FEM:
     def pass_parameters(self, data_par):
         self.data_par = data_par
 
-    def get_solution(self,):
+    def assemble(self):
         # material setting:
         f_grf = self.grf_instance.realization_as_function(self.data_par)
         def material_function(x,y):
@@ -77,24 +77,37 @@ class FEM:
             return result
         self.my_problem.set_material(material_function)
         
-        # MATRIX ASSEMBLER (SYSTEM MAT + RHS) ----------------------------------------
+        # MATRIX ASSEMBLER (SYSTEM MAT + RHS) ---------------------------------
         # assemble all parts necessary for solution:
-        FEM_assembly = Assemble.LaplaceSteady(self.my_problem)  # init assemble obj
+        FEM_assembly = Assemble.LaplaceSteady(self.my_problem) # init assemble obj
         FEM_assembly.assemble_matrix_generalized()
         FEM_assembly.assemble_rhs_force()
         FEM_assembly.assemble_rhs_neumann()
         FEM_assembly.assemble_rhs_dirichlet()
         FEM_assembly.dirichlet_cut_and_sum_rhs(duplicate=True)
-        
 #        print(FEM_assembly.times_assembly)
-        
-        # SOLVING using KSP ----------------------------------------------------------
         self.solver = Solvers.LaplaceSteady(FEM_assembly)  # init
+        
+    def get_solution(self):
+        """ assemble and solve"""
+        self.assemble()
+
+        # SOLVE using KSP -----------------------------------------------------
         self.solver.ksp_direct_type('petsc')
 #        print(self.solver.times_assembly)
         self.solver.calculate_window_flow()
-        # TO DO: initialize window_flow as numpy array in MyFEM library
         return np.array(self.solver.window_flow)
+    
+    def get_linear_system(self): # TO DO: only temporary
+        """ assemble but do not solve"""
+        self.assemble()
+        A = self.solver.assembled_matrices.matrices["A_dirichlet"]
+        b = self.solver.assembled_matrices.rhss["final"]       
+        return A, b
+    
+    def get_observations_from_solution(self):
+        # TO DO
+        pass
     
 def demo_prepare_and_solve():
     no_parameters = 10
