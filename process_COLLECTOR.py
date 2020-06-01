@@ -7,7 +7,7 @@ Created on Thu Nov  7 13:26:55 2019
 """
 
 from mpi4py import MPI
-from tqdm import tqdm
+#from tqdm import tqdm
 comm_world = MPI.COMM_WORLD
 rank_world = comm_world.Get_rank()
 
@@ -35,66 +35,107 @@ tag_terminate = 0
 tag_ready_to_receive = 1
 tag_sent_data = 2
 list_received_data = []
-empty_buffer = np.zeros((1,))
-request_recv = [None] * no_samplers
-request_send = [None] * no_samplers
+empty_buffers = [None] * no_samplers
+for i in range(no_samplers):
+    empty_buffers[i] = np.zeros((1,))
+request_irecv = [None] * no_samplers
+request_isend = [None] * no_samplers
+request_Isend = [None] * no_samplers
 if any(is_active_sampler):
     for i in np.nditer(np.where(is_active_sampler)):
         # expects to receive data from this (active) sampler later:
-        request_recv[i] = comm_world.irecv(source=samplers_ranks[i], tag=tag_sent_data)
+        request_irecv[i] = comm_world.irecv(source=samplers_ranks[i], tag=tag_sent_data)
         # sends signal to this (active) sampler that he is ready to receive data:
-        comm_world.Isend(empty_buffer.copy(), dest=samplers_ranks[i], tag=tag_ready_to_receive)
+        request_Isend[i] = comm_world.Isend(empty_buffers[i], dest=samplers_ranks[i], tag=tag_ready_to_receive)
 status = MPI.Status()
 #progress_bar = tqdm(total=10000)
 no_snapshots_old = 0
 while any(is_active_sampler): # while at least 1 sampling algorithm is active
     # checks if there is an incoming message from any sampling algorithm:
-    tmp = comm_world.Iprobe(source=MPI.ANY_SOURCE, tag=MPI.ANY_TAG, status=status)
-    if tmp:
-        rank_source = status.Get_source()
-        tag = status.Get_tag()
-        if tag == tag_terminate:
-            # if received message has tag 0, switch corresponding sampler to inactive
+    # TO DO : check for all possible kinds of message in each loop
+#    tmp = comm_world.Iprobe(source=MPI.ANY_SOURCE, tag=MPI.ANY_TAG, status=status)
+#    if tmp:
+#        rank_source = status.Get_source()
+#        tag = status.Get_tag()
+#        if tag == tag_terminate:
+#            # if received message has tag 0, switch corresponding sampler to inactive
+#            # assumes that there will be no other incoming message from that source 
+#            is_active_sampler[samplers_ranks == rank_source] = False
+##            tmp = comm_world.recv(source=rank_source, tag=tag) # useless received data
+#            tmp = np.empty((1,)) # TO DO: useless pointer / cancel message
+#            comm_world.Recv(tmp,source=rank_source, tag=tag)
+#        elif tag == tag_ready_to_receive:
+#            # if received message has tag 1, the corresponding sampler
+#            # is ready to receive updated data
+#            is_ready_sampler[samplers_ranks == rank_source] = True
+#            tmp = np.empty((1,)) # TO DO: useless pointer / cancel message
+#            comm_world.Recv(tmp,source=rank_source, tag=tag)
+#        else:
+#            print("TO DO: different option!")
+#    try:
+#        print("BB")
+    for i in samplers_ranks:
+        probe = comm_world.Iprobe(source=i, tag=tag_terminate, status=status)
+        if probe:
+            # if received message has tag_terminate, switch corresponding sampler to inactive
             # assumes that there will be no other incoming message from that source 
-            is_active_sampler[samplers_ranks == rank_source] = False
-#            tmp = comm_world.recv(source=rank_source, tag=tag) # useless received data
+            is_active_sampler[samplers_ranks == i] = False
+            print("BB",is_active_sampler)
             tmp = np.empty((1,)) # TO DO: useless pointer / cancel message
-            comm_world.Recv(tmp,source=rank_source, tag=tag)
-        elif tag == tag_ready_to_receive:
-            # if received message has tag 1, the corresponding sampler
-            # is ready to receive updated data
-            is_ready_sampler[samplers_ranks == rank_source] = True
+            comm_world.Recv(tmp,source=i, tag=tag_terminate)
+        probe = comm_world.Iprobe(source=i, tag=tag_ready_to_receive, status=status)
+        if probe:
+            # if received message has tag_ready_to_receive, the corresponding
+            # sampler is ready to receive updated data
+            is_ready_sampler[samplers_ranks == i] = True
             tmp = np.empty((1,)) # TO DO: useless pointer / cancel message
-            comm_world.Recv(tmp,source=rank_source, tag=tag)
-        else:
-            print("TO DO: different option!")
+            comm_world.Recv(tmp,source=i, tag=tag_ready_to_receive)
+#    except:
+#        print("EX collector loop1")
+#    try:
+#        print("CC")
     if any(is_active_sampler):
         for i in np.nditer(np.where(is_active_sampler)):
             # checks if there are incoming data from this active sampler:
 #            tmp = request_recv[i].test()#status=status)
 #            if tmp[0]:
-            if request_recv[i].Get_status():
-                received_data = request_recv[i].wait()
+            if request_irecv[i].Get_status():
+                received_data = request_irecv[i].wait()
+                print("unpickled data",len(received_data))
                 # expects to receive data from this active sampler later:
-                request_recv[i] = comm_world.irecv(source=samplers_ranks[i], tag=tag_sent_data)
+                request_irecv[i] = comm_world.irecv(source=samplers_ranks[i], tag=tag_sent_data)
                 # sends signal to this active sampler that he is ready to receive data:
-                comm_world.Isend(empty_buffer.copy(), dest=samplers_ranks[i], tag=tag_ready_to_receive)
-                list_received_data.extend(received_data)
-    if len(list_received_data)>0:
-        local_updater_instance.add_data(list_received_data)
-        SOL, no_snapshots = local_updater_instance.update()
-#        print("RANK", rank_world, "collected snapshots:", no_snapshots)
-#        progress_bar.update(no_snapshots-no_snapshots_old)
-        no_snapshots_old = no_snapshots
-        list_received_data = []
-        is_free_updater = False
-        if any(is_active_sampler & is_ready_sampler):
-            for i in np.nditer(np.where(is_active_sampler & is_ready_sampler)):
-                send_buffers[i]=SOL.copy() # TO DO: copy?
-                if request_send[i] is not None:
-                    request_send[i].wait()
-                request_send[i] = comm_world.isend(send_buffers[i], dest=samplers_ranks[i], tag=tag_sent_data)
-                is_ready_sampler[i] = False
+                if request_Isend[i] is not None:
+                    request_Isend[i].Wait()
+                request_Isend[i] = comm_world.Isend(empty_buffers[i], dest=samplers_ranks[i], tag=tag_ready_to_receive)
+                list_received_data.extend(received_data.copy())
+#    except:
+#        print("EX collector loop2")
+    try:
+#        print("DD")
+        if len(list_received_data)>0:
+            local_updater_instance.add_data(list_received_data)
+            SOL, no_snapshots = local_updater_instance.update()
+            print("COLLECTOR computed new update:",SOL[0].shape,SOL[1].shape)
+    #        print("RANK", rank_world, "collected snapshots:", no_snapshots)
+    #        progress_bar.update(no_snapshots-no_snapshots_old)
+            no_snapshots_old = no_snapshots
+            list_received_data = []
+            is_free_updater = False
+            if any(is_active_sampler & is_ready_sampler):
+                print("COLLECTOR ready", np.where(is_active_sampler & is_ready_sampler))
+                print(list(id(k) for k in send_buffers))
+                for i in np.nditer(np.where(is_active_sampler & is_ready_sampler)):
+                    print("COLLECTOR will send SOL to", i)
+                    if request_isend[i] is not None:
+                        request_isend[i].wait()
+                        print("COLLECTOR waited for", i)
+                    send_buffers[i] = SOL.copy() # TO DO: copy?
+                    request_isend[i] = comm_world.isend(send_buffers[i], dest=samplers_ranks[i], tag=tag_sent_data)
+                    print("COLLECTOR isent SOL to", i)
+                    is_ready_sampler[i] = False
+    except:
+        print("EX collector loop3")
 
 print("RANK", rank_world, "all collected snapshots:", len(list_received_data), len(local_updater_instance.processed_par))
 

@@ -51,23 +51,23 @@ my_Prop = cS.Proposal_GaussRandomWalk(no_parameters=no_parameters,
 my_Alg = cS.Algorithm_MH(my_Prob, my_Prop, my_Sol,
                          Surrogate = my_Surr,
                          initial_sample=my_Prob.prior_mean,
-                         max_samples=100,
-                         time_limit=20,
+                         max_samples=400,
+                         time_limit=200000,
                          name='my_MH_alg' + str(rank_world),
                          seed=seed0+2)
 my_Alg1 = cS.Algorithm_DAMH(my_Prob, my_Prop, my_Sol,
                             Surrogate = my_Surr,
                             initial_sample=my_Prob.prior_mean+0.2,
-                            max_samples=1000,
-                            time_limit=40, # TO DO: does not finish properly on time limit
+                            max_samples=10000,
+                            time_limit=400, # TO DO: does not finish properly on time limit
                             name='my_DAMH_alg' + str(rank_world),
                             seed=seed0+3)
 print("---MH---")
 my_Alg.run()
 print("---DAMH---")
-my_Alg1.run()
+#my_Alg1.run()
 print("SAMPLER MH:", rank_world, "- acc/rej/prerej:", my_Alg.no_accepted, my_Alg.no_rejected, my_Alg.no_prerejected, my_Alg.no_accepted/(my_Alg.no_accepted+my_Alg.no_rejected)*100, '%')
-print("SAMPLER DAMH:", rank_world, "- acc/rej/prerej:", my_Alg1.no_accepted, my_Alg1.no_rejected, my_Alg1.no_prerejected, my_Alg1.no_accepted/(my_Alg1.no_accepted+my_Alg1.no_rejected)*100, '%')
+#print("SAMPLER DAMH:", rank_world, "- acc/rej/prerej:", my_Alg1.no_accepted, my_Alg1.no_rejected, my_Alg1.no_prerejected, my_Alg1.no_accepted/(my_Alg1.no_accepted+my_Alg1.no_rejected)*100, '%')
 
 f = getattr(my_Sol,"terminate",None)
 if callable(f):
@@ -76,6 +76,6 @@ if callable(f):
 f = getattr(my_Surr,"terminate",None)
 if callable(f):
     my_Surr.terminate()
-
+    
 comm_world.Barrier()
 print("MPI process", rank_world, "(SAMPLER) terminated.")

@@ -10,7 +10,7 @@
         "include_dirs": [
             "/opt/petsc/linux-c-opt/include",
             "/usr/lib/python3.8/site-packages/petsc4py/include",
-            "/home/simona/.local/lib/python3.8/site-packages/numpy/core/include",
+            "/usr/lib/python3.8/site-packages/numpy/core/include",
             "."
         ],
         "libraries": [
