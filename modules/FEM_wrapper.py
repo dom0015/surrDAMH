@@ -6,14 +6,15 @@ Created on Tue May 12 10:48:13 2020
 @author: simona
 """
 
-import sys # REMOVE!
-sys.path.append("/home/simona/GIT/Simple_Python_PETSc_FEM") 
+#import sys # REMOVE!
+#sys.path.append("/home/simona/GIT/Simple_Python_PETSc_FEM") 
 #sys.path.append("/home/ber0061/Repositories_dom0015/Simple_Python_PETSc_FEM")
 #sys.path.append("/home/ber0061/Repositories_dom0015/MCMC-Bayes-python")
 import petsc4py
 import numpy as np
 from MyFEM import Mesh, ProblemSetting, Assemble, Solvers
 from modules import grf_eigenfunctions as grf
+from modules import pcdeflation
 
 #class Solver_local_2to2:
 #    def __init__(self, ):
@@ -39,7 +40,7 @@ class FEM:
     # FEM solver preparation
     def __init__(self, no_parameters = 5, no_observations = 5, n = 100):    
         petsc4py.init()
-        
+        self.nrows = (n+1)*(n+1)
         # TRIANGULAR MESH SETTING -----------------------------------------------------
         my_mesh = Mesh.RectUniTri(n, n)
         
@@ -98,17 +99,59 @@ class FEM:
         self.solver.calculate_window_flow()
         return np.array(self.solver.window_flow)
     
-    def get_linear_system(self): # TO DO: only temporary
+    def get_linear_system(self):
         """ assemble but do not solve"""
         self.assemble()
         A = self.solver.assembled_matrices.matrices["A_dirichlet"]
         b = self.solver.assembled_matrices.rhss["final"]       
         return A, b
     
-    def get_observations_from_solution(self):
-        # TO DO
-        pass
+    def get_observations_from_solution(self,solution):
+        """ postprocessing of the solution A\b """
+        self.solver.solution = solution
+        self.solver.calculate_window_flow()
+        return np.array(self.solver.window_flow)
     
+    def deflation_init(self):
+        self.W = petsc4py.PETSc.Mat()
+        self.W.create(petsc4py.PETSc.COMM_WORLD)
+        self.W.setSizes((self.nrows,0))
+        self.W.setType("aij")
+        self.W.setPreallocationNNZ(0)
+#        W.setValues(range(self.nrows),range(Wnp.shape[1]),Wnp)
+        self.W.assemblyBegin()
+        self.W.assemblyEnd()
+        self.ncols = 0
+
+    def deflation_extend(self, v):
+        W_old = self.W.copy()
+        self.W = petsc4py.PETSc.Mat()
+        self.W.create(petsc4py.PETSc.COMM_WORLD)
+        self.W.setSizes((self.nrows,self.ncols+1))
+        self.W.setType("aij")
+        self.W.setPreallocationNNZ(self.nrows*(self.ncols+1))
+        self.W.setValues(range(self.nrows),range(self.ncols),W_old[:,:])
+        self.W.setValues(range(self.nrows),range(self.ncols,self.ncols+1),v[:])
+        self.ncols += 1
+        self.W.assemblyBegin()
+        self.W.assemblyEnd()
+
+    def solve_DCG(self, A, b):
+        solution = self.solver.assembled_matrices.create_vec()
+        ksp = petsc4py.PETSc.KSP().create()
+        ksp.setOperators(A)
+        ksp.setType('cg')
+        ksp_pc = ksp.getPC()
+        ksp_pc.setType('deflation')
+        opts = petsc4py.PETSc.Options()
+        opts.setValue("deflation_pc_pc_type","icc")
+        ksp.setFromOptions()
+        pcdeflation.setDeflationMat(ksp_pc,self.W,False);
+        ksp.setUp()
+        ksp.solve(b, solution)
+        print("iterations:",ksp.getIterationNumber())
+        return solution
+
 def demo_prepare_and_solve():
     no_parameters = 10
     FEM_instance = FEM(no_parameters)

@@ -54,11 +54,8 @@ class rbf(Surrogate_parent):
             TEMP = TEMP[:,to_keep]
             alldata_par = alldata_par[to_keep,:]
             alldata_obs = alldata_obs[to_keep,:]
-            try:
-                to_keep=np.append(to_keep,np.ones(no_parameters+1,dtype=bool))
-                self.initial_iteration = self.initial_iteration[to_keep]
-            except:
-                print("Exception!")    
+            to_keep=np.append(to_keep,np.ones(no_parameters+1,dtype=bool))
+            self.initial_iteration = self.initial_iteration[to_keep] 
         kernel.kernel(TEMP,self.type_kernel)
         P = np.ones([no_snapshots,1]) # only constant polynomials
     #    print(P.shape, no_evaluations, alldata_par.shape, TEMP.shape)

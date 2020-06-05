@@ -18,9 +18,9 @@ syspath = os.path.dirname(os.path.realpath(__file__))
 
 print('Running code')
 #com = 'mpirun -n 3 ' + str(sys.executable) + " " + syspath + "/test_mpi.py"
-#com = 'mpirun -n 1 --oversubscribe python3 -m mpi4py process_SAMPLER.py : -n 1 python3 process_SOLVER.py : -n 1 python3 process_COLLECTOR.py'
+com = 'mpirun -n 1 --oversubscribe python3 -m mpi4py process_SAMPLER.py : -n 1 python3 process_SOLVER.py : -n 1 python3 process_COLLECTOR.py'
 #com = 'mpirun -n 3 --oversubscribe python3 -m mpi4py process_SAMPLER.py : -n 1 python3 process_COLLECTOR.py'
-com = 'mpirun -n 1 python3 tester_COLLECTOR.py : -n 1 python3 process_COLLECTOR_torso.py'
+#com = 'mpirun -n 1 python3 tester_COLLECTOR.py : -n 1 python3 process_COLLECTOR_torso.py'
 #print(com)
 os.system(com)
 print('Done')

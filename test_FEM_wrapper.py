@@ -26,7 +26,7 @@ else:
     FEM_instance.solver.plot_solution_image()  # plot solution as image
 
 M = FEM_instance.solver.assembled_matrices.matrices['A']
-pressure = FEM_instance.solver.solution
+pressure = FEM_instance.solver.solution.copy()
 t = M*pressure
 
 FEM_instance.solver.solution = t
@@ -37,3 +37,9 @@ else:
     FEM_instance.solver.plot_solution_image()  # plot solution as image
 
 print(FEM_instance.solver.times_assembly)
+
+
+FEM_instance.deflation_init()
+FEM_instance.deflation_extend(pressure)
+FEM_instance.deflation_extend(pressure)
+FEM_instance.deflation_extend(pressure)

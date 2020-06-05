@@ -16,6 +16,7 @@ C = Configuration()
 updater_init = C.surr_updater_init
 updater_parameters = C.surr_updater_parameters
 no_samplers = C.no_samplers
+max_buffer_size = 1<<20
 # updater_init ... initializes the object of the surr. updater
 # updater_parameters ... list of dictionaries with initialization parameters
 # no_solvers ... number of solvers to be created
@@ -44,7 +45,7 @@ request_Isend = [None] * no_samplers
 if any(is_active_sampler):
     for i in np.nditer(np.where(is_active_sampler)):
         # expects to receive data from this (active) sampler later:
-        request_irecv[i] = comm_world.irecv(source=samplers_ranks[i], tag=tag_sent_data)
+        request_irecv[i] = comm_world.irecv(max_buffer_size,source=samplers_ranks[i], tag=tag_sent_data)
         # sends signal to this (active) sampler that he is ready to receive data:
         request_Isend[i] = comm_world.Isend(empty_buffers[i], dest=samplers_ranks[i], tag=tag_ready_to_receive)
 status = MPI.Status()
@@ -103,7 +104,7 @@ while any(is_active_sampler): # while at least 1 sampling algorithm is active
                 received_data = request_irecv[i].wait()
                 print("unpickled data",len(received_data))
                 # expects to receive data from this active sampler later:
-                request_irecv[i] = comm_world.irecv(source=samplers_ranks[i], tag=tag_sent_data)
+                request_irecv[i] = comm_world.irecv(max_buffer_size,source=samplers_ranks[i], tag=tag_sent_data)
                 # sends signal to this active sampler that he is ready to receive data:
                 if request_Isend[i] is not None:
                     request_Isend[i].Wait()
@@ -123,16 +124,12 @@ while any(is_active_sampler): # while at least 1 sampling algorithm is active
             list_received_data = []
             is_free_updater = False
             if any(is_active_sampler & is_ready_sampler):
-                print("COLLECTOR ready", np.where(is_active_sampler & is_ready_sampler))
                 print(list(id(k) for k in send_buffers))
                 for i in np.nditer(np.where(is_active_sampler & is_ready_sampler)):
-                    print("COLLECTOR will send SOL to", i)
                     if request_isend[i] is not None:
                         request_isend[i].wait()
-                        print("COLLECTOR waited for", i)
                     send_buffers[i] = SOL.copy() # TO DO: copy?
                     request_isend[i] = comm_world.isend(send_buffers[i], dest=samplers_ranks[i], tag=tag_sent_data)
-                    print("COLLECTOR isent SOL to", i)
                     is_ready_sampler[i] = False
     except:
         print("EX collector loop3")

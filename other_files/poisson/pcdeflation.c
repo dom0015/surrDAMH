@@ -4,24 +4,25 @@
 {
     "distutils": {
         "depends": [
-            "/opt/petsc/linux-c-opt/include/petsc.h",
-            "/opt/petsc/linux-c-opt/include/petscpc.h"
+            "/home/simona/lib/petsc/include/petsc.h",
+            "/home/simona/lib/petsc/include/petscpc.h"
         ],
         "include_dirs": [
-            "/opt/petsc/linux-c-opt/include",
-            "/usr/lib/python3.8/site-packages/petsc4py/include",
-            "/usr/lib/python3.8/site-packages/numpy/core/include",
+            "/home/simona/lib/petsc/arch-linux-c-debug/include",
+            "/home/simona/lib/petsc/include",
+            "/home/simona/.local/lib/python3.8/site-packages/petsc4py/include",
+            "/home/simona/.local/lib/python3.8/site-packages/numpy/core/include",
             "."
         ],
         "libraries": [
             "petsc"
         ],
         "library_dirs": [
-            "/opt/petsc/linux-c-opt/lib"
+            "/home/simona/lib/petsc/arch-linux-c-debug/lib"
         ],
         "name": "pcdeflation",
         "runtime_library_dirs": [
-            "/opt/petsc/linux-c-opt/lib"
+            "/home/simona/lib/petsc/arch-linux-c-debug/lib"
         ],
         "sources": [
             "pcdeflation.pyx"

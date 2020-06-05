@@ -106,6 +106,7 @@ class Solver_local_collector_MPI: # initiated by SAMPLERs
     def __init__(self, no_parameters, no_observations, local_solver_instance, is_updated=False, rank_collector=None):
         self.max_requests = 1
         self.comm = MPI.COMM_WORLD
+        self.max_buffer_size = 1<<20
         self.local_solver_instance = local_solver_instance
         self.is_updated = is_updated
         self.rank_collector = rank_collector
@@ -120,7 +121,7 @@ class Solver_local_collector_MPI: # initiated by SAMPLERs
         if not rank_collector is None:
             self.terminated_data = False
         self.computation_in_progress = False # TO DO: remove?
-        self.request_recv = self.comm.irecv(source=self.rank_collector, tag=self.tag_sent_data)
+        self.request_recv = self.comm.irecv(self.max_buffer_size, source=self.rank_collector, tag=self.tag_sent_data)
         self.request_send = None
         self.empty_buffer = np.zeros((1,))
         self.comm.Isend(self.empty_buffer, dest=self.rank_collector, tag=self.tag_ready_to_receive)
@@ -151,7 +152,6 @@ class Solver_local_collector_MPI: # initiated by SAMPLERs
             data_to_pickle = self.list_snapshots_to_send.copy()
             if self.request_send is not None:
                 self.request_send.wait()
-            print("data_to_pickle",len(data_to_pickle))
             self.request_send = self.comm.isend(data_to_pickle, dest=self.rank_collector, tag=self.tag_sent_data)
             self.list_snapshots_to_send = []
 #        time.sleep(0.1)
@@ -170,16 +170,11 @@ class Solver_local_collector_MPI: # initiated by SAMPLERs
             print("EX1")    
 #        print("RANK", self.comm.Get_rank(), "recv status:", tmp)
         if tmp:
-            print("RANK", self.comm.Get_rank(),"will receive update")
-            try:
-                r = self.request_recv.wait()
-                self.solver_data_iterator += 1
-                print("RANK", self.comm.Get_rank(), "received update:", self.solver_data_iterator, r[0].shape, r[1].shape)
-                self.solver_data[1 - self.solver_data_idx] = r
-            except:
-                print("EX2")    
+            r = self.request_recv.wait()
+            self.solver_data_iterator += 1
+            self.solver_data[1 - self.solver_data_idx] = r
             self.solver_data_idx = 1 - self.solver_data_idx
-            self.request_recv = self.comm.irecv(source=self.rank_collector, tag=self.tag_sent_data)
+            self.request_recv = self.comm.irecv(self.max_buffer_size, source=self.rank_collector, tag=self.tag_sent_data)
             self.comm.Isend(self.empty_buffer, dest=self.rank_collector, tag=self.tag_ready_to_receive)
             
 #    def is_solved(self):
