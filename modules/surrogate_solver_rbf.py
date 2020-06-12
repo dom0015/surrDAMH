@@ -121,7 +121,6 @@ class Surrogate_update: # initiated by COLLECTOR
             self.processed_wei = self.processed_wei[to_keep,:]
             self.no_processed = self.processed_par.shape[0]
             no_snapshots = self.no_processed
-            print("no_processed:",self.no_processed)
 #            try:
 #                print(to_keep)
 #                to_keep=np.append(to_keep,np.ones(self.no_parameters+1,dtype=bool))

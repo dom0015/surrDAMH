@@ -13,15 +13,18 @@ you may need to uninstall it and re-install it to force it to
 recompile against your new version of Open MPI)."""
 
 import os
-#import sys
 syspath = os.path.dirname(os.path.realpath(__file__))
 
-print('Running code')
+from configuration import Configuration
+C = Configuration()
+
+#print('Running code')
 #com = 'mpirun -n 3 ' + str(sys.executable) + " " + syspath + "/test_mpi.py"
-com = 'mpirun -n 1 --oversubscribe python3 -m mpi4py process_SAMPLER.py : -n 1 python3 process_SOLVER.py : -n 1 python3 process_COLLECTOR.py'
+#com = 'mpirun -n 1 --oversubscribe python3 -m mpi4py process_SAMPLER.py : -n 1 python3 process_SOLVER.py : -n 1 python3 process_COLLECTOR.py'
 #com = 'mpirun -n 3 --oversubscribe python3 -m mpi4py process_SAMPLER.py : -n 1 python3 process_COLLECTOR.py'
 #com = 'mpirun -n 1 python3 tester_COLLECTOR.py : -n 1 python3 process_COLLECTOR_torso.py'
-#print(com)
-os.system(com)
-print('Done')
-
+process = lambda numproc, filename : ' -n ' + str(numproc) + ' --oversubscribe python3 -m mpi4py ' + filename + ' '
+com = 'mpirun' + process(C.no_samplers,'process_SAMPLER.py') + ':' + process(1,'process_SOLVER.py') + ':' + process(1,'process_COLLECTOR.py')
+print(com)
+#os.system(com)
+#print('Done')

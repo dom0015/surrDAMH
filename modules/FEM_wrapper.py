@@ -13,32 +13,16 @@ Created on Tue May 12 10:48:13 2020
 import petsc4py
 import numpy as np
 from MyFEM import Mesh, ProblemSetting, Assemble, Solvers
+import time
 from modules import grf_eigenfunctions as grf
 from modules import pcdeflation
 
-#class Solver_local_2to2:
-#    def __init__(self, ):
-#        self.no_parameters = 2
-#        self.no_observations = 2
-#        self.request_solved = True
-#        self.max_requests = 1
-#    
-#    def pass_parameters(self, data_par):
-#        self.data_par = data_par
-#        
-#    def get_solution(self, ):
-#        x1 = self.data_par[0,0]
-#        x2 = self.data_par[0,1]
-#        y1 = (x1*x1 + x2 - 11)**2 + (x1 + x2*x2 - 7)**2
-#        y2 = x1 + x2
-#        return np.array([[y1,y2]])
-#    
-#    def terminate(self):
-#        print("Terminate function is empty.")
+#import grf_eigenfunctions as grf
+#import pcdeflation
 
 class FEM:
     # FEM solver preparation
-    def __init__(self, no_parameters = 5, no_observations = 5, n = 100):    
+    def __init__(self, no_parameters = 5, no_observations = 5, n = 100, quiet = True, tolerance = None, PC = "none", use_deflation = False, deflation_imp = None):    
         petsc4py.init()
         self.nrows = (n+1)*(n+1)
         # TRIANGULAR MESH SETTING -----------------------------------------------------
@@ -63,6 +47,13 @@ class FEM:
         
         self.no_parameters = no_parameters
         self.grf_instance = grf.GRF('modules/unit50.pckl', truncate=no_parameters)
+        self.quiet = quiet
+        self.tolerance = tolerance
+        self.PC = PC
+        self.use_deflation = use_deflation
+        if self.use_deflation:
+            self.deflation_init()
+        self.deflation_imp = deflation_imp
         
     def pass_parameters(self, data_par):
         self.data_par = data_par
@@ -89,13 +80,19 @@ class FEM:
 #        print(FEM_assembly.times_assembly)
         self.solver = Solvers.LaplaceSteady(FEM_assembly)  # init
         
-    def get_solution(self):
+    def get_observations(self):
         """ assemble and solve"""
         self.assemble()
-
-        # SOLVE using KSP -----------------------------------------------------
-        self.solver.ksp_direct_type('petsc')
-#        print(self.solver.times_assembly)
+        t = time.time()
+        if self.use_deflation:
+            self.get_solution_DCG()
+            self.deflation_extend_optional(self.solver.solution)
+        else:
+            self.solver.ksp_cg_with_pc(self.PC,self.tolerance)
+            if self.quiet == False:
+                print("SOLVER iterations:",self.solver.ksp.getIterationNumber(),"normres:",self.solver.ksp.getResidualNorm())
+        if self.quiet == False:
+            print("SOLVER time:", time.time()-t)
         self.solver.calculate_window_flow()
         return np.array(self.solver.window_flow)
     
@@ -118,10 +115,23 @@ class FEM:
         self.W.setSizes((self.nrows,0))
         self.W.setType("aij")
         self.W.setPreallocationNNZ(0)
-#        W.setValues(range(self.nrows),range(Wnp.shape[1]),Wnp)
         self.W.assemblyBegin()
         self.W.assemblyEnd()
         self.ncols = 0
+
+    def deflation_extend_optional(self, v):
+        # decide if v should be added to W
+        vnp = v[:]/v.norm()
+        if self.ncols == 0:
+            self.deflation_extend(vnp)
+            return
+        for i in range(self.ncols):
+            w = self.W[:,i]
+            dotprod = vnp.dot(w)
+            vnp = vnp - dotprod * w
+        imp = np.linalg.norm(vnp)
+        if imp>self.deflation_imp:
+            self.deflation_extend(vnp/imp)
 
     def deflation_extend(self, v):
         W_old = self.W.copy()
@@ -136,21 +146,27 @@ class FEM:
         self.W.assemblyBegin()
         self.W.assemblyEnd()
 
-    def solve_DCG(self, A, b):
-        solution = self.solver.assembled_matrices.create_vec()
+    def get_solution_DCG(self):
+        if self.solver.solution == None:
+            self.solver.init_solution_vec()
+#        solution = self.solver.assembled_matrices.create_vec()
         ksp = petsc4py.PETSc.KSP().create()
-        ksp.setOperators(A)
+        ksp.setOperators(self.solver.assembled_matrices.matrices["A_dirichlet"])
         ksp.setType('cg')
+        v = ksp.getTolerances()
+        ksp.setTolerances(self.tolerance,v[1],v[2],v[3])
         ksp_pc = ksp.getPC()
         ksp_pc.setType('deflation')
         opts = petsc4py.PETSc.Options()
-        opts.setValue("deflation_pc_pc_type","icc")
+        opts.setValue("deflation_pc_pc_type",self.PC)
         ksp.setFromOptions()
-        pcdeflation.setDeflationMat(ksp_pc,self.W,False);
+        if self.ncols > 0:
+            pcdeflation.setDeflationMat(ksp_pc,self.W,False);
         ksp.setUp()
-        ksp.solve(b, solution)
-        print("iterations:",ksp.getIterationNumber())
-        return solution
+        ksp.solve(self.solver.assembled_matrices.rhss["final"], self.solver.solution)
+        if self.quiet == False:
+            print("iterations:",ksp.getIterationNumber(),"W size:",self.ncols,"normres:",ksp.getResidualNorm())
+        return self.solver.solution
 
 def demo_prepare_and_solve():
     no_parameters = 10

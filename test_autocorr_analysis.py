@@ -7,13 +7,14 @@ Created on Wed Apr 29 11:26:57 2020
 """
 
 from modules import autocorr_analysis as aa
-import numpy as np
-import matplotlib.pyplot as plt
+#import numpy as np
+#import matplotlib.pyplot as plt
 
 from configuration import Configuration
-C = Configuration()
-problem_name = C.problem_name
+#C = Configuration()
+#problem_name = C.problem_name
 #problem_name =  "my_prob01"
+problem_name = "grf1e5_nodef"
 
 S = aa.Samples()
 #m = int(1e5)
@@ -30,34 +31,40 @@ S = aa.Samples()
 
 S.load_MH('saved_samples/' + problem_name)
 S.calculate_properties()
-length_disp = [1000] * S.no_parameters
+begin_disp = [0] * S.no_parameters
+end_disp = [1001] * S.no_parameters
+parameters_disp = [0,1,2,9]
+chains_disp = [1,3,4,5]
+burn_in = [0, 500, 500, 500]
 
+# TO DO: convergence to mean H(X) (also for comparison of parallel chains)
 S.calculate_properties()
-S.print_properties()
+#S.print_properties()
+#S.plot_segment(begin_disp,end_disp,parameters_disp,chains_disp)
+#S.plot_hist(burn_in,parameters_disp,chains_disp)
+#S.plot_average([0, 0, 0, 500, 500, 500],begin_disp,end_disp=None,parameters_disp=None,chains_disp=None)
 S.calculate_autocorr_function()
-S.plot_segment(length_disp)
-S.plot_hist()
-S.calculate_autocorr_time()
 S.calculate_autocorr_function_mean()
-S.plot_autocorr_function(length_disp,plot_mean=True)
+S.plot_autocorr_function([1001] * S.no_parameters,plot_mean=True)
+S.calculate_autocorr_time()
 S.calculate_autocorr_time_mean()
-print(S.autocorr_time)
-print(S.autocorr_time_mean)
-print(S.autocorr_time_mean_beta)
+print(S.autocorr_time[3:])
+#print(S.autocorr_time_mean)
+#print(S.autocorr_time_mean_beta)
 
-from modules import FEM_wrapper
-G = FEM_wrapper.FEM(no_parameters = S.no_parameters, no_observations = 6, n = 50)
-G.pass_parameters(S.mean[3])
-print("observation:",G.get_solution())
+#from modules import FEM_wrapper
+#G = FEM_wrapper.FEM(no_parameters = S.no_parameters, no_observations = 6, n = 50)
+#G.pass_parameters(S.mean[3])
+#print("observation:",G.get_observations())
 
-from modules import grf_eigenfunctions as grf
-grf_instance = grf.GRF('modules/unit50.pckl', truncate=S.no_parameters)
-eta = S.mean[2]
-print("mean:",eta)
-z = grf_instance.realization_grid_new(eta,np.linspace(0,1,50),np.linspace(0,1,50))
-plt.show()
-plt.imshow(z)
-plt.show()
+#from modules import grf_eigenfunctions as grf
+#grf_instance = grf.GRF('modules/unit50.pckl', truncate=S.no_parameters)
+#eta = S.mean[2]
+#print("mean:",eta)
+#z = grf_instance.realization_grid_new(eta,np.linspace(0,1,50),np.linspace(0,1,50))
+#plt.show()
+#plt.imshow(z)
+#plt.show()
 
 # generate material shample and calculate observation:
 #no_parame = 5

@@ -17,7 +17,7 @@ no_observations = 2
 FEM_instance = FEM_wrapper.FEM(no_parameters,no_observations,n)
 eta = np.random.randn(no_parameters)
 FEM_instance.pass_parameters(eta)
-flow = FEM_instance.get_solution()
+flow = FEM_instance.get_observations()
 print('flow through windows:', flow, 'sum:', sum(flow))
 
 if n <= 30:
@@ -43,3 +43,5 @@ FEM_instance.deflation_init()
 FEM_instance.deflation_extend(pressure)
 FEM_instance.deflation_extend(pressure)
 FEM_instance.deflation_extend(pressure)
+A, b = FEM_instance.get_linear_system()
+FEM_instance.solve_DCG(A, b)

@@ -956,6 +956,11 @@ vše replikovatelné!
 \end_layout
 
 \end_deeper
+\begin_layout Itemize
+uvést zhodnocení experimentu z pohledu mcmc akcelerace a zvlášť z pohledu
+ řešené úlohy
+\end_layout
+
 \end_deeper
 \begin_layout Itemize
 navrhnout osnovu - rozvržení sekcí, tak aby bylo zahrnuto vše slíbené (to
@@ -1076,6 +1081,58 @@ Surrogate_apply
 
 \begin_layout Standard
 –> pokusím se zredukovat množství operací a dat posílaných přes MPI
+\end_layout
+
+\begin_layout Section*
+Deflation for G including linear system
+\end_layout
+
+\begin_layout Standard
+There are several solvers, each of them solves part of snapshots.
+ Therefore, currently, each solver knows only part of snapshots.
+ For deflation, with every snapshot, it is necessary to get also the solution
+ 
+\begin_inset Formula $x$
+\end_inset
+
+ of the underlying linear system 
+\begin_inset Formula $A\left(\eta\right)\cdot x=b\left(\eta\right)$
+\end_inset
+
+.
+ Now, deflation basis can be simply created using vectors 
+\begin_inset Formula $x$
+\end_inset
+
+ calculated by the particular solver.
+ For shared deflation basis, additional communication is required.
+\end_layout
+
+\begin_layout Standard
+This approach (deflation basis created using vectors 
+\begin_inset Formula $x$
+\end_inset
+
+) should be also compared with the approach when also the conjugate directions
+ are recycled.
+ (I think this is typically used for solving systems with the same matrix
+ and different rhs vectors.) For this, I only need a testing set of 
+\begin_inset Formula $A\left(\eta_{i}\right)$
+\end_inset
+
+, 
+\begin_inset Formula $b\left(\eta_{i}\right)$
+\end_inset
+
+, 
+\begin_inset Formula $x_{i}$
+\end_inset
+
+, test can be performed in Matlab; 
+\begin_inset Formula $\eta_{i}$
+\end_inset
+
+ can be generated from prior.
 \end_layout
 
 \end_body

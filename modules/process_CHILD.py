@@ -8,9 +8,9 @@ Created on Tue Oct 29 12:47:09 2019
 
 from mpi4py import MPI
 import numpy as np
-import full_solver_examples as fse
-import FEM_wrapper
-import time
+#import full_solver_examples as fse
+from configuration import Configuration
+C = Configuration()
 
 comm = MPI.Comm.Get_parent()
 size = comm.Get_size()
@@ -25,15 +25,15 @@ print("LAUNCHER", rank, size, rank_world, size_world)
 """
 INITIALIZATION OF THE SOLVER
 """
-#S = fse.Solver_local_2to2()
-#S = fse.Solver_local_ntom(no_parameters = 10, no_observations = 6)
-S = FEM_wrapper.FEM(no_parameters = 10, no_observations = 6, n = 50)
+#solver_instance = fse.Solver_local_2to2()
+#solver_instance = fse.Solver_local_ntom(no_parameters = 10, no_observations = 6)
+solver_instance = C.child_solver_init(**C.child_solver_parameters)
 
 """
 SOLVING INCOMING REQUESTS USING LINKED SOLVER
 """
 status = MPI.Status()
-received_data = np.empty((S.no_parameters,))
+received_data = np.empty((solver_instance.no_parameters,))
 solver_is_active = True
 if rank_world==0:
     while solver_is_active:
@@ -42,13 +42,10 @@ if rank_world==0:
         if tag == 0:
             comm.Barrier()
             comm.Disconnect()
-            print("External solver disconnected.")
+            print("External solver disconnected. W size:", solver_instance.ncols)
             solver_is_active = False
-#        else: # standard approach
-#            S.pass_parameters(received_data.reshape((S.no_parameters,)))
-#            sent_data = S.get_solution()
-#            comm.Send(sent_data, dest=0, tag=tag)
-        else: # modification: underlying linear system solved using DCG
-            S.pass_parameters(received_data.reshape((S.no_parameters,)))
-            sent_data = S.get_solution()
+        else: # standard approach
+            solver_instance.pass_parameters(received_data.reshape((solver_instance.no_parameters,)))
+            sent_data = solver_instance.get_observations()
             comm.Send(sent_data, dest=0, tag=tag)
+            # TO DO: monitor iterations, size of W, normres, time, etc.

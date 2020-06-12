@@ -15,9 +15,9 @@ Created on Wed Apr 29 11:01:04 2020
 
 import numpy as np
 import emcee
-import time
+#import time
 import matplotlib.pyplot as plt
-from scipy.optimize import minimize
+#from scipy.optimize import minimize
 import pandas as pd
 from os import listdir
 from os.path import isfile, join
@@ -55,30 +55,67 @@ class Samples:
         print('std:')
         print(self.std)
         
-    def plot_segment(self, length_disp):
-        fig, axes = plt.subplots(1, self.no_parameters, figsize=(12, 3), sharey=True)
-        for j in range(self.no_parameters):
-            length_disp[j] = min(max(self.length),length_disp[j])
-        for j in range(self.no_parameters):
-            for i in range(self.no_chains):
-                axes[j].plot(self.x[i][:length_disp[j],j], label=i)
-            axes[j].set_xlim(0, length_disp[j]-1)
-            axes[j].legend()
-            axes[j].set_xlabel("$parameter:  {0}$".format(j))
+    def plot_segment(self, begin_disp, end_disp, parameters_disp = None, chains_disp = None):
+        if parameters_disp == None:
+            parameters_disp = range(self.no_parameters)
+        if chains_disp == None:
+            chains_disp = range(self.no_chains)
+        if begin_disp == None:
+            begin_disp = [0] * len(parameters_disp)
+        if end_disp == None:
+            end_disp = [max(self.length)] * len(parameters_disp)
+        fig, axes = plt.subplots(1, len(parameters_disp), figsize=(12, 3), sharey=True)
+        for idj,j in enumerate(parameters_disp):
+            begin_disp[idj] = min(max(self.length),begin_disp[idj])
+            end_disp[idj] = min(max(self.length),end_disp[idj])
+            for idi,i in enumerate(chains_disp):
+                xx = np.arange(begin_disp[idj],min(end_disp[idj],self.length[i]))
+                yy = self.x[i][xx,j]
+                axes[idj].plot(xx, yy, label=i)
+            axes[idj].set_xlim(begin_disp[idj], end_disp[idj]-1)
+            axes[idj].legend()
+            axes[idj].set_xlabel("$par. {0}$".format(j))
             if self.known_autocorr_time:
-                axes[j].set_title("$\\tau_\mathrm{{true}} = {0:.0f}$".format(self.autocorr_time_true[j]));
+                axes[idj].set_title("$\\tau_\mathrm{{true}} = {0:.0f}$".format(self.autocorr_time_true[j]));
         axes[0].set_ylabel("samples")
         plt.show()
         
-    def plot_hist(self):
-        fig, axes = plt.subplots(1, self.no_parameters, figsize=(12, 3), sharey=True)
-        for j in range(self.no_parameters):
-            for i in range(self.no_chains):
-                axes[j].hist(self.x[i][:,j], label=i)
-            axes[j].legend()
-            axes[j].set_xlabel("$parameter:  {0}$".format(j))
+    def plot_hist(self, burn_in, parameters_disp = None, chains_disp = None):
+        if parameters_disp == None:
+            parameters_disp = range(self.no_parameters)
+        if chains_disp == None:
+            chains_disp = range(self.no_chains)
+        fig, axes = plt.subplots(1, len(parameters_disp), figsize=(12, 3), sharey=True)
+        for idj,j in enumerate(parameters_disp):
+            for idi,i in enumerate(chains_disp):
+                yy = self.x[i][burn_in[idi]:,j]
+                axes[idj].hist(yy, label=i)
+            axes[idj].legend()
+            axes[idj].set_xlabel("$parameter:  {0}$".format(j))
             if self.known_autocorr_time:
-                axes[j].set_title("$\\tau_\mathrm{{true}} = {0:.0f}$".format(self.autocorr_time_true[j]));
+                axes[idj].set_title("$\\tau_\mathrm{{true}} = {0:.0f}$".format(self.autocorr_time_true[j]));
+        axes[0].set_ylabel("samples")
+        plt.show()
+        
+    def plot_average(self, burn_in, begin_disp = None, end_disp = None, parameters_disp = None, chains_disp = None):
+        if parameters_disp == None:
+            parameters_disp = range(self.no_parameters)
+        if chains_disp == None:
+            chains_disp = range(self.no_chains)
+        if begin_disp == None:
+            begin_disp = [0] * len(parameters_disp)
+        if end_disp == None:
+            end_disp = [max(self.length)] * len(parameters_disp)
+        fig, axes = plt.subplots(1, len(parameters_disp), figsize=(12, 3), sharey=True)
+        for idj,j in enumerate(parameters_disp):
+            for idi,i in enumerate(chains_disp):
+                xx = np.arange(burn_in[idi],min(end_disp[idj],self.length[i]))
+                yy = self.x[i][xx,j]
+                axes[idj].plot(xx, np.cumsum(yy)/(1+np.arange(len(yy))), label=i)
+            axes[idj].legend()
+            axes[idj].set_xlabel("$parameter:  {0}$".format(j))
+            if self.known_autocorr_time:
+                axes[idj].set_title("$\\tau_\mathrm{{true}} = {0:.0f}$".format(self.autocorr_time_true[j]));
         axes[0].set_ylabel("samples")
         plt.show()
         

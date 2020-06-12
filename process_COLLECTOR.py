@@ -16,7 +16,7 @@ C = Configuration()
 updater_init = C.surr_updater_init
 updater_parameters = C.surr_updater_parameters
 no_samplers = C.no_samplers
-max_buffer_size = 1<<20
+max_buffer_size = C.max_buffer_size
 # updater_init ... initializes the object of the surr. updater
 # updater_parameters ... list of dictionaries with initialization parameters
 # no_solvers ... number of solvers to be created
@@ -24,9 +24,8 @@ max_buffer_size = 1<<20
 # communicates with: SAMPLERs 
 
 import numpy as np
-import time
 
-local_updater_instance = updater_init(**updater_parameters) # TO DO: input parameter
+local_updater_instance = updater_init(**updater_parameters)
 samplers_ranks = np.arange(no_samplers) # TO DO: assumes ranks 0,1,...
 is_active_sampler = np.array([True] * no_samplers)
 send_buffers = [None] * no_samplers
@@ -73,15 +72,12 @@ while any(is_active_sampler): # while at least 1 sampling algorithm is active
 #            comm_world.Recv(tmp,source=rank_source, tag=tag)
 #        else:
 #            print("TO DO: different option!")
-#    try:
-#        print("BB")
     for i in samplers_ranks:
         probe = comm_world.Iprobe(source=i, tag=tag_terminate, status=status)
         if probe:
             # if received message has tag_terminate, switch corresponding sampler to inactive
             # assumes that there will be no other incoming message from that source 
             is_active_sampler[samplers_ranks == i] = False
-            print("BB",is_active_sampler)
             tmp = np.empty((1,)) # TO DO: useless pointer / cancel message
             comm_world.Recv(tmp,source=i, tag=tag_terminate)
         probe = comm_world.Iprobe(source=i, tag=tag_ready_to_receive, status=status)
@@ -91,10 +87,6 @@ while any(is_active_sampler): # while at least 1 sampling algorithm is active
             is_ready_sampler[samplers_ranks == i] = True
             tmp = np.empty((1,)) # TO DO: useless pointer / cancel message
             comm_world.Recv(tmp,source=i, tag=tag_ready_to_receive)
-#    except:
-#        print("EX collector loop1")
-#    try:
-#        print("CC")
     if any(is_active_sampler):
         for i in np.nditer(np.where(is_active_sampler)):
             # checks if there are incoming data from this active sampler:
@@ -102,7 +94,6 @@ while any(is_active_sampler): # while at least 1 sampling algorithm is active
 #            if tmp[0]:
             if request_irecv[i].Get_status():
                 received_data = request_irecv[i].wait()
-                print("unpickled data",len(received_data))
                 # expects to receive data from this active sampler later:
                 request_irecv[i] = comm_world.irecv(max_buffer_size,source=samplers_ranks[i], tag=tag_sent_data)
                 # sends signal to this active sampler that he is ready to receive data:
@@ -110,29 +101,22 @@ while any(is_active_sampler): # while at least 1 sampling algorithm is active
                     request_Isend[i].Wait()
                 request_Isend[i] = comm_world.Isend(empty_buffers[i], dest=samplers_ranks[i], tag=tag_ready_to_receive)
                 list_received_data.extend(received_data.copy())
-#    except:
-#        print("EX collector loop2")
-    try:
-#        print("DD")
-        if len(list_received_data)>0:
-            local_updater_instance.add_data(list_received_data)
-            SOL, no_snapshots = local_updater_instance.update()
-            print("COLLECTOR computed new update:",SOL[0].shape,SOL[1].shape)
-    #        print("RANK", rank_world, "collected snapshots:", no_snapshots)
-    #        progress_bar.update(no_snapshots-no_snapshots_old)
-            no_snapshots_old = no_snapshots
-            list_received_data = []
-            is_free_updater = False
-            if any(is_active_sampler & is_ready_sampler):
-                print(list(id(k) for k in send_buffers))
-                for i in np.nditer(np.where(is_active_sampler & is_ready_sampler)):
-                    if request_isend[i] is not None:
-                        request_isend[i].wait()
-                    send_buffers[i] = SOL.copy() # TO DO: copy?
-                    request_isend[i] = comm_world.isend(send_buffers[i], dest=samplers_ranks[i], tag=tag_sent_data)
-                    is_ready_sampler[i] = False
-    except:
-        print("EX collector loop3")
+    if len(list_received_data)>0:
+        local_updater_instance.add_data(list_received_data)
+        SOL, no_snapshots = local_updater_instance.update()
+#            print("COLLECTOR computed new update:",SOL[0].shape,SOL[1].shape)
+#        print("RANK", rank_world, "collected snapshots:", no_snapshots)
+#        progress_bar.update(no_snapshots-no_snapshots_old)
+        no_snapshots_old = no_snapshots
+        list_received_data = []
+        is_free_updater = False
+        if any(is_active_sampler & is_ready_sampler):
+            for i in np.nditer(np.where(is_active_sampler & is_ready_sampler)):
+                if request_isend[i] is not None:
+                    request_isend[i].wait()
+                send_buffers[i] = SOL.copy() # TO DO: copy?
+                request_isend[i] = comm_world.isend(send_buffers[i], dest=samplers_ranks[i], tag=tag_sent_data)
+                is_ready_sampler[i] = False
 
 print("RANK", rank_world, "all collected snapshots:", len(list_received_data), len(local_updater_instance.processed_par))
 

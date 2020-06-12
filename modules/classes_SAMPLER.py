@@ -147,7 +147,7 @@ class Algorithm_DAMH(Algorithm_PARENT): # initiated by SAMPLERs
         super().__init__(Problem, Proposal, Solver, max_samples, name, seed, initial_sample, G_initial_sample, Surrogate, is_saved, time_limit)
 
     def run(self):
-        print("SAMPLER at RANK", MPI.COMM_WORLD.Get_rank(), "starts (DAMH)")
+        print("SAMPLER at RANK", MPI.COMM_WORLD.Get_rank(), "starts (DAMH) with initial sample",self.current_sample)
         self.prepare()
         self.Surrogate.send_parameters(self.current_sample)
         GS_current_sample = self.Surrogate.recv_observations()
@@ -183,19 +183,23 @@ class Algorithm_DAMH(Algorithm_PARENT): # initiated by SAMPLERs
 
 class Proposal_GaussRandomWalk: # initiated by SAMPLERs
     def __init__(self, no_parameters, proposal_std=1.0, proposal_cov=None, seed=0):
+        self.no_parameters = no_parameters
         self.__generator = np.random.RandomState(seed)
+        self.set_covariance(proposal_std, proposal_cov)
+        self.is_symmetric = True
+        self.is_exponential = True
+        
+    def set_covariance(self, proposal_std=1.0, proposal_cov=None):
         self.proposal_cov = proposal_cov
         if self.proposal_cov is None:
             self.propose_sample = self._propose_sample_uncorrelated
             if np.isscalar(proposal_std):
-                self.proposal_std = np.full((no_parameters,),proposal_std)
+                self.proposal_std = np.full((self.no_parameters,),proposal_std)
             else:
                 self.proposal_std = np.array(proposal_std)
         else:
             self.proposal_std = None
             self.propose_sample = self.__propose_sample_multivariate
-        self.is_symmetric = True
-        self.is_exponential = True
 
     def _propose_sample_uncorrelated(self, current_sample):
         sample = self.__sample_uncorrelated(self.__generator, current_sample, self.proposal_std)
