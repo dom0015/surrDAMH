@@ -42,7 +42,7 @@ if rank_world==0:
         if tag == 0:
             comm.Barrier()
             comm.Disconnect()
-            print("External solver disconnected. W size:", solver_instance.ncols)
+            print("External solver disconnected.") #" W size:", solver_instance.ncols)
             solver_is_active = False
         else: # standard approach
             solver_instance.pass_parameters(received_data.reshape((solver_instance.no_parameters,)))

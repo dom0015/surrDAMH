@@ -14,8 +14,8 @@ from modules import surrogate_solver_rbf as surr
 class Configuration:
     def __init__(self):
         self.problem_name = "grf1e3"
-        self.no_samplers = 3
-        self.no_full_solvers = 2
+        self.no_samplers = 10
+        self.no_full_solvers = 10
         self.no_parameters = 10
         self.no_observations = 6
         self.rank_full_solver = self.no_samplers
@@ -53,7 +53,7 @@ class Configuration:
                                         'quiet': False,
                                         'tolerance': 1e-8,
                                         'PC': "icc",
-                                        'use_deflation': True,
+                                        'use_deflation': False,
                                         'deflation_imp': 1e-2}
         self.full_solver_init = classes_communication.Solver_MPI_parent
         self.full_solver_parameters = []
