@@ -33,12 +33,13 @@ class FEM:
         # 1) LEFT -> RIGHT
         self.my_problem_left = ProblemSetting.BoundaryValueProblem2D(my_mesh)  # init ProblemSetting obj
         # Dirichlet boundary condition settins:
-        bounds = np.linspace(0,1,no_observations)
-        dirichlet_boundary = [None] * no_observations
+        no_windows = int(no_observations/2)
+        bounds = np.linspace(0,1,no_windows)
+        dirichlet_boundary = [None] * no_windows
         dirichlet_boundary[0] = ["left",[0, 1]]
-        for i in range(no_observations-1):
+        for i in range(no_windows-1):
             dirichlet_boundary[i+1] = ["right",[bounds[i], bounds[i+1]]]
-        dirichlet_boundary_val = [1e1] + [0] * (no_observations-1)
+        dirichlet_boundary_val = [1e1] + [0] * (no_windows-1)
         self.my_problem_left.set_dirichlet_boundary(dirichlet_boundary, dirichlet_boundary_val)
         # Neumann boundary condition settins:
         neumann_boundary = ["top"]  # select boundary
@@ -50,12 +51,12 @@ class FEM:
         # 2) TOP -> BOTTOM
         self.my_problem_up = ProblemSetting.BoundaryValueProblem2D(my_mesh)  # init ProblemSetting obj
         # Dirichlet boundary condition settins:
-        bounds = np.linspace(0,1,no_observations)
-        dirichlet_boundary = [None] * no_observations
+        bounds = np.linspace(0,1,no_windows)
+        dirichlet_boundary = [None] * no_windows
         dirichlet_boundary[0] = ["top",[0, 1]]
-        for i in range(no_observations-1):
+        for i in range(no_windows-1):
             dirichlet_boundary[i+1] = ["bottom",[bounds[i], bounds[i+1]]]
-        dirichlet_boundary_val = [1e1] + [0] * (no_observations-1)
+        dirichlet_boundary_val = [1e1] + [0] * (no_windows-1)
         self.my_problem_up.set_dirichlet_boundary(dirichlet_boundary, dirichlet_boundary_val)
         # Neumann boundary condition settins:
         neumann_boundary = ["left"]  # select boundary
@@ -75,7 +76,6 @@ class FEM:
         self.deflation_imp = deflation_imp
         
     def pass_parameters(self, data_par):
-        print("passed paramtters")
         self.data_par = data_par
 
     def assemble(self):
@@ -132,8 +132,6 @@ class FEM:
                 print("SOLVER time:", time.time()-t)
             solver.calculate_window_flow()
             result[i]=solver.window_flow
-            print("result0:",result[0])
-            print("result1:",result[1])
         return np.concatenate((result[0],result[1]))
     
     def get_linear_system(self):

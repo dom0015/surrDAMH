@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 from configuration import Configuration
 C = Configuration()
 
-from modules import FEM_wrapper
+from modules import FEM_wrapper4
 
 # generate parameters from prior
 no_parameters = C.no_parameters
@@ -22,7 +22,7 @@ np.random.seed(2)
 parameters = np.ones((no_parameters,))
 print(parameters)
 
-FEM = FEM_wrapper.FEM(**C.child_solver_parameters)
+FEM = FEM_wrapper4.FEM(**C.child_solver_parameters)
 FEM.pass_parameters(parameters)
 observations = FEM.get_observations()
 print(observations)
@@ -30,7 +30,9 @@ print(observations)
 material = FEM.grf_instance.realization_grid_orig(parameters)
 plt.imshow(material)
 
-FEM.solver.plot_solution_image()
+#FEM.solver.plot_solution_image()
+FEM.solver_left.plot_solution_image()
+FEM.solver_up.plot_solution_image()
 
 sigma_num = 0.1
 sigma_meas = sigma_num/10

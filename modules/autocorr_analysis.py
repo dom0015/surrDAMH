@@ -21,6 +21,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from os import listdir
 from os.path import isfile, join
+from modules import grf_eigenfunctions as grf
 
 class Samples:
     def __init__(self, samples = None):
@@ -63,7 +64,7 @@ class Samples:
         if begin_disp == None:
             begin_disp = [0] * len(parameters_disp)
         if end_disp == None:
-            end_disp = [max(self.length)] * len(parameters_disp)
+            end_disp = [max([self.length[i] for i in chains_disp])] * len(parameters_disp)
         fig, axes = plt.subplots(1, len(parameters_disp), figsize=(12, 3), sharey=True)
         for idj,j in enumerate(parameters_disp):
             begin_disp[idj] = min(max(self.length),begin_disp[idj])
@@ -147,7 +148,7 @@ class Samples:
         if begin_disp == None:
             begin_disp = [0] * len(parameters_disp)
         if end_disp == None:
-            end_disp = [max(self.length)] * len(parameters_disp)
+            end_disp = [max([self.length[i] for i in chains_disp])] * len(parameters_disp)
         fig, axes = plt.subplots(1, len(parameters_disp), figsize=(12, 3), sharey=True)
         for idj,j in enumerate(parameters_disp):
             for idi,i in enumerate(chains_disp):
@@ -266,6 +267,18 @@ class Samples:
             f = self.autocorr_function_mean[:,j]
             self.autocorr_time_mean_beta[j] = autocorr_new(f, c)
             
+    def plot_mean_grf(self,chains_disp = None, grf_path = None):
+        if chains_disp == None:
+            chains_disp = range(self.no_chains)
+        if grf_path == None:
+            grf_path = 'modules/unit50.pckl'
+        grf_instance = grf.GRF(grf_path, truncate=self.no_parameters)
+        for i in chains_disp:
+            eta = self.mean[i]
+            z = grf_instance.realization_grid_new(eta,np.linspace(0,1,50),np.linspace(0,1,50))
+            plt.imshow(z)
+            plt.show()
+
 # Automated windowing procedure following Sokal (1989)
 # from https://dfm.io/posts/autocorr/ Foreman-Mackey
 def auto_window(taus, c):

@@ -36,16 +36,18 @@ begin_disp = [0] * S.no_parameters
 # end_disp = [25001] * S.no_parameters
 end_disp = None
 parameters_disp = [0,1,2,9]
-chains_disp = [1,3,S.no_chains-3,S.no_chains-4]
-chains_disp = range(8,16)
+chains_disp = [0,1,S.no_chains-1,S.no_chains-2]
+#chains_disp = range(8,16)
 burn_in = [0, 0, 500, 500]
-burn_in = [500] * 8
+#burn_in = [500] * 8
 
 # TO DO: convergence to mean H(X) (also for comparison of parallel chains)
 S.calculate_properties()
 #S.print_properties()
 S.plot_segment(begin_disp,end_disp,parameters_disp,chains_disp)
 S.plot_hist(burn_in,parameters_disp,chains_disp)
+S.plot_segment(begin_disp,end_disp,parameters_disp,[0,1])
+S.plot_hist(burn_in,parameters_disp,[0,1])
 #S.plot_average([0, 0, 0, 500, 500, 500],begin_disp,end_disp=None,parameters_disp=None,chains_disp=None)
 S.calculate_autocorr_function()
 S.calculate_autocorr_function_mean()
@@ -61,18 +63,10 @@ print(S.autocorr_time[3:])
 #G.pass_parameters(S.mean[3])
 #print("observation:",G.get_observations())
 
-# from modules import grf_eigenfunctions as grf
-# grf_instance = grf.GRF('modules/unit50.pckl', truncate=S.no_parameters)
-# plt.show()
-# for i in range(S.no_chains):
-#     eta = S.mean[i]
-#     print("mean:",eta)
-#     z = grf_instance.realization_grid_new(eta,np.linspace(0,1,50),np.linspace(0,1,50))
-#     plt.imshow(z)
-#     plt.show()
+S.plot_mean_grf()
 
 S.plot_hist_2d(dimensions = [0,1], burn_in = [0,0], chains_disp = [0], bins = 20, show = True)
-S.plot_hist_grid([0,0,0], [0,1,2], [10,11,12])
+S.plot_hist_grid([0,0,0,0], [0,1,2], range(4))
 
 # generate material shample and calculate observation:
 #no_parame = 5
