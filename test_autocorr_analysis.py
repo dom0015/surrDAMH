@@ -7,14 +7,15 @@ Created on Wed Apr 29 11:26:57 2020
 """
 
 from modules import autocorr_analysis as aa
-#import numpy as np
-#import matplotlib.pyplot as plt
+import numpy as np
+import matplotlib.pyplot as plt
 
 from configuration import Configuration
-#C = Configuration()
-#problem_name = C.problem_name
-#problem_name =  "my_prob01"
-problem_name = "grf1e5_nodef"
+C = Configuration()
+problem_name = C.problem_name
+# problem_name = "GRF_Hugo3"
+# problem_name =  "my_prob01"
+# problem_name = "grf1e5_nodef"
 
 S = aa.Samples()
 #m = int(1e5)
@@ -32,16 +33,19 @@ S = aa.Samples()
 S.load_MH('saved_samples/' + problem_name)
 S.calculate_properties()
 begin_disp = [0] * S.no_parameters
-end_disp = [1001] * S.no_parameters
+# end_disp = [25001] * S.no_parameters
+end_disp = None
 parameters_disp = [0,1,2,9]
-chains_disp = [1,3,4,5]
-burn_in = [0, 500, 500, 500]
+chains_disp = [1,3,S.no_chains-3,S.no_chains-4]
+chains_disp = range(8,16)
+burn_in = [0, 0, 500, 500]
+burn_in = [500] * 8
 
 # TO DO: convergence to mean H(X) (also for comparison of parallel chains)
 S.calculate_properties()
 #S.print_properties()
-#S.plot_segment(begin_disp,end_disp,parameters_disp,chains_disp)
-#S.plot_hist(burn_in,parameters_disp,chains_disp)
+S.plot_segment(begin_disp,end_disp,parameters_disp,chains_disp)
+S.plot_hist(burn_in,parameters_disp,chains_disp)
 #S.plot_average([0, 0, 0, 500, 500, 500],begin_disp,end_disp=None,parameters_disp=None,chains_disp=None)
 S.calculate_autocorr_function()
 S.calculate_autocorr_function_mean()
@@ -57,14 +61,18 @@ print(S.autocorr_time[3:])
 #G.pass_parameters(S.mean[3])
 #print("observation:",G.get_observations())
 
-#from modules import grf_eigenfunctions as grf
-#grf_instance = grf.GRF('modules/unit50.pckl', truncate=S.no_parameters)
-#eta = S.mean[2]
-#print("mean:",eta)
-#z = grf_instance.realization_grid_new(eta,np.linspace(0,1,50),np.linspace(0,1,50))
-#plt.show()
-#plt.imshow(z)
-#plt.show()
+# from modules import grf_eigenfunctions as grf
+# grf_instance = grf.GRF('modules/unit50.pckl', truncate=S.no_parameters)
+# plt.show()
+# for i in range(S.no_chains):
+#     eta = S.mean[i]
+#     print("mean:",eta)
+#     z = grf_instance.realization_grid_new(eta,np.linspace(0,1,50),np.linspace(0,1,50))
+#     plt.imshow(z)
+#     plt.show()
+
+S.plot_hist_2d(dimensions = [0,1], burn_in = [0,0], chains_disp = [0], bins = 20, show = True)
+S.plot_hist_grid([0,0,0], [0,1,2], [10,11,12])
 
 # generate material shample and calculate observation:
 #no_parame = 5

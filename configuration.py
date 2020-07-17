@@ -13,28 +13,33 @@ from modules import surrogate_solver_rbf as surr
 
 class Configuration:
     def __init__(self):
-        self.problem_name = "grf1e3"
-        self.no_samplers = 10
-        self.no_full_solvers = 10
+        self.problem_name = "GRF_Hugo4"
+        self.no_samplers = 2
+        self.no_full_solvers = 2
         self.no_parameters = 10
-        self.no_observations = 6
+        self.no_observations = 10
         self.rank_full_solver = self.no_samplers
         self.rank_surr_collector = self.no_samplers + 1
         algMH = {'type': 'MH', 
-                 'max_samples': 100, 
-                 'time_limit': 60*2,
+                 'max_samples': 100000, 
+                 'time_limit': 60*1,
                  'proposal_std': 0.8}
         algDAMH = {'type': 'DAMH', 
-                   'max_samples': 1000, 
-                   'time_limit': 60*15,
-                   'proposal_std': 1.0}
+                   'max_samples': 1000000, 
+                   'time_limit': 60*1,
+                   'proposal_std': 2.0}
         self.list_alg = [algMH, algDAMH]
         self.max_buffer_size = 1<<20
         self.surrogate_is_updated = True
-        self.problem_parameters = {'noise_std': [1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+        self.problem_parameters = {'noise_std': [0.10049876, 0.03480102, 0.03480102, 0.03480102, 0.03480102, 0.03480102, 0.03480102, 0.03480102, 0.03480102, 0.03480102],
                                    'prior_mean': 0.0,
                                    'prior_std': 1.0,
-                                   'observations': [ 7.4837606, -1.68701975, -1.81545499, -1.65487159, -1.28726334, -1.03915092], # 10 par
+                                   'observations': [ 8.93017455, -1.1039663, -0.91462251, -0.50497023, -0.96350122, -1.42191467, -0.48836362, -1.04759721, -1.40030285, -1.0849348 ], # 2500 par, ones
+                                   # 'observations': [ 8.66573862, -1.03993979, -1.14229746, -0.94976422, -0.78099463, -0.66584307, -0.5827063,  -0.78787596, -1.32720872, -1.3891087 ], # 10 par, ones
+                                   # 'observations': [10.38232625, -0.52869917, -0.78189012, -1.42572536, -2.47236151, -2.64524228, -1.29127951, -0.56259429, -0.36707952, -0.30745544], # 20 par, seed 2
+                                   # 'observations': [10.36728482, -0.96484045, -1.43592265, -1.65478891, -1.94643102, -1.99862472, -1.19716276, -0.58869322, -0.33193985, -0.24888124], # 10 par, seed 2
+                                   # 'observations': [10.64239524 -1.40163629 -2.36298113 -5.18486635 -1.03188994 -0.66102128], # 2500 par, seed 2
+                                   # 'observations': [ 7.4837606, -1.68701975, -1.81545499, -1.65487159, -1.28726334, -1.03915092], # 10 par
                                    }
 ### local solver?        
 #        self.full_solver_init = fse.Solver_local_ntom
@@ -45,8 +50,8 @@ class Configuration:
 
 ### SOLVER TYPE 1 - solvers are spawned
         # TO DO: test if other options are also possible
-        from modules import FEM_wrapper
-        self.child_solver_init = FEM_wrapper.FEM
+        from modules import FEM_wrapper4
+        self.child_solver_init = FEM_wrapper4.FEM
         self.child_solver_parameters = {'no_parameters': self.no_parameters,
                                         'no_observations': self.no_observations, 
                                         'n': 50,

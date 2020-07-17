@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Created on Tue May 12 10:48:13 2020
+Created on Wed Jul 15 15:12:30 2020
 
-@author: simona
+@author: domesova
 """
 
 import sys # REMOVE!
@@ -24,14 +24,14 @@ from modules import pcdeflation
 class FEM:
     # FEM solver preparation
     def __init__(self, no_parameters = 5, no_observations = 5, n = 100, quiet = True, tolerance = None, PC = "none", use_deflation = False, deflation_imp = None):    
-        print("FEM init")
         petsc4py.init()
         self.nrows = (n+1)*(n+1)
         # TRIANGULAR MESH SETTING -----------------------------------------------------
         my_mesh = Mesh.RectUniTri(n, n)
         
         # PROBLEM SETTING (BOUNDARY + RHS) --------------------------------------
-        self.my_problem = ProblemSetting.BoundaryValueProblem2D(my_mesh)  # init ProblemSetting obj
+        # 1) LEFT -> RIGHT
+        self.my_problem_left = ProblemSetting.BoundaryValueProblem2D(my_mesh)  # init ProblemSetting obj
         # Dirichlet boundary condition settins:
         bounds = np.linspace(0,1,no_observations)
         dirichlet_boundary = [None] * no_observations
@@ -39,13 +39,30 @@ class FEM:
         for i in range(no_observations-1):
             dirichlet_boundary[i+1] = ["right",[bounds[i], bounds[i+1]]]
         dirichlet_boundary_val = [1e1] + [0] * (no_observations-1)
-        self.my_problem.set_dirichlet_boundary(dirichlet_boundary, dirichlet_boundary_val)
+        self.my_problem_left.set_dirichlet_boundary(dirichlet_boundary, dirichlet_boundary_val)
         # Neumann boundary condition settins:
         neumann_boundary = ["top"]  # select boundary
         neumann_boundary_val = [0]  # boundary value
-        self.my_problem.set_neumann_boundary(neumann_boundary, neumann_boundary_val)  # set
+        self.my_problem_left.set_neumann_boundary(neumann_boundary, neumann_boundary_val)  # set
         # forcing term (rhs) setting:
-        self.my_problem.set_rhs(0)
+        self.my_problem_left.set_rhs(0)
+        
+        # 2) TOP -> BOTTOM
+        self.my_problem_up = ProblemSetting.BoundaryValueProblem2D(my_mesh)  # init ProblemSetting obj
+        # Dirichlet boundary condition settins:
+        bounds = np.linspace(0,1,no_observations)
+        dirichlet_boundary = [None] * no_observations
+        dirichlet_boundary[0] = ["top",[0, 1]]
+        for i in range(no_observations-1):
+            dirichlet_boundary[i+1] = ["bottom",[bounds[i], bounds[i+1]]]
+        dirichlet_boundary_val = [1e1] + [0] * (no_observations-1)
+        self.my_problem_up.set_dirichlet_boundary(dirichlet_boundary, dirichlet_boundary_val)
+        # Neumann boundary condition settins:
+        neumann_boundary = ["left"]  # select boundary
+        neumann_boundary_val = [0]  # boundary value
+        self.my_problem_up.set_neumann_boundary(neumann_boundary, neumann_boundary_val)  # set
+        # forcing term (rhs) setting:
+        self.my_problem_up.set_rhs(0)
         
         self.no_parameters = no_parameters
         self.grf_instance = grf.GRF('modules/unit50.pckl', truncate=no_parameters)
@@ -58,6 +75,7 @@ class FEM:
         self.deflation_imp = deflation_imp
         
     def pass_parameters(self, data_par):
+        print("passed paramtters")
         self.data_par = data_par
 
     def assemble(self):
@@ -69,34 +87,54 @@ class FEM:
             for i in range(no_points):
                 result[i] = np.exp(f_grf(x[i],y[i]))
             return result
-        self.my_problem.set_material(material_function)
         
+        # 1) LEFT -> RIGHT
+        self.my_problem_left.set_material(material_function)
         # MATRIX ASSEMBLER (SYSTEM MAT + RHS) ---------------------------------
         # assemble all parts necessary for solution:
-        FEM_assembly = Assemble.LaplaceSteady(self.my_problem) # init assemble obj
-        FEM_assembly.assemble_matrix_generalized()
-        FEM_assembly.assemble_rhs_force()
-        FEM_assembly.assemble_rhs_neumann()
-        FEM_assembly.assemble_rhs_dirichlet()
-        FEM_assembly.dirichlet_cut_and_sum_rhs(duplicate=True)
+        FEM_assembly_left = Assemble.LaplaceSteady(self.my_problem_left) # init assemble obj
+        FEM_assembly_left.assemble_matrix_generalized()
+        FEM_assembly_left.assemble_rhs_force()
+        FEM_assembly_left.assemble_rhs_neumann()
+        FEM_assembly_left.assemble_rhs_dirichlet()
+        FEM_assembly_left.dirichlet_cut_and_sum_rhs(duplicate=True)
 #        print(FEM_assembly.times_assembly)
-        self.solver = Solvers.LaplaceSteady(FEM_assembly)  # init
+        self.solver_left = Solvers.LaplaceSteady(FEM_assembly_left)  # init
+        
+        # 2) TOP -> BOTTOM
+        self.my_problem_up.set_material(material_function)
+        # MATRIX ASSEMBLER (SYSTEM MAT + RHS) ---------------------------------
+        # assemble all parts necessary for solution:
+        FEM_assembly_up = Assemble.LaplaceSteady(self.my_problem_up) # init assemble obj
+        FEM_assembly_up.assemble_matrix_generalized()
+        FEM_assembly_up.assemble_rhs_force()
+        FEM_assembly_up.assemble_rhs_neumann()
+        FEM_assembly_up.assemble_rhs_dirichlet()
+        FEM_assembly_up.dirichlet_cut_and_sum_rhs(duplicate=True)
+#        print(FEM_assembly.times_assembly)
+        self.solver_up = Solvers.LaplaceSteady(FEM_assembly_up)  # init
         
     def get_observations(self):
         """ assemble and solve"""
         self.assemble()
         t = time.time()
-        if self.use_deflation:
-            self.get_solution_DCG()
-            self.deflation_extend_optional(self.solver.solution)
-        else:
-            self.solver.ksp_cg_with_pc(self.PC,self.tolerance)
+        
+        result = [None] * 2
+        for i,solver in enumerate([self.solver_left, self.solver_up]):
+            if self.use_deflation:
+                self.get_solution_DCG()
+                self.deflation_extend_optional(solver.solution)
+            else:
+                solver.ksp_cg_with_pc(self.PC,self.tolerance)
+                if self.quiet == False:
+                    print("SOLVER iterations:",solver.ksp.getIterationNumber(),"normres:",solver.ksp.getResidualNorm())
             if self.quiet == False:
-                print("SOLVER iterations:",self.solver.ksp.getIterationNumber(),"normres:",self.solver.ksp.getResidualNorm())
-        if self.quiet == False:
-            print("SOLVER time:", time.time()-t)
-        self.solver.calculate_window_flow()
-        return np.array(self.solver.window_flow)
+                print("SOLVER time:", time.time()-t)
+            solver.calculate_window_flow()
+            result[i]=solver.window_flow
+            print("result0:",result[0])
+            print("result1:",result[1])
+        return np.concatenate((result[0],result[1]))
     
     def get_linear_system(self):
         """ assemble but do not solve"""
@@ -148,12 +186,12 @@ class FEM:
         self.W.assemblyBegin()
         self.W.assemblyEnd()
 
-    def get_solution_DCG(self):
-        if self.solver.solution == None:
-            self.solver.init_solution_vec()
+    def get_solution_DCG(self, solver):
+        if solver.solution == None:
+            solver.init_solution_vec()
 #        solution = self.solver.assembled_matrices.create_vec()
         ksp = petsc4py.PETSc.KSP().create()
-        ksp.setOperators(self.solver.assembled_matrices.matrices["A_dirichlet"])
+        ksp.setOperators(solver.assembled_matrices.matrices["A_dirichlet"])
         ksp.setType('cg')
         v = ksp.getTolerances()
         ksp.setTolerances(self.tolerance,v[1],v[2],v[3])
@@ -165,10 +203,10 @@ class FEM:
         if self.ncols > 0:
             pcdeflation.setDeflationMat(ksp_pc,self.W,False);
         ksp.setUp()
-        ksp.solve(self.solver.assembled_matrices.rhss["final"], self.solver.solution)
+        ksp.solve(solver.assembled_matrices.rhss["final"], solver.solution)
         if self.quiet == False:
             print("iterations:",ksp.getIterationNumber(),"W size:",self.ncols,"normres:",ksp.getResidualNorm())
-        return self.solver.solution
+        return solver.solution
 
 def demo_prepare_and_solve():
     no_parameters = 10

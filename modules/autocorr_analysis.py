@@ -55,7 +55,7 @@ class Samples:
         print('std:')
         print(self.std)
         
-    def plot_segment(self, begin_disp, end_disp, parameters_disp = None, chains_disp = None):
+    def plot_segment(self, begin_disp = None, end_disp = None, parameters_disp = None, chains_disp = None):
         if parameters_disp == None:
             parameters_disp = range(self.no_parameters)
         if chains_disp == None:
@@ -95,6 +95,48 @@ class Samples:
             if self.known_autocorr_time:
                 axes[idj].set_title("$\\tau_\mathrm{{true}} = {0:.0f}$".format(self.autocorr_time_true[j]));
         axes[0].set_ylabel("samples")
+        plt.show()
+
+    def plot_hist_1d(self, burn_in, dimension = 0, chains_disp = None, bins = 20, show = True):
+        if chains_disp == None:
+            chains_disp = range(self.no_chains)
+        XX = np.zeros((0,))
+        for i, chain in enumerate(chains_disp):
+            xx = self.x[chain][burn_in[i]:,dimension]
+            XX = np.concatenate((XX,xx))
+        plt.hist(XX, bins = bins)
+        if show:
+            plt.show()
+
+    def plot_hist_2d(self, burn_in, dimensions = [0,1], chains_disp = None, bins = 20, show = True):
+        if chains_disp == None:
+            chains_disp = range(self.no_chains)
+        XX = np.zeros((0,))
+        YY = np.zeros((0,))
+        for i, chain in enumerate(chains_disp):
+            xx = self.x[chain][burn_in[i]:,dimensions[0]]
+            yy = self.x[chain][burn_in[i]:,dimensions[1]]
+            XX = np.concatenate((XX,xx))
+            YY = np.concatenate((YY,yy))
+        plt.hist2d(XX, YY, bins = bins)
+        if show:
+            plt.show()
+    
+    def plot_hist_grid(self, burn_in, parameters_disp = None, chains_disp = None, bins = 20):
+        if parameters_disp == None:
+            parameters_disp = range(self.no_parameters)
+        if chains_disp == None:
+            chains_disp = range(self.no_chains)
+        n = len(parameters_disp)
+        idx = 1
+        for idi,i in enumerate(parameters_disp):
+            for idj,j in enumerate(parameters_disp):
+                plt.subplot(n, n, idx)
+                if idi==idj:
+                    self.plot_hist_1d(dimension = i, burn_in = burn_in, chains_disp=chains_disp, bins=bins, show = False)
+                else:
+                    self.plot_hist_2d(dimensions = [j,i],  burn_in = burn_in, chains_disp=chains_disp, bins=bins, show = False)
+                idx = idx + 1
         plt.show()
         
     def plot_average(self, burn_in, begin_disp = None, end_disp = None, parameters_disp = None, chains_disp = None):
