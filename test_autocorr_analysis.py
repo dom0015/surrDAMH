@@ -63,7 +63,7 @@ print(S.autocorr_time[3:])
 #G.pass_parameters(S.mean[3])
 #print("observation:",G.get_observations())
 
-S.plot_mean_grf()
+S.plot_mean_as_grf()
 
 S.plot_hist_2d(dimensions = [0,1], burn_in = [0,0], chains_disp = [0], bins = 20, show = True)
 S.plot_hist_grid([0,0,0,0], [0,1,2], range(4))

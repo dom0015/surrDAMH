@@ -246,6 +246,21 @@ class GRF:
         M_new = f(x_new,y_new)
         return M_new
 
+    def samples_mean_and_std(self, samples, x_new = None, y_new = None):
+        temp = np.transpose(samples*np.sqrt(self.D))
+        M = np.matmul(self.V,temp)
+        M_mean = np.mean(M,axis=1)
+        M_std = np.std(M,axis=1)
+        if x_new == None:
+            M_mean = M_mean.reshape((self.ny,self.nx))
+            M_std = M_std.reshape((self.ny,self.nx))
+        else:
+            f_mean = scipy.interpolate.RectBivariateSpline(self.x,self.y,M_mean)
+            f_std = scipy.interpolate.RectBivariateSpline(self.x,self.y,M_std)
+            M_mean = f_mean(x_new,y_new)
+            M_std = f_std(x_new,y_new)
+        return M_mean, M_std
+
 #demo_generate_and_save()
 #demo_load_and_show()
 #demo_realization()

@@ -29,6 +29,20 @@ class Samples:
         self.x = samples
         self.known_autocorr_time = False
         
+        
+    def load_MH(self, folder_samples):
+        file_samples = [f for f in listdir(folder_samples) if isfile(join(folder_samples, f))]
+        file_samples.sort()
+        N = len(file_samples)
+        self.x = [None] * N
+        for i in range(N):
+            path_samples = folder_samples + "/" + file_samples[i]
+            print(path_samples)
+            df_samples = pd.read_csv(path_samples, header=None)
+            weights = np.array(df_samples[0])
+            tmp = np.array(df_samples.iloc[:,1:])
+            self.x[i] = decompress(tmp, weights)
+        
     def calculate_properties(self):
         x = self.x
         self.no_chains = len(x)
@@ -162,19 +176,6 @@ class Samples:
         axes[0].set_ylabel("samples")
         plt.show()
         
-    def load_MH(self, folder_samples):
-        file_samples = [f for f in listdir(folder_samples) if isfile(join(folder_samples, f))]
-        file_samples.sort()
-        N = len(file_samples)
-        self.x = [None] * N
-        for i in range(N):
-            path_samples = folder_samples + "/" + file_samples[i]
-            print(path_samples)
-            df_samples = pd.read_csv(path_samples, header=None)
-            weights = np.array(df_samples[0])
-            tmp = np.array(df_samples.iloc[:,1:])
-            self.x[i] = decompress(tmp, weights)
-        
     def generate_samples_rand(self,no_parameters,length):
         # no_parameters ... scalar
         # length ... list of scalars l_1, ..., l_N
@@ -267,7 +268,7 @@ class Samples:
             f = self.autocorr_function_mean[:,j]
             self.autocorr_time_mean_beta[j] = autocorr_new(f, c)
             
-    def plot_mean_grf(self,chains_disp = None, grf_path = None):
+    def plot_mean_as_grf(self,chains_disp = None, grf_path = None):
         if chains_disp == None:
             chains_disp = range(self.no_chains)
         if grf_path == None:
@@ -276,7 +277,25 @@ class Samples:
         for i in chains_disp:
             eta = self.mean[i]
             z = grf_instance.realization_grid_new(eta,np.linspace(0,1,50),np.linspace(0,1,50))
-            plt.imshow(z)
+            fig, axes = plt.subplots(1, 2, figsize=(12, 3), sharey=True)
+            axes[0].imshow(z)
+            plt.show()
+            
+    def plot_mean_and_std_grf(self, burn_in = None, chains_disp = None, grf_path = None, grid_x = 50, grid_y = 50):
+        if chains_disp == None:
+            chains_disp = range(self.no_chains)
+        no_chains_disp = len(chains_disp)
+        if grf_path == None:
+            grf_path = 'modules/unit50.pckl'
+        grf_instance = grf.GRF(grf_path, truncate=self.no_parameters)
+        if burn_in == None:
+            burn_in = [0] * no_chains_disp
+        for idi,i in enumerate(chains_disp):
+            samples = self.x[i][burn_in[idi]:,:]
+            samples_mean, samples_std = grf_instance.samples_mean_and_std(samples)
+            fig, axes = plt.subplots(1, 2, figsize=(12, 3), sharey=True)
+            axes[0].imshow(samples_mean)
+            axes[1].imshow(samples_std)
             plt.show()
 
 # Automated windowing procedure following Sokal (1989)

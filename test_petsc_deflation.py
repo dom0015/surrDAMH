@@ -10,8 +10,8 @@ Created on Wed May 27 10:21:47 2020
 ## create sample FEM matrix:
 import sys # REMOVE!
 import time
-sys.path.append("/home/domesova/GIT/Simple_Python_PETSc_FEM") 
-#sys.path.append("/home/simona/GIT/Simple_Python_PETSc_FEM") 
+# sys.path.append("/home/domesova/GIT/Simple_Python_PETSc_FEM") 
+sys.path.append("/home/simona/GIT/Simple_Python_PETSc_FEM") 
 # sys.path.append("/home/ber0061/Repositories_dom0015/Simple_Python_PETSc_FEM")
 #sys.path.append("/home/ber0061/Repositories_dom0015/MCMC-Bayes-python")
 import numpy as np
