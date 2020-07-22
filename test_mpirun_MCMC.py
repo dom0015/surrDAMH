@@ -34,4 +34,4 @@ process = lambda numproc, filename : ' -n ' + str(numproc) + ' python3 ' + filen
 com = 'mpirun' + process(C.no_samplers,'process_SAMPLER.py') + ':' + process(1,'process_SOLVER.py') + ':' + process(1,'process_COLLECTOR.py')
 print("Hugo:")
 print(com)
-#os.system(com)
+os.system(com)

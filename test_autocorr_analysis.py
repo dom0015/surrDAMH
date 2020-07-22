@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 from configuration import Configuration
 C = Configuration()
 problem_name = C.problem_name
-# problem_name = "GRF_Hugo3"
+problem_name = "GRF_double20to20"
 # problem_name =  "my_prob01"
 # problem_name = "grf1e5_nodef"
 
@@ -36,7 +36,7 @@ begin_disp = [0] * S.no_parameters
 # end_disp = [25001] * S.no_parameters
 end_disp = None
 parameters_disp = [0,1,2,9]
-chains_disp = [0,1,S.no_chains-1,S.no_chains-2]
+chains_disp = [0,1,8,9]
 #chains_disp = range(8,16)
 burn_in = [0, 0, 500, 500]
 #burn_in = [500] * 8
@@ -64,6 +64,7 @@ print(S.autocorr_time[3:])
 #print("observation:",G.get_observations())
 
 S.plot_mean_as_grf()
+S.plot_mean_and_std_grf(chains_disp=[0,1,8,9])
 
 S.plot_hist_2d(dimensions = [0,1], burn_in = [0,0], chains_disp = [0], bins = 20, show = True)
 S.plot_hist_grid([0,0,0,0], [0,1,2], range(4))

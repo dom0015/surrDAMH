@@ -7,7 +7,7 @@ Created on Tue May 12 10:48:13 2020
 """
 
 import sys # REMOVE!
-# sys.path.append("/home/domesova/GIT/Simple_Python_PETSc_FEM") 
+sys.path.append("/home/domesova/GIT/Simple_Python_PETSc_FEM") 
 #sys.path.append("/home/simona/GIT/Simple_Python_PETSc_FEM") 
 #sys.path.append("/home/ber0061/Repositories_dom0015/Simple_Python_PETSc_FEM")
 #sys.path.append("/home/ber0061/Repositories_dom0015/MCMC-Bayes-python")

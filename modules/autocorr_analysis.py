@@ -43,10 +43,12 @@ class Samples:
             tmp = np.array(df_samples.iloc[:,1:])
             self.x[i] = decompress(tmp, weights)
         
-    def calculate_properties(self):
-        x = self.x
-        self.no_chains = len(x)
+    def calculate_properties(self, burn_in = None):
+        self.no_chains = len(self.x)
         all_chains = range(self.no_chains)
+        if burn_in == None:
+            burn_in = [0] * self.no_chains
+        x = list(self.x[i][burn_in[i]:,:] for i in all_chains)
         self.no_parameters = x[0].shape[1]
         self.length = list(x[i].shape[0] for i in all_chains)
         self.var = list(np.var(x[i],axis=0) for i in all_chains)
@@ -58,6 +60,49 @@ class Samples:
 #            mean_all += self.mean[i] * self.length[i]
 #        self.mean_all = mean_all / sum(self.length)
             
+    def remove_burn_in(self, burn_in):
+        self.x = list(self.x[i][burn_in[i]:,:] for i in range(self.no_chains))
+
+    def remove_chains(self, chains_to_keep):
+        self.x = [self.x[i] for i in chains_to_keep]
+
+    def calculate_autocorr_function(self):
+        self.autocorr_function = [None] * self.no_chains
+        for i in range(self.no_chains):
+            tmp = np.zeros((self.length[i],self.no_parameters))
+            for j in range(self.no_parameters):
+                tmp[:,j] = emcee.autocorr.function_1d(self.x[i][:,j])
+            self.autocorr_function[i] = tmp
+            
+    def calculate_autocorr_function_mean(self):
+        max_length = max(self.length)
+        self.autocorr_function_mean = np.zeros((max_length, self.no_parameters))
+        for j in range(self.no_parameters):
+            tmp = np.zeros(max_length)
+            count = np.zeros(max_length)
+            for i in range(self.no_chains):
+                tmp[:self.length[i]] += self.autocorr_function[i][:,j]
+                count[:self.length[i]] += 1
+            self.autocorr_function_mean[:,j] = tmp/count
+
+    def calculate_autocorr_time(self, c=5, tol=50, quiet=True):
+        self.autocorr_time = [None] * self.no_chains
+        for i in range(self.no_chains):
+            tmp = np.zeros((self.no_parameters))
+            for j in range(self.no_parameters):
+                tmp[j] = emcee.autocorr.integrated_time(self.x[i][:,j], c=c, tol=tol, quiet=quiet)
+            self.autocorr_time[i] = tmp
+            
+    def calculate_autocorr_time_mean(self, c=5):
+        self.autocorr_time_mean = [None] * self.no_parameters
+        self.autocorr_time_mean_beta = [None] * self.no_parameters
+        min_length = min(self.length)
+        for j in range(self.no_parameters):
+            f = self.autocorr_function_mean[:min_length,j]
+            self.autocorr_time_mean[j] = autocorr_new(f, c)
+            f = self.autocorr_function_mean[:,j]
+            self.autocorr_time_mean_beta[j] = autocorr_new(f, c)
+
     def print_properties(self):
         print('known autocorr. time:', self.known_autocorr_time)
         if self.known_autocorr_time:
@@ -70,7 +115,7 @@ class Samples:
         print('std:')
         print(self.std)
         
-    def plot_segment(self, begin_disp = None, end_disp = None, parameters_disp = None, chains_disp = None):
+    def plot_segment(self, begin_disp = None, end_disp = None, parameters_disp = None, chains_disp = None, show_legend = False):
         if parameters_disp == None:
             parameters_disp = range(self.no_parameters)
         if chains_disp == None:
@@ -88,11 +133,64 @@ class Samples:
                 yy = self.x[i][xx,j]
                 axes[idj].plot(xx, yy, label=i)
             axes[idj].set_xlim(begin_disp[idj], end_disp[idj]-1)
-            axes[idj].legend()
+            if show_legend:
+                axes[idj].legend(loc=1)
             axes[idj].set_xlabel("$par. {0}$".format(j))
+            axes[idj].grid(True)
             if self.known_autocorr_time:
                 axes[idj].set_title("$\\tau_\mathrm{{true}} = {0:.0f}$".format(self.autocorr_time_true[j]));
         axes[0].set_ylabel("samples")
+        plt.show()
+        
+    def plot_average(self, burn_in = None, begin_disp = None, end_disp = None, parameters_disp = None, chains_disp = None, show_legend = False):
+        if parameters_disp == None:
+            parameters_disp = range(self.no_parameters)
+        if chains_disp == None:
+            chains_disp = range(self.no_chains)
+        if burn_in == None:
+            burn_in = [0] * len(chains_disp)
+        if begin_disp == None:
+            begin_disp = [0] * len(parameters_disp)
+        if end_disp == None:
+            end_disp = [max([self.length[i] for i in chains_disp])] * len(parameters_disp)
+        fig, axes = plt.subplots(1, len(parameters_disp), figsize=(12, 3), sharey=True)
+        for idj,j in enumerate(parameters_disp):
+            for idi,i in enumerate(chains_disp):
+                xx = np.arange(burn_in[idi],min(end_disp[idj],self.length[i]))
+                yy = self.x[i][xx,j]
+                yy = np.cumsum(yy)/(1+np.arange(len(yy)))
+                axes[idj].plot(xx[begin_disp[idj]:], yy[begin_disp[idj]:], label=i)
+            if show_legend:
+                axes[idj].legend(loc=1)
+            axes[idj].set_xlabel("$par.  {0}$".format(j))
+            axes[idj].grid(True)
+            if self.known_autocorr_time:
+                axes[idj].set_title("$\\tau_\mathrm{{true}} = {0:.0f}$".format(self.autocorr_time_true[j]));
+        axes[0].set_ylabel("convergence of averages")
+        plt.show()
+            
+    def plot_autocorr_function(self, length_disp, plot_mean=False, parameters_disp = None, chains_disp = None, show_legend = False):
+        if parameters_disp == None:
+            parameters_disp = range(self.no_parameters)
+        no_parameters_disp = len(parameters_disp)
+        if chains_disp == None:
+            chains_disp = range(self.no_chains)
+        fig, axes = plt.subplots(1, no_parameters_disp, figsize=(12, 3), sharey=True)
+        for idj,j in enumerate(parameters_disp):
+            length_disp[idj] = min(max(self.length),length_disp[idj])
+        for idj,j in enumerate(parameters_disp):
+            for idi,i in enumerate(chains_disp):
+                axes[idj].plot(self.autocorr_function[i][:length_disp[idj],j], label=i)
+            if plot_mean:
+                axes[idj].plot(self.autocorr_function_mean[:,j],label="mean")
+            axes[idj].set_xlim(0, length_disp[idj]-1)
+            if show_legend:
+                axes[idj].legend(loc=1)
+            axes[idj].set_xlabel("$par. {0}$".format(j))
+            axes[idj].grid(True)
+            if self.known_autocorr_time:
+                axes[idj].set_title("$\\tau_\mathrm{{true}} = {0:.0f}$".format(self.autocorr_time_true[j]));
+        axes[0].set_ylabel("autocorr. function")
         plt.show()
         
     def plot_hist(self, burn_in, parameters_disp = None, chains_disp = None):
@@ -105,7 +203,7 @@ class Samples:
             for idi,i in enumerate(chains_disp):
                 yy = self.x[i][burn_in[idi]:,j]
                 axes[idj].hist(yy, label=i)
-            axes[idj].legend()
+            axes[idj].legend(loc=1)
             axes[idj].set_xlabel("$parameter:  {0}$".format(j))
             if self.known_autocorr_time:
                 axes[idj].set_title("$\\tau_\mathrm{{true}} = {0:.0f}$".format(self.autocorr_time_true[j]));
@@ -137,13 +235,16 @@ class Samples:
         if show:
             plt.show()
     
-    def plot_hist_grid(self, burn_in, parameters_disp = None, chains_disp = None, bins = 20):
+    def plot_hist_grid(self, burn_in = None, parameters_disp = None, chains_disp = None, bins = 20):
         if parameters_disp == None:
             parameters_disp = range(self.no_parameters)
         if chains_disp == None:
             chains_disp = range(self.no_chains)
+        if burn_in == None:
+            burn_in = [0] * len(chains_disp)
         n = len(parameters_disp)
         idx = 1
+        fig, axes = plt.subplots(n, n, figsize=(12,12), sharex=True, sharey=True)
         for idi,i in enumerate(parameters_disp):
             for idj,j in enumerate(parameters_disp):
                 plt.subplot(n, n, idx)
@@ -151,31 +252,45 @@ class Samples:
                     self.plot_hist_1d(dimension = i, burn_in = burn_in, chains_disp=chains_disp, bins=bins, show = False)
                 else:
                     self.plot_hist_2d(dimensions = [j,i],  burn_in = burn_in, chains_disp=chains_disp, bins=bins, show = False)
+                if idx<=n:
+                    plt.title("$par. {0}$".format(j))
                 idx = idx + 1
         plt.show()
-        
-    def plot_average(self, burn_in, begin_disp = None, end_disp = None, parameters_disp = None, chains_disp = None):
-        if parameters_disp == None:
-            parameters_disp = range(self.no_parameters)
+            
+    def plot_mean_as_grf(self,chains_disp = None, grf_path = None):
         if chains_disp == None:
             chains_disp = range(self.no_chains)
-        if begin_disp == None:
-            begin_disp = [0] * len(parameters_disp)
-        if end_disp == None:
-            end_disp = [max([self.length[i] for i in chains_disp])] * len(parameters_disp)
-        fig, axes = plt.subplots(1, len(parameters_disp), figsize=(12, 3), sharey=True)
-        for idj,j in enumerate(parameters_disp):
-            for idi,i in enumerate(chains_disp):
-                xx = np.arange(burn_in[idi],min(end_disp[idj],self.length[i]))
-                yy = self.x[i][xx,j]
-                axes[idj].plot(xx, np.cumsum(yy)/(1+np.arange(len(yy))), label=i)
-            axes[idj].legend()
-            axes[idj].set_xlabel("$parameter:  {0}$".format(j))
-            if self.known_autocorr_time:
-                axes[idj].set_title("$\\tau_\mathrm{{true}} = {0:.0f}$".format(self.autocorr_time_true[j]));
-        axes[0].set_ylabel("samples")
-        plt.show()
-        
+        if grf_path == None:
+            grf_path = 'modules/unit50.pckl'
+        grf_instance = grf.GRF(grf_path, truncate=self.no_parameters)
+        for i in chains_disp:
+            eta = self.mean[i]
+            z = grf_instance.realization_grid_new(eta,np.linspace(0,1,50),np.linspace(0,1,50))
+            fig, axes = plt.subplots(1, 2, figsize=(12, 3), sharey=True)
+            axes[0].imshow(z)
+            plt.show()
+            
+    def plot_mean_and_std_grf(self, burn_in = None, chains_disp = None, grf_path = None, grid_x = 50, grid_y = 50):
+        if chains_disp == None:
+            chains_disp = range(self.no_chains)
+        no_chains_disp = len(chains_disp)
+        if grf_path == None:
+            grf_path = 'modules/unit50.pckl'
+        grf_instance = grf.GRF(grf_path, truncate=self.no_parameters)
+        if burn_in == None:
+            burn_in = [0] * no_chains_disp
+        for idi,i in enumerate(chains_disp):
+            samples = self.x[i][burn_in[idi]:,:]
+            samples_mean, samples_std = grf_instance.samples_mean_and_std(samples)
+            fig, axes = plt.subplots(1, 2, figsize=(9, 3), sharey=False)
+            m0 = axes[0].imshow(samples_mean, extent = [0,1,0,1])
+            fig.colorbar(m0, ax=axes[0])
+            axes[0].set_title('mean')
+            m1 = axes[1].imshow(samples_std, extent = [0,1,0,1])
+            fig.colorbar(m1, ax=axes[1])
+            axes[1].set_title('std')
+            plt.show()
+      
     def generate_samples_rand(self,no_parameters,length):
         # no_parameters ... scalar
         # length ... list of scalars l_1, ..., l_N
@@ -213,90 +328,6 @@ class Samples:
             for j in range(no_parameters):
                 x[i][:,j] = gp_samples[j][i,:length[i]]
         self.x = x
-
-    def calculate_autocorr_function(self):
-        self.autocorr_function = [None] * self.no_chains
-        for i in range(self.no_chains):
-            tmp = np.zeros((self.length[i],self.no_parameters))
-            for j in range(self.no_parameters):
-                tmp[:,j] = emcee.autocorr.function_1d(self.x[i][:,j])
-            self.autocorr_function[i] = tmp
-            
-    def calculate_autocorr_function_mean(self):
-        max_length = max(self.length)
-        self.autocorr_function_mean = np.zeros((max_length, self.no_parameters))
-        for j in range(self.no_parameters):
-            tmp = np.zeros(max_length)
-            count = np.zeros(max_length)
-            for i in range(self.no_chains):
-                tmp[:self.length[i]] += self.autocorr_function[i][:,j]
-                count[:self.length[i]] += 1
-            self.autocorr_function_mean[:,j] = tmp/count
-            
-    def plot_autocorr_function(self, length_disp, plot_mean=False):
-        fig, axes = plt.subplots(1, self.no_parameters, figsize=(12, 3), sharey=True)
-        for j in range(self.no_parameters):
-            length_disp[j] = min(max(self.length),length_disp[j])
-        for j in range(self.no_parameters):
-            for i in range(self.no_chains):
-                axes[j].plot(self.autocorr_function[i][:length_disp[j],j], label=i)
-            if plot_mean:
-                axes[j].plot(self.autocorr_function_mean[:,j],label="mean")
-            axes[j].set_xlim(0, length_disp[j]-1)
-            axes[j].legend()
-            axes[j].set_xlabel("$parameter:  {0}$".format(j))
-            if self.known_autocorr_time:
-                axes[j].set_title("$\\tau_\mathrm{{true}} = {0:.0f}$".format(self.autocorr_time_true[j]));
-        axes[0].set_ylabel("autocorr. function")
-        plt.show()
-    
-    def calculate_autocorr_time(self, c=5, tol=50, quiet=True):
-        self.autocorr_time = [None] * self.no_chains
-        for i in range(self.no_chains):
-            tmp = np.zeros((self.no_parameters))
-            for j in range(self.no_parameters):
-                tmp[j] = emcee.autocorr.integrated_time(self.x[i][:,j], c=c, tol=tol, quiet=quiet)
-            self.autocorr_time[i] = tmp
-            
-    def calculate_autocorr_time_mean(self, c=5):
-        self.autocorr_time_mean = [None] * self.no_parameters
-        self.autocorr_time_mean_beta = [None] * self.no_parameters
-        min_length = min(self.length)
-        for j in range(self.no_parameters):
-            f = self.autocorr_function_mean[:min_length,j]
-            self.autocorr_time_mean[j] = autocorr_new(f, c)
-            f = self.autocorr_function_mean[:,j]
-            self.autocorr_time_mean_beta[j] = autocorr_new(f, c)
-            
-    def plot_mean_as_grf(self,chains_disp = None, grf_path = None):
-        if chains_disp == None:
-            chains_disp = range(self.no_chains)
-        if grf_path == None:
-            grf_path = 'modules/unit50.pckl'
-        grf_instance = grf.GRF(grf_path, truncate=self.no_parameters)
-        for i in chains_disp:
-            eta = self.mean[i]
-            z = grf_instance.realization_grid_new(eta,np.linspace(0,1,50),np.linspace(0,1,50))
-            fig, axes = plt.subplots(1, 2, figsize=(12, 3), sharey=True)
-            axes[0].imshow(z)
-            plt.show()
-            
-    def plot_mean_and_std_grf(self, burn_in = None, chains_disp = None, grf_path = None, grid_x = 50, grid_y = 50):
-        if chains_disp == None:
-            chains_disp = range(self.no_chains)
-        no_chains_disp = len(chains_disp)
-        if grf_path == None:
-            grf_path = 'modules/unit50.pckl'
-        grf_instance = grf.GRF(grf_path, truncate=self.no_parameters)
-        if burn_in == None:
-            burn_in = [0] * no_chains_disp
-        for idi,i in enumerate(chains_disp):
-            samples = self.x[i][burn_in[idi]:,:]
-            samples_mean, samples_std = grf_instance.samples_mean_and_std(samples)
-            fig, axes = plt.subplots(1, 2, figsize=(12, 3), sharey=True)
-            axes[0].imshow(samples_mean)
-            axes[1].imshow(samples_std)
-            plt.show()
 
 # Automated windowing procedure following Sokal (1989)
 # from https://dfm.io/posts/autocorr/ Foreman-Mackey

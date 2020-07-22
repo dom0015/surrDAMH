@@ -13,20 +13,20 @@ from modules import surrogate_solver_rbf as surr
 
 class Configuration:
     def __init__(self):
-        self.problem_name = "GRF_Hugo4"
-        self.no_samplers = 2
-        self.no_full_solvers = 2
-        self.no_parameters = 10
+        self.problem_name = "GRF_double"
+        self.no_samplers = 8
+        self.no_full_solvers = 8
+        self.no_parameters = 20
         self.no_observations = 20
         self.rank_full_solver = self.no_samplers
         self.rank_surr_collector = self.no_samplers + 1
         algMH = {'type': 'MH', 
                  'max_samples': 100000, 
-                 'time_limit': 60*1,
+                 'time_limit': 60*10,
                  'proposal_std': 0.1}
         algDAMH = {'type': 'DAMH', 
                    'max_samples': 1000000, 
-                   'time_limit': 60*1,
+                   'time_limit': 60*60,
                    'proposal_std': 0.5}
         self.list_alg = [algMH, algDAMH]
         self.max_buffer_size = 1<<20
