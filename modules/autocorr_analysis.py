@@ -43,6 +43,20 @@ class Samples:
             tmp = np.array(df_samples.iloc[:,1:])
             self.x[i] = decompress(tmp, weights)
         
+    def load_MH_with_posterior(self, folder_samples):
+        folder_samples = folder_samples + '/eval'
+        file_samples = [f for f in listdir(folder_samples) if isfile(join(folder_samples, f))]
+        file_samples.sort()
+        N = len(file_samples)
+        self.x_compress = [None] * N
+        self.posteriors = [None] * N
+        for i in range(N):
+            path_samples = folder_samples + "/" + file_samples[i]
+            print(path_samples)
+            df_samples = pd.read_csv(path_samples, header=None)
+            self.x_compress[i] = np.array(df_samples.iloc[:,1:-1])
+            self.posteriors[i] = np.array(df_samples.iloc[:,-1])
+        
     def calculate_properties(self, burn_in = None):
         self.no_chains = len(self.x)
         all_chains = range(self.no_chains)
@@ -256,6 +270,35 @@ class Samples:
                     plt.title("$par. {0}$".format(j))
                 idx = idx + 1
         plt.show()
+        
+    def plot_grf(self, eta, grf_path = None):
+        if grf_path == None:
+            grf_path = 'modules/unit50.pckl'
+        grf_instance = grf.GRF(grf_path, truncate=self.no_parameters)
+        z = grf_instance.realization_grid_new(eta,np.linspace(0,1,50),np.linspace(0,1,50))
+        fig, axes = plt.subplots(1, 1, figsize=(12, 3), sharey=True)
+        axes.imshow(z)
+        plt.show()
+
+    def plot_grf_minmax(self,chains_disp = None, grf_path = None):
+        if chains_disp == None:
+            chains_disp = range(self.no_chains)
+        if grf_path == None:
+            grf_path = 'modules/unit50.pckl'
+        grf_instance = grf.GRF(grf_path, truncate=self.no_parameters)
+        for i in chains_disp:
+            fig, axes = plt.subplots(1, 2, figsize=(12, 3), sharey=True)
+            idx = np.argmin(self.posteriors[i])
+            eta_min = self.x_compress[i][idx]
+            z = grf_instance.realization_grid_new(eta_min,np.linspace(0,1,50),np.linspace(0,1,50))
+            axes[0].imshow(z)
+            axes[0].set_title("$i={0}: {1}$".format(idx,self.posteriors[i][idx]))
+            idx = np.argmax(self.posteriors[i])
+            eta_max = self.x_compress[i][idx]
+            z = grf_instance.realization_grid_new(eta_max,np.linspace(0,1,50),np.linspace(0,1,50))
+            axes[1].imshow(z)
+            axes[1].set_title("$i={0}: {1}$".format(idx,self.posteriors[i][idx]))
+            plt.show()
             
     def plot_mean_as_grf(self,chains_disp = None, grf_path = None):
         if chains_disp == None:
@@ -282,7 +325,7 @@ class Samples:
         for idi,i in enumerate(chains_disp):
             samples = self.x[i][burn_in[idi]:,:]
             samples_mean, samples_std = grf_instance.samples_mean_and_std(samples)
-            fig, axes = plt.subplots(1, 2, figsize=(9, 3), sharey=False)
+            fig, axes = plt.subplots(1, 2, figsize=(14, 5), sharey=False)
             m0 = axes[0].imshow(samples_mean, extent = [0,1,0,1])
             fig.colorbar(m0, ax=axes[0])
             axes[0].set_title('mean')

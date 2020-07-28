@@ -51,10 +51,16 @@ class Algorithm_PARENT:
     def prepare(self):
         self.time_start = time.time()
         if self.is_saved:
+            # chain:
             filename = "saved_samples/" + self.Problem.name + "/" + self.name + ".csv"
             os.makedirs(os.path.dirname(filename), exist_ok=True)
             self.__file = open(filename, 'w')
             self.__writer = csv.writer(self.__file)
+            # evaluations:
+            filename_G = "saved_samples/" + self.Problem.name + "/eval/" + self.name + ".csv"
+            os.makedirs(os.path.dirname(filename_G), exist_ok=True)
+            self.__file_G = open(filename_G, 'w')
+            self.__writer_G = csv.writer(self.__file_G)
             self.__write_to_file = self.__write_to_file__
         else:
             self.__write_to_file = self._empty_function
@@ -88,6 +94,7 @@ class Algorithm_PARENT:
         self.__write_to_file()
         if self.is_saved:
             self.__file.close()
+            self.__file_G.close()
             filename_notes = "saved_samples/" + self.Problem.name + "/notes/" + self.name + ".csv"
             os.makedirs(os.path.dirname(filename_notes), exist_ok=True)
             labels = ["accepted", "rejected", "pre-rejected", "sum", "seed"]
@@ -114,6 +121,8 @@ class Algorithm_PARENT:
         for j in range(self.Problem.no_parameters):
             row.append(self.current_sample[j])
         self.__writer.writerow(row)
+        row.append(self.posterior_current_sample)
+        self.__writer_G.writerow(row)
     
     def __send_to_surrogate__(self, sample, G_sample, weight):
         snapshot = Snapshot(sample=sample, G_sample=G_sample, weight=weight)

@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 from configuration import Configuration
 C = Configuration()
 problem_name = C.problem_name
-problem_name = "GRF_double20to20"
+problem_name = "GRF_double_start1"
 # problem_name =  "my_prob01"
 # problem_name = "grf1e5_nodef"
 
