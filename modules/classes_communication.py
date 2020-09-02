@@ -106,7 +106,7 @@ class Solver_local_collector_MPI: # initiated by SAMPLERs
     def __init__(self, no_parameters, no_observations, local_solver_instance, is_updated=False, rank_collector=None):
         self.max_requests = 1
         self.comm = MPI.COMM_WORLD
-        self.max_buffer_size = 1<<20
+        self.max_buffer_size = 1<<30 #20 # TO DO: hard coded
         self.local_solver_instance = local_solver_instance
         self.is_updated = is_updated
         self.rank_collector = rank_collector

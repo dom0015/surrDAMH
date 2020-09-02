@@ -13,7 +13,7 @@ import csv
 import time
 
 class Algorithm_PARENT:
-    def __init__(self, Problem, Proposal, Solver, max_samples, name, seed=0, initial_sample=None, G_initial_sample=None, Surrogate=None, is_saved=True, time_limit=float('inf')):
+    def __init__(self, Problem, Proposal, Solver, max_samples, name, seed=0, initial_sample=None, G_initial_sample=None, Surrogate=None, is_saved=True, surrogate_is_updated=True, time_limit=float('inf')):
         self.Problem = Problem
         self.Proposal = Proposal
         self.Solver = Solver
@@ -27,7 +27,7 @@ class Algorithm_PARENT:
         self.Surrogate = Surrogate
         if Surrogate is None:
             self.__send_to_surrogate = self._empty_function
-        elif Surrogate.is_updated is True:
+        elif surrogate_is_updated is True:
             self.__send_to_surrogate = self.__send_to_surrogate__
         else:
             self.__send_to_surrogate = self._empty_function
@@ -56,7 +56,7 @@ class Algorithm_PARENT:
             os.makedirs(os.path.dirname(filename), exist_ok=True)
             self.__file = open(filename, 'w')
             self.__writer = csv.writer(self.__file)
-            # evaluations:
+            # with posteriors:
             filename_G = "saved_samples/" + self.Problem.name + "/eval/" + self.name + ".csv"
             os.makedirs(os.path.dirname(filename_G), exist_ok=True)
             self.__file_G = open(filename_G, 'w')
@@ -69,6 +69,7 @@ class Algorithm_PARENT:
             self.G_current_sample = self.Solver.recv_observations()
         self.posterior_current_sample = self.compute_posterior(self.current_sample, self.G_current_sample)
         self.no_rejected_current = 0
+        self.pre_posterior_current_sample = 0
         
     def request_observations(self):
         self.Solver.send_parameters(self.proposed_sample)
@@ -122,6 +123,7 @@ class Algorithm_PARENT:
             row.append(self.current_sample[j])
         self.__writer.writerow(row)
         row.append(self.posterior_current_sample)
+        row.append(self.pre_posterior_current_sample)
         self.__writer_G.writerow(row)
     
     def __send_to_surrogate__(self, sample, G_sample, weight):
@@ -132,8 +134,8 @@ class Algorithm_PARENT:
         return
     
 class Algorithm_MH(Algorithm_PARENT): # initiated by SAMPLERs
-    def __init__(self, Problem, Proposal, Solver, max_samples, name, seed=0, initial_sample=None, G_initial_sample=None, Surrogate=None, is_saved=True, time_limit=float('inf')):
-        super().__init__(Problem, Proposal, Solver, max_samples, name, seed, initial_sample, G_initial_sample, Surrogate, is_saved, time_limit)
+    def __init__(self, Problem, Proposal, Solver, max_samples, name, seed=0, initial_sample=None, G_initial_sample=None, Surrogate=None, is_saved=True, surrogate_is_updated=True, time_limit=float('inf')):
+        super().__init__(Problem, Proposal, Solver, max_samples, name, seed, initial_sample, G_initial_sample, Surrogate, is_saved, surrogate_is_updated, time_limit)
 
     def run(self):
         print("SAMPLER at RANK", MPI.COMM_WORLD.Get_rank(), "starts (MH)")
@@ -152,15 +154,26 @@ class Algorithm_MH(Algorithm_PARENT): # initiated by SAMPLERs
         print("SAMPLER at RANK", MPI.COMM_WORLD.Get_rank(), "finishes (MH)")
         
 class Algorithm_DAMH(Algorithm_PARENT): # initiated by SAMPLERs
-    def __init__(self, Problem, Proposal, Solver, max_samples, name, seed=0, initial_sample=None, G_initial_sample=None, Surrogate=None, is_saved=True, time_limit=float('inf')):
-        super().__init__(Problem, Proposal, Solver, max_samples, name, seed, initial_sample, G_initial_sample, Surrogate, is_saved, time_limit)
+    def __init__(self, Problem, Proposal, Solver, max_samples, name, seed=0, initial_sample=None, G_initial_sample=None, Surrogate=None, is_saved=True, surrogate_is_updated=True, time_limit=float('inf')):
+        super().__init__(Problem, Proposal, Solver, max_samples, name, seed, initial_sample, G_initial_sample, Surrogate, is_saved, surrogate_is_updated, time_limit)
 
     def run(self):
         print("SAMPLER at RANK", MPI.COMM_WORLD.Get_rank(), "starts (DAMH) with initial sample",self.current_sample)
         self.prepare()
+        if self.is_saved:
+            # posterior vs approximated posterior in rejected samples:
+            filename = "saved_samples/" + self.Problem.name + "/rejected/" + self.name + ".csv"
+            os.makedirs(os.path.dirname(filename), exist_ok=True)
+            self.__file_rejected = open(filename, 'w')
+            self.__writer_rejected = csv.writer(self.__file_rejected)
+            # posterior vs approximated posterior in accepted samples:
+            filename = "saved_samples/" + self.Problem.name + "/accepted/" + self.name + ".csv"
+            os.makedirs(os.path.dirname(filename), exist_ok=True)
+            self.__file_accepted = open(filename, 'w')
+            self.__writer_accepted = csv.writer(self.__file_accepted)
         self.Surrogate.send_parameters(self.current_sample)
         GS_current_sample = self.Surrogate.recv_observations()
-        pre_posterior_current_sample = self.compute_posterior(self.current_sample, GS_current_sample)
+        self.pre_posterior_current_sample = self.compute_posterior(self.current_sample, GS_current_sample)
 #        pre_posterior_current_sample_old_surrogate = pre_posterior_current_sample
         for i in range(self.max_samples):
             self.proposed_sample = self.Proposal.propose_sample(self.current_sample)
@@ -170,15 +183,25 @@ class Algorithm_DAMH(Algorithm_PARENT): # initiated by SAMPLERs
             tmp = self.Surrogate.recv_observations()
             GS_current_sample = tmp[0,:]
             # TO DO: do not recalculate posterior if GS_current_sample did not change
-            pre_posterior_current_sample = self.compute_posterior(self.current_sample, GS_current_sample)
+            self.pre_posterior_current_sample = self.compute_posterior(self.current_sample, GS_current_sample)
             GS_proposed_sample = tmp[1,:]
             pre_posterior_proposed_sample = self.compute_posterior(self.proposed_sample, GS_proposed_sample)
-            pre_log_ratio = pre_posterior_proposed_sample - pre_posterior_current_sample
+            pre_log_ratio = pre_posterior_proposed_sample - self.pre_posterior_current_sample
             if self.is_accepted_sample(pre_log_ratio):
                 self.request_observations()
                 if self.is_accepted_sample(self.log_ratio - pre_log_ratio):
+                    if self.is_saved:
+                        row = [i]
+                        row.append(self.posterior_proposed_sample)
+                        row.append(pre_posterior_proposed_sample)
+                        self.__writer_accepted.writerow(row)
                     self.if_accepted()
                 else:
+                    if self.is_saved:
+                        row = [i]
+                        row.append(self.posterior_proposed_sample)
+                        row.append(pre_posterior_proposed_sample)
+                        self.__writer_rejected.writerow(row)
                     self.if_not_accepted()
             else:
 #                print("prerejected")
@@ -188,6 +211,9 @@ class Algorithm_DAMH(Algorithm_PARENT): # initiated by SAMPLERs
                 print("SAMPLER at RANK", MPI.COMM_WORLD.Get_rank(), "time limit reached - loop",i)
                 break
         self.close_files()
+        if self.is_saved:
+             self.__file_rejected.close()
+             self.__file_accepted.close()
         print("SAMPLER at RANK", MPI.COMM_WORLD.Get_rank(), "finishes (DAMH)")
 
 class Proposal_GaussRandomWalk: # initiated by SAMPLERs

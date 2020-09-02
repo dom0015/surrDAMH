@@ -43,8 +43,8 @@ class Surrogate_apply: # initiated by all SAMPLERs
         GS_datapoints = np.reshape(GS_datapoints,(no_datapoints,self.no_observations)) + np.reshape(pp,(no_datapoints,self.no_observations))
         return GS_datapoints
 
-class Surrogate_update: # initiated by COLLECTOR
-    def __init__(self, no_parameters, no_observations, initial_iteration=None, no_keep=50, expensive=True, kernel_type=0, solver_tol_exp=-6, solver_type='minres'):
+class Surrogate_update: # initiated by COLLECTOR # no_keep=50, expensive=True
+    def __init__(self, no_parameters, no_observations, initial_iteration=None, no_keep=None, expensive=False, kernel_type=0, solver_tol_exp=-6, solver_type='minres'):
         self.no_parameters = no_parameters
         self.no_observations = no_observations
         self.initial_iteration = initial_iteration           
@@ -66,6 +66,7 @@ class Surrogate_update: # initiated by COLLECTOR
     def add_data(self,snapshots):
         # add new data to a matrix of non-processed data
         L = len(snapshots)
+        print("new snapshots:",L)
         new_par = np.empty((L,self.no_parameters))
         new_obs = np.empty((L,self.no_observations))
         new_wei = np.empty((L,1))
@@ -78,6 +79,7 @@ class Surrogate_update: # initiated by COLLECTOR
         self.non_processed_wei = np.vstack((self.non_processed_wei, new_wei))
 
     def update(self):
+        print("SURROGATE UPDATE")
         no_non_processed = self.non_processed_par.shape[0]
         no_snapshots = self.no_processed + no_non_processed # both processed and non-processed
         TEMP = np.zeros((no_snapshots,no_snapshots))
@@ -97,14 +99,15 @@ class Surrogate_update: # initiated by COLLECTOR
             T = np.transpose(Q)
             TEMP = TEMP + np.power(Q-T,2)
         np.sqrt(TEMP,out=TEMP) # distances between all points
+        # print("surr TEMP shape:",TEMP.shape)
         if self.no_keep is not None:
             MAX = 2*np.max(TEMP)
-            M = TEMP+MAX*np.eye(no_snapshots)
-            to_keep = np.ones(no_snapshots,dtype=bool)
-            for i in range(no_snapshots - self.no_keep):
+            M = TEMP+MAX*np.eye(no_snapshots) # add MAX to zero distances on diagonal
+            to_keep = np.ones(no_snapshots,dtype=bool) # bool - centers to keep
+            for i in range(no_snapshots - self.no_keep): # (no_snapshots - no_keep) have to ne removed 
                 argmin = np.argmin(M)
                 xx = argmin // no_snapshots
-                if self.expensive == True:
+                if self.expensive == True: # TO DO: check - yy is unused
                     S=sum(M)
                     yy = argmin % no_snapshots
                     M[xx,yy]=MAX
@@ -114,6 +117,8 @@ class Surrogate_update: # initiated by COLLECTOR
                 M[xx,:]=MAX
                 M[:,xx]=MAX
                 to_keep[xx]=False
+            aaa = np.arange(no_snapshots)
+            print(aaa[to_keep==False])
             TEMP = TEMP[to_keep,:]
             TEMP = TEMP[:,to_keep]
             self.processed_par = self.processed_par[to_keep,:]
@@ -150,6 +155,7 @@ class Surrogate_update: # initiated by COLLECTOR
         SOL = [None] * 2
         SOL[0] = c.copy()
         SOL[1] = self.processed_par.copy()
+        print("Surrogate updated:",SOL[0].shape,SOL[1].shape)
         return SOL, no_snapshots
         
     #minres(A, b, x0=None, shift=0.0, tol=1e-05, maxiter=None, xtype=None, M=None, callback=None, show=False, check=False)

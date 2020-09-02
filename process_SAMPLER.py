@@ -13,6 +13,7 @@ size_world = comm_world.Get_size()
 
 from modules import classes_SAMPLER as cS
 from modules import classes_communication as cCOMM
+from modules import lhs_normal as LHS
 
 from configuration import Configuration
 C = Configuration()
@@ -40,10 +41,16 @@ my_Prob = cS.Problem_Gauss(no_parameters=C.no_parameters,
                            name=C.problem_name)
 my_Prop = cS.Proposal_GaussRandomWalk(no_parameters=C.no_parameters,
                                       seed=seed0+1)
-initial_sample = my_Prob.prior_mean
+# initial_sample = my_Prob.prior_mean
+initial_samples = LHS.lhs_normal(C.no_parameters,C.problem_parameters['prior_mean'],C.problem_parameters['prior_std'],C.no_samplers,0)
+initial_sample = initial_samples[rank_world]
+# initial_sample = initial_samples[0]
+# proposal_stds = [0.025, 0.05, 0.075, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5]
+# proposal_std = proposal_stds[rank_world]
 for i,d in enumerate(C.list_alg):
     # TO DO: adaptive proposal needed?
     my_Prop.set_covariance(proposal_std = d['proposal_std'])
+    # my_Prop.set_covariance(proposal_std = proposal_std)
     seed = seed0 + 2 + i
     if d['type'] == 'MH':
         my_Alg = cS.Algorithm_MH(my_Prob, my_Prop, my_Sol,

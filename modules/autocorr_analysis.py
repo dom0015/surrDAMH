@@ -37,26 +37,124 @@ class Samples:
         self.x = [None] * N
         for i in range(N):
             path_samples = folder_samples + "/" + file_samples[i]
-            print(path_samples)
+            # print(path_samples)
             df_samples = pd.read_csv(path_samples, header=None)
             weights = np.array(df_samples[0])
             tmp = np.array(df_samples.iloc[:,1:])
             self.x[i] = decompress(tmp, weights)
         
-    def load_MH_with_posterior(self, folder_samples):
+    def load_MH_with_posterior(self, folder_samples, no_parameters, surrogate_posterior = False):
         folder_samples = folder_samples + '/eval'
         file_samples = [f for f in listdir(folder_samples) if isfile(join(folder_samples, f))]
         file_samples.sort()
         N = len(file_samples)
         self.x_compress = [None] * N
         self.posteriors = [None] * N
+        if surrogate_posterior:
+            self.surrogate_posteriors = [None] * N
         for i in range(N):
             path_samples = folder_samples + "/" + file_samples[i]
-            print(path_samples)
+            # print(path_samples)
             df_samples = pd.read_csv(path_samples, header=None)
-            self.x_compress[i] = np.array(df_samples.iloc[:,1:-1])
-            self.posteriors[i] = np.array(df_samples.iloc[:,-1])
-        
+            self.x_compress[i] = np.array(df_samples.iloc[:,1:1+no_parameters])
+            self.posteriors[i] = np.array(df_samples.iloc[:,1+no_parameters])
+            if surrogate_posterior:
+                self.surrogate_posteriors[i] = np.array(df_samples.iloc[:,2+no_parameters])
+            
+    def load_notes(self, folder_samples, no_samplers):
+        folder = folder_samples + '/notes'
+        file_samples = [f for f in listdir(folder) if isfile(join(folder, f))]
+        file_samples.sort()
+        N = int(len(file_samples)/no_samplers)
+        self.notes = [pd.DataFrame()] * N
+        for n in range(N):
+            for i in range(no_samplers):
+                path_samples = folder + "/" + file_samples[i+n*no_samplers]
+                # print(path_samples)
+                data = pd.read_csv(path_samples)
+                self.notes[n] = self.notes[n].append(data)
+        print(self.notes[1].mean())
+
+    def load_accepted(self, folder_samples):
+        folder = folder_samples + '/accepted'
+        files = [f for f in listdir(folder) if isfile(join(folder, f))]
+        files.sort()
+        N = len(files)
+        self.accepted = [None] * N
+        for i in range(N):
+            path = folder + "/" + files[i]
+            data = pd.read_csv(path, header=None)
+            self.accepted[i] = np.array(data)
+
+    def load_rejected(self, folder_samples):
+        folder = folder_samples + '/rejected'
+        files = [f for f in listdir(folder) if isfile(join(folder, f))]
+        files.sort()
+        print(files)
+        N = len(files)
+        self.rejected = [None] * N
+        for i in range(N):
+            path = folder + "/" + files[i]
+            data = pd.read_csv(path, header=None)
+            self.rejected[i] = np.array(data)
+    
+    def merge_evaluated(self):
+        N = len(self.accepted)
+        self.evaluated = [None] * N
+        for i in range(N):
+            tmp = np.concatenate((self.accepted[i],self.rejected[i]))
+            order = np.argsort(tmp[:,0])
+            self.evaluated[i] = tmp[order]
+            
+    def plot_evaluated(self, no_samplers, L=None, title=None):
+        if L==None:
+            L = self.rejected
+        N = len(L)
+        fig, axes = plt.subplots(1, 1, figsize=(5, 3))
+        r_max = [0] * no_samplers
+        x_max = [0] * no_samplers
+        for i in range(no_samplers):
+            for j in range(int(N/no_samplers)):
+                r = L[i+j*no_samplers][:,0]
+                axes.plot(r_max[i]+r,range(x_max[i],x_max[i]+len(r)))
+                r_max[i] = int(r[-1])
+                x_max[i] = len(r)
+        plt.title(title)
+        plt.show()
+    
+    def plot_evaluated_sliding(self, chains_range, no_sw, window_length = None,  L = None):
+        if L==None:
+            L = self.rejected
+        # length = min(list(np.max(L[i][:,0]) for i in chains_range))
+        length = min(self.length[list(chains_range)])
+        if window_length == None:
+            sw_step = np.floor(length/(no_sw+1))
+            window_length = sw_step*2
+        else:
+            sw_step = np.floor((length-window_length)/no_sw)
+        print("window length:",window_length)
+        no_chains = len(chains_range)
+        result = np.zeros((no_sw,no_chains))
+        for idx,i in enumerate(chains_range):
+            for j in range(no_sw):
+                bound_lower = sw_step*j
+                bound_upper = sw_step*j + window_length
+                r = L[i][:,0]
+                first = np.where(r>=bound_lower)
+                first_idx = first[0][0]
+                last = np.where(r<=bound_upper)
+                last_idx = last[0][-1]
+                tmp = last_idx-first_idx
+                result[j,idx] = result[j,idx] + tmp
+        plt.plot(result)
+        plt.title(str(chains_range))
+        plt.show()
+        result_mean = np.mean(result,axis=1)
+        plt.plot(result_mean)
+        plt.title("evaluations in sliding window - mean")
+        plt.show()
+        return result
+    
     def calculate_properties(self, burn_in = None):
         self.no_chains = len(self.x)
         all_chains = range(self.no_chains)
@@ -65,6 +163,7 @@ class Samples:
         x = list(self.x[i][burn_in[i]:,:] for i in all_chains)
         self.no_parameters = x[0].shape[1]
         self.length = list(x[i].shape[0] for i in all_chains)
+        self.length = np.array(self.length)
         self.var = list(np.var(x[i],axis=0) for i in all_chains)
         self.std = list(np.std(x[i],axis=0) for i in all_chains)
         self.mean = list(np.mean(x[i],axis=0) for i in all_chains)
@@ -79,24 +178,44 @@ class Samples:
 
     def remove_chains(self, chains_to_keep):
         self.x = [self.x[i] for i in chains_to_keep]
-
-    def calculate_autocorr_function(self):
-        self.autocorr_function = [None] * self.no_chains
-        for i in range(self.no_chains):
-            tmp = np.zeros((self.length[i],self.no_parameters))
+        self.no_chains = len(chains_to_keep)
+        
+    def calculate_autocorr_function(self,begin=None,end=None,chains_range=None):
+        if chains_range==None:
+            chains_range = range(self.no_chains)
+        no_chains = len(chains_range)
+        self.autocorr_function = [None] * no_chains
+        if end == None:
+            end = self.length
+        else:
+            end = [int(end)] * no_chains
+        if begin == None:
+            begin = [0] * no_chains
+        else:
+            begin = [int(begin)] * no_chains
+        for idx,i in enumerate(chains_range):
+            tmp = np.zeros((end[idx]-begin[idx],self.no_parameters))
             for j in range(self.no_parameters):
-                tmp[:,j] = emcee.autocorr.function_1d(self.x[i][:,j])
-            self.autocorr_function[i] = tmp
+                tmp[:,j] = emcee.autocorr.function_1d(self.x[i][begin[idx]:end[idx],j])
+            self.autocorr_function[idx] = tmp
             
-    def calculate_autocorr_function_mean(self):
-        max_length = max(self.length)
+    def calculate_autocorr_function_mean(self,length=None,chains_range=None):
+        if chains_range==None:
+            chains_range = range(len(self.autocorr_function))
+        no_chains = len(chains_range)
+        if length==None:
+            length = self.length
+            max_length = max(self.length[chains_range])
+        else:
+            max_length = int(length)
+            length = [int(length)] * no_chains
         self.autocorr_function_mean = np.zeros((max_length, self.no_parameters))
         for j in range(self.no_parameters):
             tmp = np.zeros(max_length)
             count = np.zeros(max_length)
-            for i in range(self.no_chains):
-                tmp[:self.length[i]] += self.autocorr_function[i][:,j]
-                count[:self.length[i]] += 1
+            for i in chains_range:
+                tmp[:length[i]] += self.autocorr_function[i][:,j]
+                count[:length[i]] += 1
             self.autocorr_function_mean[:,j] = tmp/count
 
     def calculate_autocorr_time(self, c=5, tol=50, quiet=True):
@@ -106,16 +225,43 @@ class Samples:
             for j in range(self.no_parameters):
                 tmp[j] = emcee.autocorr.integrated_time(self.x[i][:,j], c=c, tol=tol, quiet=quiet)
             self.autocorr_time[i] = tmp
-            
-    def calculate_autocorr_time_mean(self, c=5):
+        
+    def calculate_autocorr_time_mean(self, c=5, length=None):
         self.autocorr_time_mean = [None] * self.no_parameters
         self.autocorr_time_mean_beta = [None] * self.no_parameters
-        min_length = min(self.length)
+        if length==None:
+            length = min(self.length)
+        else:
+            length = int(length)
         for j in range(self.no_parameters):
-            f = self.autocorr_function_mean[:min_length,j]
+            f = self.autocorr_function_mean[:length,j]
             self.autocorr_time_mean[j] = autocorr_new(f, c)
             f = self.autocorr_function_mean[:,j]
             self.autocorr_time_mean_beta[j] = autocorr_new(f, c)
+
+    def calculate_autocorr_time_sliding(self,no_sw=4,window_length=None,chains_range=None):
+        if chains_range==None:
+            chains_range = range(self.no_chains)
+        min_length = min(self.length[list(chains_range)])
+        if window_length == None:
+            sw_step = np.floor(min_length/(no_sw+1))
+            window_length = sw_step*2
+        else:
+            sw_step = np.floor((min_length-window_length)/no_sw)
+        print("window length:",window_length)
+        self.tau_sliding_mean = [None] * no_sw
+        self.tau_sliding_max = [None] * no_sw
+        self.tau_sliding_min = [None] * no_sw
+        for i in range(no_sw):
+            begin=i*sw_step
+            end=i*sw_step+window_length
+            self.calculate_autocorr_function(begin, end, chains_range=chains_range)
+            self.calculate_autocorr_function_mean(length=end-begin)
+            self.calculate_autocorr_time_mean(length=end-begin)
+            self.tau_sliding_mean[i] = np.mean(self.autocorr_time_mean)
+            self.tau_sliding_max[i] = np.max(self.autocorr_time_mean)
+            self.tau_sliding_min[i] = np.min(self.autocorr_time_mean)
+            print("i, mean, min, max:", i, self.tau_sliding_mean[i], self.tau_sliding_min[i], self.tau_sliding_max[i])
 
     def print_properties(self):
         print('known autocorr. time:', self.known_autocorr_time)
@@ -172,6 +318,33 @@ class Samples:
             for idi,i in enumerate(chains_disp):
                 xx = np.arange(burn_in[idi],min(end_disp[idj],self.length[i]))
                 yy = self.x[i][xx,j]
+                yy = np.cumsum(yy)/(1+np.arange(len(yy)))
+                axes[idj].plot(xx[begin_disp[idj]:], yy[begin_disp[idj]:], label=i)
+            if show_legend:
+                axes[idj].legend(loc=1)
+            axes[idj].set_xlabel("$par.  {0}$".format(j))
+            axes[idj].grid(True)
+            if self.known_autocorr_time:
+                axes[idj].set_title("$\\tau_\mathrm{{true}} = {0:.0f}$".format(self.autocorr_time_true[j]));
+        axes[0].set_ylabel("convergence of averages")
+        plt.show()
+        
+    def plot_average_reverse(self, burn_in = None, begin_disp = None, end_disp = None, parameters_disp = None, chains_disp = None, show_legend = False):
+        if parameters_disp == None:
+            parameters_disp = range(self.no_parameters)
+        if chains_disp == None:
+            chains_disp = range(self.no_chains)
+        if burn_in == None:
+            burn_in = [0] * len(chains_disp)
+        if begin_disp == None:
+            begin_disp = [0] * len(parameters_disp)
+        if end_disp == None:
+            end_disp = [max([self.length[i] for i in chains_disp])] * len(parameters_disp)
+        fig, axes = plt.subplots(1, len(parameters_disp), figsize=(12, 3), sharey=True)
+        for idj,j in enumerate(parameters_disp):
+            for idi,i in enumerate(chains_disp):
+                xx = np.arange(burn_in[idi],min(end_disp[idj],self.length[i]))
+                yy = np.flip(self.x[i][xx,j])
                 yy = np.cumsum(yy)/(1+np.arange(len(yy)))
                 axes[idj].plot(xx[begin_disp[idj]:], yy[begin_disp[idj]:], label=i)
             if show_legend:
@@ -291,12 +464,14 @@ class Samples:
             idx = np.argmin(self.posteriors[i])
             eta_min = self.x_compress[i][idx]
             z = grf_instance.realization_grid_new(eta_min,np.linspace(0,1,50),np.linspace(0,1,50))
-            axes[0].imshow(z)
+            axes[0].imshow(z.transpose())
+            axes[0].invert_yaxis()
             axes[0].set_title("$i={0}: {1}$".format(idx,self.posteriors[i][idx]))
             idx = np.argmax(self.posteriors[i])
             eta_max = self.x_compress[i][idx]
             z = grf_instance.realization_grid_new(eta_max,np.linspace(0,1,50),np.linspace(0,1,50))
-            axes[1].imshow(z)
+            axes[1].imshow(z.transpose())
+            axes[1].invert_yaxis()
             axes[1].set_title("$i={0}: {1}$".format(idx,self.posteriors[i][idx]))
             plt.show()
             
@@ -326,13 +501,16 @@ class Samples:
             samples = self.x[i][burn_in[idi]:,:]
             samples_mean, samples_std = grf_instance.samples_mean_and_std(samples)
             fig, axes = plt.subplots(1, 2, figsize=(14, 5), sharey=False)
-            m0 = axes[0].imshow(samples_mean, extent = [0,1,0,1])
+            m0 = axes[0].imshow(samples_mean.transpose(), extent = [0,1,1,0])
+            axes[0].invert_yaxis()
             fig.colorbar(m0, ax=axes[0])
             axes[0].set_title('mean')
-            m1 = axes[1].imshow(samples_std, extent = [0,1,0,1])
+            m1 = axes[1].imshow(samples_std.transpose(), extent = [0,1,1,0])
+            axes[1].invert_yaxis()
             fig.colorbar(m1, ax=axes[1])
             axes[1].set_title('std')
-            plt.show()
+            plt.show() # correctly rotated 
+
       
     def generate_samples_rand(self,no_parameters,length):
         # no_parameters ... scalar

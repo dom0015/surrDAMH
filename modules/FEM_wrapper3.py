@@ -30,7 +30,7 @@ class FEM:
         my_mesh = Mesh.RectUniTri(n, n)
         
         # PROBLEM SETTING (BOUNDARY + RHS) --------------------------------------
-        no_windows = int(no_observations/4)
+        no_windows = int(no_observations/3)
         # 1) LEFT -> RIGHT
         self.my_problem_left = ProblemSetting.BoundaryValueProblem2D(my_mesh)  # init ProblemSetting obj
         # Dirichlet boundary condition settins:
@@ -81,23 +81,6 @@ class FEM:
         self.my_problem_right.set_neumann_boundary(neumann_boundary, neumann_boundary_val)  # set
         # forcing term (rhs) setting:
         self.my_problem_right.set_rhs(0)
-        
-        # 4) TOP <- BOTTOM
-        self.my_problem_bottom = ProblemSetting.BoundaryValueProblem2D(my_mesh)  # init ProblemSetting obj
-        # Dirichlet boundary condition settins:
-        bounds = np.linspace(0,1,no_windows)
-        dirichlet_boundary = [None] * no_windows
-        dirichlet_boundary[0] = ["bottom",[0, 1]]
-        for i in range(no_windows-1):
-            dirichlet_boundary[i+1] = ["top",[bounds[i], bounds[i+1]]]
-        dirichlet_boundary_val = [1e1] + [0] * (no_windows-1)
-        self.my_problem_bottom.set_dirichlet_boundary(dirichlet_boundary, dirichlet_boundary_val)
-        # Neumann boundary condition settins:
-        neumann_boundary = ["left"]  # select boundary
-        neumann_boundary_val = [0]  # boundary value
-        self.my_problem_bottom.set_neumann_boundary(neumann_boundary, neumann_boundary_val)  # set
-        # forcing term (rhs) setting:
-        self.my_problem_bottom.set_rhs(0)
         
         
         self.no_parameters = no_parameters
@@ -162,26 +145,14 @@ class FEM:
 #        print(FEM_assembly.times_assembly)
         self.solver_right = Solvers.LaplaceSteady(FEM_assembly_right)  # init
         
-        # 4) TOP <- BOTTOM
-        self.my_problem_bottom.set_material(material_function)
-        # MATRIX ASSEMBLER (SYSTEM MAT + RHS) ---------------------------------
-        # assemble all parts necessary for solution:
-        FEM_assembly_bottom = Assemble.LaplaceSteady(self.my_problem_bottom) # init assemble obj
-        FEM_assembly_bottom.assemble_matrix_generalized()
-        FEM_assembly_bottom.assemble_rhs_force()
-        FEM_assembly_bottom.assemble_rhs_neumann()
-        FEM_assembly_bottom.assemble_rhs_dirichlet()
-        FEM_assembly_bottom.dirichlet_cut_and_sum_rhs(duplicate=True)
-#        print(FEM_assembly.times_assembly)
-        self.solver_bottom = Solvers.LaplaceSteady(FEM_assembly_bottom)  # init
         
     def get_observations(self):
         """ assemble and solve"""
         self.assemble()
         t = time.time()
         
-        result = [None] * 4
-        for i,solver in enumerate([self.solver_left, self.solver_top, self.solver_right, self.solver_bottom]):
+        result = [None] * 3
+        for i,solver in enumerate([self.solver_left, self.solver_top, self.solver_right]):
             if self.use_deflation:
                 self.get_solution_DCG()
                 self.deflation_extend_optional(solver.solution)
@@ -194,7 +165,7 @@ class FEM:
             solver.calculate_window_flow()
             result[i]=solver.window_flow
             # print(result[i])
-        return np.concatenate((result[0],result[1],result[2],result[3]))
+        return np.concatenate((result[0],result[1],result[2]))
     
     def get_linear_system(self):
         """ assemble but do not solve"""
