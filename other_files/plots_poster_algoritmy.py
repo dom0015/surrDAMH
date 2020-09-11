@@ -33,6 +33,7 @@ plt.yscale("log")
 # plt.xscale("log")
 plt.grid(which="both")
 plt.legend(['autocorr. time','eval. per uncorr.','cost per uncorr.'])
+plt.xlabel('proposal std')
 plt.show()
 
 # MH proposal std:
@@ -46,4 +47,5 @@ plt.yscale("log")
 # plt.xscale("log")
 plt.grid(which="both")
 plt.legend(['autocorr. time','eval. per uncorr.','cost per uncorr.'])
+plt.xlabel('proposal std')
 plt.show()
