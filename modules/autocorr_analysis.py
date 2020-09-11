@@ -510,7 +510,30 @@ class Samples:
             fig.colorbar(m1, ax=axes[1])
             axes[1].set_title('std')
             plt.show() # correctly rotated 
-
+            
+    def plot_mean_and_std_grf_rotated(self, burn_in = None, chains_disp = None, grf_path = None, grid_x = 50, grid_y = 50):
+        # Algoritmy 2020 wrong rotation !
+        if chains_disp == None:
+            chains_disp = range(self.no_chains)
+        no_chains_disp = len(chains_disp)
+        if grf_path == None:
+            grf_path = 'modules/unit50.pckl'
+        grf_instance = grf.GRF(grf_path, truncate=self.no_parameters)
+        if burn_in == None:
+            burn_in = [0] * no_chains_disp
+        for idi,i in enumerate(chains_disp):
+            samples = self.x[i][burn_in[idi]:,:]
+            samples_mean, samples_std = grf_instance.samples_mean_and_std(samples)
+            fig, axes = plt.subplots(1, 2, figsize=(12, 4), sharey=False)
+            m0 = axes[0].imshow(samples_mean, extent = [0,1,0,1])
+            #axes[0].invert_yaxis()
+            fig.colorbar(m0, ax=axes[0])
+            axes[0].set_title('mean')
+            m1 = axes[1].imshow(samples_std, extent = [0,1,0,1])
+            #axes[1].invert_yaxis()
+            fig.colorbar(m1, ax=axes[1])
+            axes[1].set_title('std')
+            plt.show()
       
     def generate_samples_rand(self,no_parameters,length):
         # no_parameters ... scalar

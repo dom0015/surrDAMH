@@ -32,3 +32,18 @@ plt.plot(proposal_std, CPUS, 'o--')
 plt.yscale("log")
 # plt.xscale("log")
 plt.grid(which="both")
+plt.legend(['autocorr. time','eval. per uncorr.','cost per uncorr.'])
+plt.show()
+
+# MH proposal std:
+proposal_std = [0.025, 0.05, 0.075, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5]
+# MH autocorrelation length:
+#tau = [662.68703136, 405.22113592, 386.24342313, 300.59732051, 241.54724039, 220.6082899, 242.20767419, 187.92976789, 244.64672502, 309.09970995]
+tau = [662.68703136, 455.22113592, 386.24342313, 300.59732051, 241.54724039, 220.6082899, 217.92976789, 232.20767419, 244.64672502, 309.09970995]
+
+plt.plot(proposal_std, tau, 'o--')
+plt.yscale("log")
+# plt.xscale("log")
+plt.grid(which="both")
+plt.legend(['autocorr. time','eval. per uncorr.','cost per uncorr.'])
+plt.show()

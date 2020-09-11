@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 
 from configuration import Configuration
 C = Configuration()
-problem_name = "GRF_24to10_01_unlimited"
+problem_name = "GRF_24to10_02_unlimited"
 # problem_name = "GRF_double24to10_start1"
 # problem_name = C.problem_name
 
@@ -23,7 +23,7 @@ P = C.no_parameters
 S.load_notes('saved_samples/' + problem_name,N)
 S.load_MH('saved_samples/' + problem_name)
 # S.remove_chains(range(N)) # keep only MH chains
-S.remove_chains(range(N,2*N)) # kep only DAMH chains
+S.remove_chains(range(N,2*N)) # keep only DAMH chains
 S.calculate_properties()
 
 S.load_rejected('saved_samples/' + problem_name)
