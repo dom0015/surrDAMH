@@ -16,7 +16,7 @@ class Solver_MPI_parent: # initiated by full SOLVER
         self.no_parameters = no_parameters
         self.no_observations = no_observations
         self.max_requests = 1
-        self.comm = MPI.COMM_SELF.Spawn(sys.executable, args=['modules/process_CHILD.py'], maxprocs=maxprocs)
+        self.comm = MPI.COMM_SELF.Spawn(sys.executable, args=['process_CHILD.py'], maxprocs=maxprocs)
         self.tag = 0
         self.received_data = np.zeros(self.no_observations)
     

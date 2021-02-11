@@ -7,8 +7,8 @@ Created on Wed Jul 15 15:12:30 2020
 """
 
 import sys # REMOVE!
-sys.path.append("/home/domesova/GIT/Simple_Python_PETSc_FEM") 
-#sys.path.append("/home/simona/GIT/Simple_Python_PETSc_FEM") 
+#sys.path.append("/home/domesova/GIT/Simple_Python_PETSc_FEM") 
+sys.path.append("/home/simona/GIT/Simple_Python_PETSc_FEM") 
 #sys.path.append("/home/ber0061/Repositories_dom0015/Simple_Python_PETSc_FEM")
 #sys.path.append("/home/ber0061/Repositories_dom0015/MCMC-Bayes-python")
 import petsc4py
@@ -182,13 +182,16 @@ class FEM:
         
         result = [None] * 4
         for i,solver in enumerate([self.solver_left, self.solver_top, self.solver_right, self.solver_bottom]):
+## Prozatim vynechana moznost PC deflation - deflacni matice byla nastavovana
+## pres wrapper. Je mozne, ze nyni je jiz primo soucasti petsc4py. 
             if self.use_deflation:
-                self.get_solution_DCG()
+                self.get_solution_DCG(solver)
                 self.deflation_extend_optional(solver.solution)
             else:
                 solver.ksp_cg_with_pc(self.PC,self.tolerance)
                 if self.quiet == False:
                     print("SOLVER iterations:",solver.ksp.getIterationNumber(),"normres:",solver.ksp.getResidualNorm())
+## ---------
             if self.quiet == False:
                 print("SOLVER time:", time.time()-t)
             solver.calculate_window_flow()
@@ -246,6 +249,8 @@ class FEM:
         self.W.assemblyBegin()
         self.W.assemblyEnd()
 
+## Prozatim vynechana moznost PC deflation - deflacni matice byla nastavovana
+## pres wrapper. Je mozne, ze nyni je jiz primo soucasti petsc4py. 
     def get_solution_DCG(self, solver):
         if solver.solution == None:
             solver.init_solution_vec()
@@ -267,6 +272,7 @@ class FEM:
         if self.quiet == False:
             print("iterations:",ksp.getIterationNumber(),"W size:",self.ncols,"normres:",ksp.getResidualNorm())
         return solver.solution
+## ---------
 
 def demo_prepare_and_solve():
     no_parameters = 10

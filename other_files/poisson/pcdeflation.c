@@ -10,8 +10,8 @@
         "include_dirs": [
             "/home/simona/lib/petsc/arch-linux-c-debug/include",
             "/home/simona/lib/petsc/include",
-            "/home/simona/.local/lib/python3.8/site-packages/petsc4py/include",
-            "/home/simona/.local/lib/python3.8/site-packages/numpy/core/include",
+            "/home/simona/.local/lib/python3.9/site-packages/petsc4py/include",
+            "/usr/lib/python3.9/site-packages/numpy/core/include",
             "."
         ],
         "libraries": [

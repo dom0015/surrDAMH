@@ -33,8 +33,27 @@ class Solver_local_linela4:
         D4 = -self.f/k3*self.M34*self.M34/2 + C3*self.M34 + D3 + self.f/k4*self.M34*self.M34/2 - C4*self.M34
         uL = -self.f/k4*self.L*self.L/2 + C4*self.L + D4
         return uL
-    
+
 class Solver_local_linela2:
+    def __init__(self, f=-0.1, L=1.0, M=0.5):
+        self.f = f
+        self.L = L
+        self.M = M
+        self.no_parameters = 2
+        self.no_observations = 1
+        
+    def pass_parameters(self,data_par):
+        self.k1 = data_par[0]
+        self.k2 = data_par[1]
+        
+    def get_observations(self):
+        D1 = (self.f*self.L)/self.k2
+        C1 = D1*self.k2/self.k1
+        D2 = -self.f/(2*self.k1)*(self.M*self.M)+C1*self.M+self.f/(2*self.k2)*(self.M*self.M)-D1*self.M
+        uL = -self.f/(2*self.k2)*(self.L*self.L)+D1*self.L+D2
+        return uL
+
+class Solver_local_linela2_old:
     def __init__(self, f=-0.1, L=1.0, M=0.5):
         self.f = f
         self.L = L

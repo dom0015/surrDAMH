@@ -13,20 +13,20 @@ from modules import surrogate_solver_rbf as surr
 
 class Configuration:
     def __init__(self):
-        self.problem_name = "GRF_24to40_02_unlimited"
+        self.problem_name = "GRF_linela2"
         self.no_samplers = 8
         self.no_full_solvers = 8
-        self.no_parameters = 40
-        self.no_observations = 40
+        self.no_parameters = 2 #40
+        self.no_observations = 1 #40
         self.rank_full_solver = self.no_samplers
         self.rank_surr_collector = self.no_samplers + 1
         algMH = {'type': 'MH', 
-                 'max_samples': 100000, 
+                 'max_samples': 100, 
                  'time_limit': 60*10,
                  'proposal_std': 0.2,
                  'surrogate_is_updated': True}
         algDAMHSMU = {'type': 'DAMH', 
-                   'max_samples': 10000000, 
+                   'max_samples': 1000, 
                    'time_limit': 60*180,
                    'proposal_std': 0.2,
                     'surrogate_is_updated': True}
@@ -64,21 +64,30 @@ class Configuration:
 
 ### SOLVER TYPE 1 - solvers are spawned
         # TO DO: test if other options are also possible
-        from modules import FEM_wrapper4 as FEM_wrapper
-        self.child_solver_init = FEM_wrapper.FEM
+        
+        ## FEM + grf material
+        # from modules import FEM_wrapper4 as FEM_wrapper
+        # self.child_solver_init = FEM_wrapper.FEM
         self.child_solver_parameters = {'no_parameters': self.no_parameters,
                                         'no_observations': self.no_observations, 
                                         'n': 50,
                                         'quiet': True,
                                         'tolerance': 1e-8,
                                         'PC': "icc",
-                                        'use_deflation': False,
+                                        'use_deflation': True,
                                         'deflation_imp': 1e-2}
+        
+        ## linela 2 parameters simple example
+        from modules import full_solver_examples as fse
+        self.child_solver_init = fse.Solver_local_linela2 # 2 param., 1 obs.
+        self.child_solver_parameters = {}
+        
         self.full_solver_init = classes_communication.Solver_MPI_parent
         self.full_solver_parameters = []
         for i in range(self.no_full_solvers):
             self.full_solver_parameters.append({'no_parameters':self.no_parameters,
                                                 'no_observations':self.no_observations})
+
 
 ### TYPE 2 - solvers are in the same COMM_WORLD (TO DO)
 #        self.full_solver_init = classes_communication.Solver_MPI_collector_MPI

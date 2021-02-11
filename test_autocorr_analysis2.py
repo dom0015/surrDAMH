@@ -12,6 +12,7 @@ import matplotlib.pyplot as plt
 
 from configuration import Configuration
 C = Configuration()
+problem_name = "GRF_linela2"
 problem_name = "GRF_24to10_02_unlimited"
 # problem_name = "GRF_double24to10_start1"
 # problem_name = C.problem_name
