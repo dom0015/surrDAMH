@@ -13,18 +13,19 @@ size_world = comm_world.Get_size()
 import sys
 
 from configuration import Configuration
+no_samplers = rank_world
 problem_name = None
 if len(sys.argv)>1:
     problem_name = sys.argv[1]
 for i in range(size_world):
     if i != rank_world:
-        comm_world.send(problem_name,dest=i)
-C = Configuration(problem_name)
+        comm_world.send([no_samplers,problem_name],dest=i)
+C = Configuration(no_samplers,problem_name)
 
 solver_init = C.solver_parent_init
 solver_parameters = C.solver_parent_parameters
 no_solvers = C.no_full_solvers
-no_samplers = C.no_samplers
+
 # solver_init ... initializes the object of the (full, surrogate) solver
 # solver_parameters ... list of dictionaries with initialization parameters
 # no_solvers ... number of solvers to be created

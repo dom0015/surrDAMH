@@ -8,9 +8,15 @@ Created on Tue Oct 29 12:47:09 2019
 
 from mpi4py import MPI
 import numpy as np
+import sys
 #import full_solver_examples as fse
 from configuration import Configuration
-C = Configuration()
+
+no_samplers = int(sys.argv[1])
+problem_name = None
+if len(sys.argv)>1:
+    problem_name = sys.argv[2]
+C = Configuration(no_samplers,problem_name)
 
 comm = MPI.Comm.Get_parent()
 size = comm.Get_size()

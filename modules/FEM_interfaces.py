@@ -132,7 +132,6 @@ class FEM:
     def get_observations(self):
         """ assemble and solve """
         self.assemble()
-        print("FEM get observations assembled")
         t = time.time()
         result = [None] * self.no_configurations
         for i,solver in enumerate(self.all_solvers):
@@ -152,7 +151,6 @@ class FEM:
 
     def assemble(self):
         # material setting (Y,X):
-        print("FEM assemble 0")
         material_vector = 0*self.interfaces_vector
         for i in range(self.no_parameters):
             material_vector[self.interfaces_vector==i] = np.exp(self.data_par[i])
@@ -161,21 +159,15 @@ class FEM:
         self.my_problem_left.set_material(material_vector)
         # MATRIX ASSEMBLER (SYSTEM MAT + RHS) ---------------------------------
         # assemble all parts necessary for solution:
-        
         FEM_assembly_left = Assemble.LaplaceSteady(self.my_problem_left) # init assemble obj
-        print("FEM assemble 1")
         FEM_assembly_left.assemble_matrix_generalized()
-        print("FEM assemble 2")
         FEM_assembly_left.assemble_rhs_force()
-        
         FEM_assembly_left.assemble_rhs_neumann()
         FEM_assembly_left.assemble_rhs_dirichlet()
         FEM_assembly_left.dirichlet_cut_and_sum_rhs(duplicate=True)
-        
         self.solver_left = Solvers.LaplaceSteady(FEM_assembly_left)  # init
-        
         self.all_solvers = [self.solver_left]
-        print("FEM assemble 3")
+        
         # 2) TOP -> BOTTOM
         if self.no_configurations>1:
             self.my_problem_top.set_material(material_vector)

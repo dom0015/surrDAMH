@@ -1,5 +1,5 @@
 {
-    "problem_name": "simple_MPI",
+    "problem_name": "simple",
     "no_parameters": 2,
     "no_observations": 1,
     "problem_parameters": {
@@ -10,7 +10,7 @@
     },
     "solver_module_path": "modules/solver_examples.py",
     "solver_module_name": "solver_examples",
-    "solver_init_name": "Solver_linela2exp_MPI",
+    "solver_init_name": "Solver_linela2exp_local",
     "solver_parameters": {
     },
     "no_solvers": 3,
@@ -40,8 +40,5 @@
     "surrogate_type": "poly",
     "surr_updater_parameters": {
         "max_degree": 5
-    },
-    "solver_parent_parameters": {
-        "maxprocs": 4
     }
 }

@@ -16,8 +16,8 @@ from modules import classes_communication as cCOMM
 from modules import lhs_normal as LHS
 
 from configuration import Configuration
-problem_name = comm_world.recv(source=MPI.ANY_SOURCE)
-C = Configuration(problem_name)
+no_samplers, problem_name = comm_world.recv(source=MPI.ANY_SOURCE)
+C = Configuration(no_samplers, problem_name)
 
 # TO DO seeds
 seed0 = max(1000,size_world)*rank_world

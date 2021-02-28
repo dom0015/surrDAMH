@@ -12,12 +12,12 @@ comm_world = MPI.COMM_WORLD
 rank_world = comm_world.Get_rank()
 
 from configuration import Configuration
-problem_name = comm_world.recv(source=MPI.ANY_SOURCE)
-C = Configuration(problem_name)
+no_samplers, problem_name = comm_world.recv(source=MPI.ANY_SOURCE)
+C = Configuration(no_samplers, problem_name)
 
 updater_init = C.surr_updater_init
 updater_parameters = C.surr_updater_parameters
-no_samplers = C.no_samplers
+#no_samplers = C.no_samplers
 max_buffer_size = C.max_buffer_size
 # updater_init ... initializes the object of the surr. updater
 # updater_parameters ... list of dictionaries with initialization parameters

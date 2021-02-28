@@ -12,12 +12,12 @@ import json
 import importlib.util as iu
 
 class Configuration:
-    def __init__(self, problem_name = None):
+    def __init__(self, no_samplers, conf_name = None):
         
 ### MODEL PROBLEM CHOICE:
-        if problem_name is None:
-            problem_name = "simple_MPI"
-        conf_path = "conf/" + problem_name + ".json"
+        if conf_name is None:
+            conf_name = "simple_MPI"
+        conf_path = "conf/" + conf_name + ".json"
         with open(conf_path) as f:
             conf = json.load(f)
             
@@ -32,7 +32,7 @@ class Configuration:
         if "problem_name" in conf.keys():
             self.problem_name = conf["problem_name"]
         else:
-            self.problem_name = problem_name
+            self.problem_name = conf_name
         self.no_parameters = conf["no_parameters"]
         self.no_observations = conf["no_observations"] # length of the vector of observations, not repeated observations
         self.problem_parameters = conf["problem_parameters"]
@@ -50,7 +50,7 @@ class Configuration:
                 
 ### SAMPLING PARAMETERS:
         self.no_full_solvers = conf["no_solvers"]
-        self.no_samplers = 8
+        self.no_samplers = no_samplers
         self.list_alg = conf["samplers_list"]
 
 ### SURROGATE MODEL SPECIFICATION:
@@ -80,7 +80,9 @@ class Configuration:
         # TYPE 1 - solvers are spawned:
         self.solver_parent_init = classes_communication.Solver_MPI_parent
         tmp = {"no_parameters": self.no_parameters,
-               "no_observations": self.no_observations
+               "no_observations": self.no_observations,
+               "problem_name": conf_name,
+               "no_samplers": no_samplers
                }
         if "solver_parent_parameters" in conf.keys():
             tmp.update(conf["solver_parent_parameters"])

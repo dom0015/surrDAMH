@@ -12,11 +12,11 @@ import sys
 import time
 
 class Solver_MPI_parent: # initiated by full SOLVER
-    def __init__(self, no_parameters, no_observations, maxprocs=1):
+    def __init__(self, no_parameters, no_observations, no_samplers, problem_name, maxprocs=1):
         self.no_parameters = no_parameters
         self.no_observations = no_observations
         self.max_requests = 1
-        self.comm = MPI.COMM_SELF.Spawn(sys.executable, args=['process_CHILD.py'], maxprocs=maxprocs)
+        self.comm = MPI.COMM_SELF.Spawn(sys.executable, args=['process_CHILD.py',str(no_samplers),problem_name], maxprocs=maxprocs)
         self.tag = 0
         self.received_data = np.zeros(self.no_observations)
     

@@ -9,6 +9,25 @@ Created on Wed Jan 22 10:00:23 2020
 import numpy as np
 from mpi4py import MPI
 
+class Solver_linela2exp_local:
+    def __init__(self, f=-0.1, L=1.0, M=0.5):
+        self.f = f
+        self.L = L
+        self.M = M
+        self.no_parameters = 2
+        self.no_observations = 1
+        
+    def set_parameters(self,data_par):
+        self.k1 = np.exp(data_par[0])
+        self.k2 = np.exp(data_par[1])
+        
+    def get_observations(self):
+        D1 = (self.f*self.L)/self.k2
+        C1 = D1*self.k2/self.k1
+        D2 = -self.f/(2*self.k1)*(self.M*self.M)+C1*self.M+self.f/(2*self.k2)*(self.M*self.M)-D1*self.M
+        uL = -self.f/(2*self.k2)*(self.L*self.L)+D1*self.L+D2
+        return uL
+
 class Solver_linela2exp_MPI:
     def __init__(self, f=-0.1, L=1.0, M=0.5):
         self.f = f
