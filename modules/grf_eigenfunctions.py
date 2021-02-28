@@ -95,6 +95,12 @@ def evaluate_engenvalues(D,indices,sigma_new=None,sigma_orig=None):
     else:
         return D[indices]/sigma_orig/sigma_orig*sigma_new*sigma_new
 
+def plot_grf(eta, grf_path = None, cmap = "viridis"):
+    if grf_path == None:
+        grf_path = 'modules/unit50.pckl'
+    grf_instance = GRF(grf_path, truncate=len(eta))
+    grf_instance.plot_grf(eta, cmap)
+
 def plot_eigenvectors(V,indices,nx=None):
     # indices ... columns of V to be visualized on the grid
     if nx is None:
@@ -221,10 +227,12 @@ class GRF:
             for i in range(truncate):
                 self.V[:,i] = eig_list[i](self.x,self.y).reshape((self.nx*self.ny,))
             self.lam = lam_new
+        self.no_truncate = truncate
     
     def truncate(self, truncate):
         self.D = self.D[:truncate]
         self.V = self.V[:,:truncate]
+        self.no_truncate = truncate
         
     def realization_grid_orig(self, eta):
         # V, D already has sigma_new and lam_new
@@ -237,6 +245,40 @@ class GRF:
 #        f = scipy.interpolate.interp2d(self.x,self.y,M,kind='cubic')
         f = scipy.interpolate.RectBivariateSpline(self.x,self.y,M)
         return f
+    
+    def realization_interfaces(self, eta, quantiles=[0.5, 1.0], nx_new = None, ny_new = None):
+        f = self.realization_as_function(eta)
+        if nx_new is None:
+            nx_new = self.nx
+        if ny_new is None:
+            ny_new = self.ny
+        x = np.linspace(0,self.lx,nx_new)
+        y = np.linspace(0,self.ly,ny_new)
+        R = f(x,y)
+        bounds = np.quantile(R,quantiles)
+        interfaces = 0*R
+        for i in range(len(quantiles)-1):
+            interfaces[R>bounds[i]] = i+1
+        return interfaces
+    
+    def realization_interfaces_apply(self, eta, x, y, quantiles=[0.5, 1.0]):
+        f = self.realization_as_function(eta)
+        tmp = 0*x
+        for i in range(len(x)):
+            tmp[i] = f(x[i],y[i])
+        bounds = np.quantile(tmp,quantiles)
+        interfaces_applied = 0*x
+        for i in range(len(quantiles)-1):
+            interfaces_applied[tmp>bounds[i]] = i+1
+        return interfaces_applied
+    
+    def plot_realization_interfaces(self, eta = None, quantiles=[0.5, 1.0], nx_new = None, ny_new = None, cmap="viridis"):
+        if eta is None:
+            eta = np.ones((self.no_truncate,))
+        interfaces = self.realization_interfaces(eta, quantiles, nx_new, ny_new)
+        fig, axes = plt.subplots(1, 1, figsize=(4, 3), sharey=True)
+        axes.imshow(interfaces,origin="lower",extent=[0, self.lx, 0, self.ly],cmap=cmap)
+        plt.show()
     
     def realization_grid_new(self, eta, x_new, y_new):
         # V, D already has sigma_new and lam_new
@@ -260,6 +302,12 @@ class GRF:
             M_mean = f_mean(x_new,y_new)
             M_std = f_std(x_new,y_new)
         return M_mean, M_std
+    
+    def plot_grf(self, eta, cmap = "viridis"):
+        z = self.realization_grid_new(eta,np.linspace(0,self.lx,self.nx),np.linspace(0,self.ly,self.ny))
+        fig, axes = plt.subplots(1, 1, figsize=(4, 3), sharey=True)
+        axes.imshow(z,origin="lower",extent=[0, self.lx, 0, self.ly],cmap=cmap)
+        plt.show()
 
 #demo_generate_and_save()
 #demo_load_and_show()

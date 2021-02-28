@@ -23,14 +23,16 @@ from modules import pcdeflation
 
 class FEM:
     # FEM solver preparation
-    def __init__(self, no_parameters = 5, no_observations = 5, n = 100, quiet = True, tolerance = None, PC = "none", use_deflation = False, deflation_imp = None):    
+    def __init__(self, no_parameters = 5, no_observations = 5, no_configurations = 1, n = 100, quiet = True, tolerance = None, PC = "none", use_deflation = False, deflation_imp = None):    
         petsc4py.init()
         self.nrows = (n+1)*(n+1)
         # TRIANGULAR MESH SETTING -----------------------------------------------------
         my_mesh = Mesh.RectUniTri(n, n)
         
         # PROBLEM SETTING (BOUNDARY + RHS) --------------------------------------
-        no_windows = int(no_observations/4)
+        no_windows = int(no_observations/no_configurations)
+        self.no_configurations = no_configurations
+        
         # 1) LEFT -> RIGHT
         self.my_problem_left = ProblemSetting.BoundaryValueProblem2D(my_mesh)  # init ProblemSetting obj
         # Dirichlet boundary condition settins:
@@ -49,56 +51,58 @@ class FEM:
         self.my_problem_left.set_rhs(0)
         
         # 2) TOP -> BOTTOM
-        self.my_problem_top = ProblemSetting.BoundaryValueProblem2D(my_mesh)  # init ProblemSetting obj
-        # Dirichlet boundary condition settins:
-        bounds = np.linspace(0,1,no_windows)
-        dirichlet_boundary = [None] * no_windows
-        dirichlet_boundary[0] = ["top",[0, 1]]
-        for i in range(no_windows-1):
-            dirichlet_boundary[i+1] = ["bottom",[bounds[i], bounds[i+1]]]
-        dirichlet_boundary_val = [1e1] + [0] * (no_windows-1)
-        self.my_problem_top.set_dirichlet_boundary(dirichlet_boundary, dirichlet_boundary_val)
-        # Neumann boundary condition settins:
-        neumann_boundary = ["left"]  # select boundary
-        neumann_boundary_val = [0]  # boundary value
-        self.my_problem_top.set_neumann_boundary(neumann_boundary, neumann_boundary_val)  # set
-        # forcing term (rhs) setting:
-        self.my_problem_top.set_rhs(0)
+        if self.no_configurations>1:
+            self.my_problem_top = ProblemSetting.BoundaryValueProblem2D(my_mesh)  # init ProblemSetting obj
+            # Dirichlet boundary condition settins:
+            bounds = np.linspace(0,1,no_windows)
+            dirichlet_boundary = [None] * no_windows
+            dirichlet_boundary[0] = ["top",[0, 1]]
+            for i in range(no_windows-1):
+                dirichlet_boundary[i+1] = ["bottom",[bounds[i], bounds[i+1]]]
+            dirichlet_boundary_val = [1e1] + [0] * (no_windows-1)
+            self.my_problem_top.set_dirichlet_boundary(dirichlet_boundary, dirichlet_boundary_val)
+            # Neumann boundary condition settins:
+            neumann_boundary = ["left"]  # select boundary
+            neumann_boundary_val = [0]  # boundary value
+            self.my_problem_top.set_neumann_boundary(neumann_boundary, neumann_boundary_val)  # set
+            # forcing term (rhs) setting:
+            self.my_problem_top.set_rhs(0)
         
         # 3) LEFT <- RIGHT
-        self.my_problem_right = ProblemSetting.BoundaryValueProblem2D(my_mesh)  # init ProblemSetting obj
-        # Dirichlet boundary condition settins:
-        bounds = np.linspace(0,1,no_windows)
-        dirichlet_boundary = [None] * no_windows
-        dirichlet_boundary[0] = ["right",[0, 1]]
-        for i in range(no_windows-1):
-            dirichlet_boundary[i+1] = ["left",[bounds[i], bounds[i+1]]]
-        dirichlet_boundary_val = [1e1] + [0] * (no_windows-1)
-        self.my_problem_right.set_dirichlet_boundary(dirichlet_boundary, dirichlet_boundary_val)
-        # Neumann boundary condition settins:
-        neumann_boundary = ["top"]  # select boundary
-        neumann_boundary_val = [0]  # boundary value
-        self.my_problem_right.set_neumann_boundary(neumann_boundary, neumann_boundary_val)  # set
-        # forcing term (rhs) setting:
-        self.my_problem_right.set_rhs(0)
+        if self.no_configurations>2:
+            self.my_problem_right = ProblemSetting.BoundaryValueProblem2D(my_mesh)  # init ProblemSetting obj
+            # Dirichlet boundary condition settins:
+            bounds = np.linspace(0,1,no_windows)
+            dirichlet_boundary = [None] * no_windows
+            dirichlet_boundary[0] = ["right",[0, 1]]
+            for i in range(no_windows-1):
+                dirichlet_boundary[i+1] = ["left",[bounds[i], bounds[i+1]]]
+            dirichlet_boundary_val = [1e1] + [0] * (no_windows-1)
+            self.my_problem_right.set_dirichlet_boundary(dirichlet_boundary, dirichlet_boundary_val)
+            # Neumann boundary condition settins:
+            neumann_boundary = ["top"]  # select boundary
+            neumann_boundary_val = [0]  # boundary value
+            self.my_problem_right.set_neumann_boundary(neumann_boundary, neumann_boundary_val)  # set
+            # forcing term (rhs) setting:
+            self.my_problem_right.set_rhs(0)
         
         # 4) TOP <- BOTTOM
-        self.my_problem_bottom = ProblemSetting.BoundaryValueProblem2D(my_mesh)  # init ProblemSetting obj
-        # Dirichlet boundary condition settins:
-        bounds = np.linspace(0,1,no_windows)
-        dirichlet_boundary = [None] * no_windows
-        dirichlet_boundary[0] = ["bottom",[0, 1]]
-        for i in range(no_windows-1):
-            dirichlet_boundary[i+1] = ["top",[bounds[i], bounds[i+1]]]
-        dirichlet_boundary_val = [1e1] + [0] * (no_windows-1)
-        self.my_problem_bottom.set_dirichlet_boundary(dirichlet_boundary, dirichlet_boundary_val)
-        # Neumann boundary condition settins:
-        neumann_boundary = ["left"]  # select boundary
-        neumann_boundary_val = [0]  # boundary value
-        self.my_problem_bottom.set_neumann_boundary(neumann_boundary, neumann_boundary_val)  # set
-        # forcing term (rhs) setting:
-        self.my_problem_bottom.set_rhs(0)
-        
+        if self.no_configurations>3:
+            self.my_problem_bottom = ProblemSetting.BoundaryValueProblem2D(my_mesh)  # init ProblemSetting obj
+            # Dirichlet boundary condition settins:
+            bounds = np.linspace(0,1,no_windows)
+            dirichlet_boundary = [None] * no_windows
+            dirichlet_boundary[0] = ["bottom",[0, 1]]
+            for i in range(no_windows-1):
+                dirichlet_boundary[i+1] = ["top",[bounds[i], bounds[i+1]]]
+            dirichlet_boundary_val = [1e1] + [0] * (no_windows-1)
+            self.my_problem_bottom.set_dirichlet_boundary(dirichlet_boundary, dirichlet_boundary_val)
+            # Neumann boundary condition settins:
+            neumann_boundary = ["left"]  # select boundary
+            neumann_boundary_val = [0]  # boundary value
+            self.my_problem_bottom.set_neumann_boundary(neumann_boundary, neumann_boundary_val)  # set
+            # forcing term (rhs) setting:
+            self.my_problem_bottom.set_rhs(0)
         
         self.no_parameters = no_parameters
         self.grf_instance = grf.GRF('modules/unit50.pckl', truncate=no_parameters)
@@ -114,13 +118,17 @@ class FEM:
         self.data_par = data_par
 
     def assemble(self):
-        # material setting:
+        # material setting (Y,X):
         f_grf = self.grf_instance.realization_as_function(self.data_par)
         def material_function(x,y):
             no_points = len(x)
             result = np.zeros((no_points,))
             for i in range(no_points):
-                result[i] = np.exp(f_grf(x[i],y[i]))
+                result[i] = np.exp(f_grf(y[i],x[i]))
+                # if result[i]>np.exp(0):
+                #     result[i]=100
+                # else:
+                #     result[i]=1
             return result
         
         # 1) LEFT -> RIGHT
@@ -133,57 +141,52 @@ class FEM:
         FEM_assembly_left.assemble_rhs_neumann()
         FEM_assembly_left.assemble_rhs_dirichlet()
         FEM_assembly_left.dirichlet_cut_and_sum_rhs(duplicate=True)
-#        print(FEM_assembly.times_assembly)
         self.solver_left = Solvers.LaplaceSteady(FEM_assembly_left)  # init
+        self.all_solvers = [self.solver_left]
         
         # 2) TOP -> BOTTOM
-        self.my_problem_top.set_material(material_function)
-        # MATRIX ASSEMBLER (SYSTEM MAT + RHS) ---------------------------------
-        # assemble all parts necessary for solution:
-        FEM_assembly_top = Assemble.LaplaceSteady(self.my_problem_top) # init assemble obj
-        FEM_assembly_top.assemble_matrix_generalized()
-        FEM_assembly_top.assemble_rhs_force()
-        FEM_assembly_top.assemble_rhs_neumann()
-        FEM_assembly_top.assemble_rhs_dirichlet()
-        FEM_assembly_top.dirichlet_cut_and_sum_rhs(duplicate=True)
-#        print(FEM_assembly.times_assembly)
-        self.solver_top = Solvers.LaplaceSteady(FEM_assembly_top)  # init
+        if self.no_configurations>1:
+            self.my_problem_top.set_material(material_function)
+            FEM_assembly_top = Assemble.LaplaceSteady(self.my_problem_top) # init assemble obj
+            FEM_assembly_top.assemble_matrix_generalized()
+            FEM_assembly_top.assemble_rhs_force()
+            FEM_assembly_top.assemble_rhs_neumann()
+            FEM_assembly_top.assemble_rhs_dirichlet()
+            FEM_assembly_top.dirichlet_cut_and_sum_rhs(duplicate=True)
+            self.solver_top = Solvers.LaplaceSteady(FEM_assembly_top)  # init
+            self.all_solvers.append(self.solver_top)
         
         # 3) LEFT <- RIGHT
-        self.my_problem_right.set_material(material_function)
-        # MATRIX ASSEMBLER (SYSTEM MAT + RHS) ---------------------------------
-        # assemble all parts necessary for solution:
-        FEM_assembly_right = Assemble.LaplaceSteady(self.my_problem_right) # init assemble obj
-        FEM_assembly_right.assemble_matrix_generalized()
-        FEM_assembly_right.assemble_rhs_force()
-        FEM_assembly_right.assemble_rhs_neumann()
-        FEM_assembly_right.assemble_rhs_dirichlet()
-        FEM_assembly_right.dirichlet_cut_and_sum_rhs(duplicate=True)
-#        print(FEM_assembly.times_assembly)
-        self.solver_right = Solvers.LaplaceSteady(FEM_assembly_right)  # init
+        if self.no_configurations>2:
+            self.my_problem_right.set_material(material_function)
+            FEM_assembly_right = Assemble.LaplaceSteady(self.my_problem_right) # init assemble obj
+            FEM_assembly_right.assemble_matrix_generalized()
+            FEM_assembly_right.assemble_rhs_force()
+            FEM_assembly_right.assemble_rhs_neumann()
+            FEM_assembly_right.assemble_rhs_dirichlet()
+            FEM_assembly_right.dirichlet_cut_and_sum_rhs(duplicate=True)
+            self.solver_right = Solvers.LaplaceSteady(FEM_assembly_right)  # init
+            self.all_solvers.append(self.solver_right)
         
         # 4) TOP <- BOTTOM
-        self.my_problem_bottom.set_material(material_function)
-        # MATRIX ASSEMBLER (SYSTEM MAT + RHS) ---------------------------------
-        # assemble all parts necessary for solution:
-        FEM_assembly_bottom = Assemble.LaplaceSteady(self.my_problem_bottom) # init assemble obj
-        FEM_assembly_bottom.assemble_matrix_generalized()
-        FEM_assembly_bottom.assemble_rhs_force()
-        FEM_assembly_bottom.assemble_rhs_neumann()
-        FEM_assembly_bottom.assemble_rhs_dirichlet()
-        FEM_assembly_bottom.dirichlet_cut_and_sum_rhs(duplicate=True)
-#        print(FEM_assembly.times_assembly)
-        self.solver_bottom = Solvers.LaplaceSteady(FEM_assembly_bottom)  # init
+        if self.no_configurations>3:
+            self.my_problem_bottom.set_material(material_function)
+            FEM_assembly_bottom = Assemble.LaplaceSteady(self.my_problem_bottom) # init assemble obj
+            FEM_assembly_bottom.assemble_matrix_generalized()
+            FEM_assembly_bottom.assemble_rhs_force()
+            FEM_assembly_bottom.assemble_rhs_neumann()
+            FEM_assembly_bottom.assemble_rhs_dirichlet()
+            FEM_assembly_bottom.dirichlet_cut_and_sum_rhs(duplicate=True)
+            self.solver_bottom = Solvers.LaplaceSteady(FEM_assembly_bottom)  # init
+            self.all_solvers.append(self.solver_bottom)
         
     def get_observations(self):
         """ assemble and solve"""
         self.assemble()
         t = time.time()
         
-        result = [None] * 4
-        for i,solver in enumerate([self.solver_left, self.solver_top, self.solver_right, self.solver_bottom]):
-## Prozatim vynechana moznost PC deflation - deflacni matice byla nastavovana
-## pres wrapper. Je mozne, ze nyni je jiz primo soucasti petsc4py. 
+        result = [None] * self.no_configurations
+        for i,solver in enumerate(self.all_solvers):
             if self.use_deflation:
                 self.get_solution_DCG(solver)
                 self.deflation_extend_optional(solver.solution)
@@ -191,13 +194,12 @@ class FEM:
                 solver.ksp_cg_with_pc(self.PC,self.tolerance)
                 if self.quiet == False:
                     print("SOLVER iterations:",solver.ksp.getIterationNumber(),"normres:",solver.ksp.getResidualNorm())
-## ---------
             if self.quiet == False:
                 print("SOLVER time:", time.time()-t)
             solver.calculate_window_flow()
             result[i]=solver.window_flow
             # print(result[i])
-        return np.concatenate((result[0],result[1],result[2],result[3]))
+        return np.concatenate(result)
     
     def get_linear_system(self):
         """ assemble but do not solve"""
@@ -249,8 +251,8 @@ class FEM:
         self.W.assemblyBegin()
         self.W.assemblyEnd()
 
-## Prozatim vynechana moznost PC deflation - deflacni matice byla nastavovana
-## pres wrapper. Je mozne, ze nyni je jiz primo soucasti petsc4py. 
+## PC deflation - deflacni matice nastavovana pres wrapper.
+## Je mozne, ze nyni je jiz primo soucasti petsc4py. 
     def get_solution_DCG(self, solver):
         if solver.solution == None:
             solver.init_solution_vec()

@@ -9,11 +9,20 @@ Created on Tue Oct 29 14:55:37 2019
 from mpi4py import MPI
 comm_world = MPI.COMM_WORLD
 rank_world = comm_world.Get_rank()
+size_world = comm_world.Get_size()
+import sys
 
 from configuration import Configuration
-C = Configuration()
-solver_init = C.full_solver_init
-solver_parameters = C.full_solver_parameters
+problem_name = None
+if len(sys.argv)>1:
+    problem_name = sys.argv[1]
+for i in range(size_world):
+    if i != rank_world:
+        comm_world.send(problem_name,dest=i)
+C = Configuration(problem_name)
+
+solver_init = C.solver_parent_init
+solver_parameters = C.solver_parent_parameters
 no_solvers = C.no_full_solvers
 no_samplers = C.no_samplers
 # solver_init ... initializes the object of the (full, surrogate) solver
@@ -83,4 +92,4 @@ except:
     print("EX process_SOLVER")
         
 comm_world.Barrier()
-print("MPI process", rank_world, "(MANAGER) terminated.")
+print("RANK", rank_world, "(SOLVER PARENT) terminated.")

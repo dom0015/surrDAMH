@@ -23,12 +23,14 @@ class Solver_MPI_parent: # initiated by full SOLVER
     def send_parameters(self, data_par):
         self.tag += 1
         self.data_par = data_par.copy()
-        self.comm.Send(self.data_par, dest=0, tag=self.tag)
-#        print('DEBUG - PARENT Send request FROM', self.comm.Get_rank(), '(', MPI.COMM_WORLD.Get_rank(), ')', 'TO child:', 0, "TAG:", self.tag)
+        self.comm.Bcast(np.array([self.tag]), root=MPI.ROOT)
+        #self.comm.Send(self.data_par, dest=0, tag=self.tag)
+        self.comm.Bcast(self.data_par, root=MPI.ROOT)
+        # print('DEBUG - PARENT Send request FROM', self.comm.Get_rank(), '(', MPI.COMM_WORLD.Get_rank(), ')', 'TO child:', 0, "TAG:", self.tag)
         
     def recv_observations(self):
         self.comm.Recv(self.received_data, source=0, tag=self.tag)
-#        print('DEBUG - PARENT Recv solution FROM child', 0, 'TO:', self.comm.Get_rank(), '(', MPI.COMM_WORLD.Get_rank(), ')', "TAG:", self.tag)
+        # print('DEBUG - PARENT Recv solution FROM child', 0, 'TO:', self.comm.Get_rank(), '(', MPI.COMM_WORLD.Get_rank(), ')', "TAG:", self.tag)
         return self.received_data.reshape((1,-1)).copy()
     
     def is_solved(self):
@@ -40,7 +42,8 @@ class Solver_MPI_parent: # initiated by full SOLVER
             return False
     
     def terminate(self):
-        self.comm.Send(np.empty((1,self.no_parameters)), dest=0, tag=0)
+        #self.comm.Send(np.empty((1,self.no_parameters)), dest=0, tag=0)
+        self.comm.Bcast(np.array([0]), root=MPI.ROOT)
         self.comm.Barrier()
         self.comm.Disconnect()
         print("Solver spawned by rank", MPI.COMM_WORLD.Get_rank(), "disconnected.")

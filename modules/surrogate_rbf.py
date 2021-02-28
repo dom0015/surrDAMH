@@ -18,15 +18,15 @@ class Surrogate_apply: # initiated by all SAMPLERs
         self.alldata_par = None
 
     def apply(self, SOL, datapoints):
-        coefs, alldata_par = SOL
+        COEFS, self.alldata_par = SOL
 #        if self.alldata_par == None:
-        self.alldata_par = alldata_par
+        # self.alldata_par = alldata_par
 #        else:
 #        self.alldata_par = np.vstack((self.alldata_par,alldata_par))
-        if len(datapoints.shape)==1:
-            datapoints.shape = (1,self.no_parameters)
-        no_datapoints = datapoints.shape[0]
         no_snapshots = self.alldata_par.shape[0]
+        datapoints = datapoints.reshape(-1,self.no_parameters)
+        no_datapoints = datapoints.shape[0]
+
         TEMP = np.zeros([no_datapoints,no_snapshots])
         for i in range(self.no_parameters):
             v = self.alldata_par[:,i]
@@ -38,8 +38,8 @@ class Surrogate_apply: # initiated by all SAMPLERs
         np.sqrt(TEMP,out=TEMP)
         kernel(TEMP,self.kernel_type)
         no_polynomials = 1 + self.no_parameters # plus linear polynomials
-        GS_datapoints=np.matmul(TEMP,coefs[:-no_polynomials])
-        pp = coefs[-1] + np.matmul(datapoints,coefs[-self.no_parameters-1:-1])
+        GS_datapoints=np.matmul(TEMP,COEFS[:-no_polynomials])
+        pp = COEFS[-1] + np.matmul(datapoints,COEFS[-self.no_parameters-1:-1])
         GS_datapoints = np.reshape(GS_datapoints,(no_datapoints,self.no_observations)) + np.reshape(pp,(no_datapoints,self.no_observations))
         return GS_datapoints
 
@@ -66,7 +66,7 @@ class Surrogate_update: # initiated by COLLECTOR # no_keep=50, expensive=True
     def add_data(self,snapshots):
         # add new data to a matrix of non-processed data
         L = len(snapshots)
-        print("new snapshots:",L)
+        # print("new snapshots:",L)
         new_par = np.empty((L,self.no_parameters))
         new_obs = np.empty((L,self.no_observations))
         new_wei = np.empty((L,1))
@@ -79,7 +79,7 @@ class Surrogate_update: # initiated by COLLECTOR # no_keep=50, expensive=True
         self.non_processed_wei = np.vstack((self.non_processed_wei, new_wei))
 
     def update(self):
-        print("SURROGATE UPDATE")
+        # print("SURROGATE UPDATE")
         no_non_processed = self.non_processed_par.shape[0]
         no_snapshots = self.no_processed + no_non_processed # both processed and non-processed
         TEMP = np.zeros((no_snapshots,no_snapshots))
@@ -117,8 +117,8 @@ class Surrogate_update: # initiated by COLLECTOR # no_keep=50, expensive=True
                 M[xx,:]=MAX
                 M[:,xx]=MAX
                 to_keep[xx]=False
-            aaa = np.arange(no_snapshots)
-            print(aaa[to_keep==False])
+            # aaa = np.arange(no_snapshots)
+            # print(aaa[to_keep==False])
             TEMP = TEMP[to_keep,:]
             TEMP = TEMP[:,to_keep]
             self.processed_par = self.processed_par[to_keep,:]
@@ -144,18 +144,19 @@ class Surrogate_update: # initiated by COLLECTOR # no_keep=50, expensive=True
 #        print("Condition_number:",np.linalg.cond(TEMP2))
 #        print("DEBUG2:", TEMP2.shape, np.linalg.matrix_rank(TEMP2), RHS.shape)
         if self.solver_type == 'direct':
-            c=np.linalg.solve(TEMP2,RHS)
+            COEFS=np.linalg.solve(TEMP2,RHS)
         else:
-            c=np.empty((no_snapshots+no_polynomials,self.no_observations))
+            COEFS=np.empty((no_snapshots+no_polynomials,self.no_observations))
             for i in range(self.no_observations):
                 c_=splin.minres(TEMP2,RHS[:,i],x0=self.initial_iteration,tol=pow(10,self.solver_tol_exp),show=False)
-                c[:,i]=c_[0]
+                COEFS[:,i]=c_[0]
     #    RES=RHS-np.reshape(np.matmul(TEMP2,SOL),(no_evaluations+no_polynomials,1))
     #    print("Residual norm:",np.linalg.norm(RES), "RHSnorm:", np.linalg.norm(RHS))
-        SOL = [None] * 2
-        SOL[0] = c.copy()
-        SOL[1] = self.processed_par.copy()
-        print("Surrogate updated:",SOL[0].shape,SOL[1].shape)
+        # SOL = [None] * 2
+        # SOL[0] = COEFS.copy()
+        # SOL[1] = self.processed_par.copy()
+        SOL = [COEFS.copy(), self.processed_par.copy()]
+        # print("Surrogate updated:",SOL[0].shape,SOL[1].shape)
         return SOL, no_snapshots
         
     #minres(A, b, x0=None, shift=0.0, tol=1e-05, maxiter=None, xtype=None, M=None, callback=None, show=False, check=False)

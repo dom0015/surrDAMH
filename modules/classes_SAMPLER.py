@@ -13,7 +13,7 @@ import csv
 import time
 
 class Algorithm_PARENT:
-    def __init__(self, Problem, Proposal, Solver, max_samples, name, seed=0, initial_sample=None, G_initial_sample=None, Surrogate=None, is_saved=True, surrogate_is_updated=True, time_limit=float('inf')):
+    def __init__(self, Problem, Proposal, Solver, max_samples, name, seed=0, initial_sample=None, G_initial_sample=None, Surrogate=None, is_saved=True, save_raw_data=False, surrogate_is_updated=True, time_limit=float('inf')):
         self.Problem = Problem
         self.Proposal = Proposal
         self.Solver = Solver
@@ -32,6 +32,7 @@ class Algorithm_PARENT:
         else:
             self.__send_to_surrogate = self._empty_function
         self.is_saved = is_saved
+        self.save_raw_data = save_raw_data
         self.time_limit = time_limit
         self.__generator = np.random.RandomState(seed)
         self.no_accepted = 0
@@ -52,18 +53,23 @@ class Algorithm_PARENT:
         self.time_start = time.time()
         if self.is_saved:
             # chain:
-            filename = "saved_samples/" + self.Problem.name + "/" + self.name + ".csv"
-            os.makedirs(os.path.dirname(filename), exist_ok=True)
-            self.__file = open(filename, 'w')
-            self.__writer = csv.writer(self.__file)
-            # with posteriors:
-            filename_G = "saved_samples/" + self.Problem.name + "/eval/" + self.name + ".csv"
+            # filename = "saved_samples/" + self.Problem.name + "/" + self.name + ".csv"
+            # os.makedirs(os.path.dirname(filename), exist_ok=True)
+            # self.__file = open(filename, 'w')
+            # self.__writer = csv.writer(self.__file)
+            # saves [no. sample posterior pre_posterior]:
+            filename_G = "saved_samples/" + self.Problem.name + "/data/" + self.name + ".csv"
             os.makedirs(os.path.dirname(filename_G), exist_ok=True)
             self.__file_G = open(filename_G, 'w')
             self.__writer_G = csv.writer(self.__file_G)
             self.__write_to_file = self.__write_to_file__
         else:
             self.__write_to_file = self._empty_function
+        if self.save_raw_data:
+            filename = "saved_samples/" + self.Problem.name + "/raw_data/" + self.name + ".csv"
+            os.makedirs(os.path.dirname(filename), exist_ok=True)
+            self.__file_raw = open(filename, 'w')
+            self.writer_raw = csv.writer(self.__file_raw)
         if self.G_current_sample is None:
             self.Solver.send_parameters(self.current_sample)
             self.G_current_sample = self.Solver.recv_observations()
@@ -85,16 +91,22 @@ class Algorithm_PARENT:
         self.current_sample = self.proposed_sample
         self.G_current_sample = self.G_proposed_sample
         self.posterior_current_sample = self.posterior_proposed_sample
+        if self.save_raw_data:
+            row = ['accepted'] + list(self.proposed_sample)
+            self.writer_raw.writerow(row)
         
-    def if_not_accepted(self):
+    def if_rejected(self):
         self.no_rejected += 1
         self.no_rejected_current += 1
         self.__send_to_surrogate(sample=self.proposed_sample.copy(), G_sample=self.G_proposed_sample.copy(), weight=0)
-            
+        if self.save_raw_data:
+            row = ['rejected'] + list(self.proposed_sample)
+            self.writer_raw.writerow(row)
+        
     def close_files(self):
         self.__write_to_file()
         if self.is_saved:
-            self.__file.close()
+            # self.__file.close()
             self.__file_G.close()
             filename_notes = "saved_samples/" + self.Problem.name + "/notes/" + self.name + ".csv"
             os.makedirs(os.path.dirname(filename_notes), exist_ok=True)
@@ -106,6 +118,8 @@ class Algorithm_PARENT:
             writer_notes.writerow(labels)
             writer_notes.writerow(notes)
             file_notes.close()
+        if self.save_raw_data:
+            self.__file_raw.close()
 
     def _acceptance_log_symmetric(self,log_ratio):
         temp = self.__generator.uniform(0.0,1.0)
@@ -118,10 +132,8 @@ class Algorithm_PARENT:
             return False
         
     def __write_to_file__(self):
-        row = [1+self.no_rejected_current]
-        for j in range(self.Problem.no_parameters):
-            row.append(self.current_sample[j])
-        self.__writer.writerow(row)
+        row = [1+self.no_rejected_current] + list(self.current_sample)
+        # self.__writer.writerow(row)
         row.append(self.posterior_current_sample)
         row.append(self.pre_posterior_current_sample)
         self.__writer_G.writerow(row)
@@ -134,40 +146,48 @@ class Algorithm_PARENT:
         return
     
 class Algorithm_MH(Algorithm_PARENT): # initiated by SAMPLERs
-    def __init__(self, Problem, Proposal, Solver, max_samples, name, seed=0, initial_sample=None, G_initial_sample=None, Surrogate=None, is_saved=True, surrogate_is_updated=True, time_limit=float('inf')):
-        super().__init__(Problem, Proposal, Solver, max_samples, name, seed, initial_sample, G_initial_sample, Surrogate, is_saved, surrogate_is_updated, time_limit)
+    def __init__(self, Problem, Proposal, Solver, max_samples, name, seed=0, initial_sample=None, G_initial_sample=None, Surrogate=None, is_saved=True, save_raw_data=False, surrogate_is_updated=True, time_limit=float('inf')):
+        super().__init__(Problem, Proposal, Solver, max_samples, name, seed, initial_sample, G_initial_sample, Surrogate, is_saved, save_raw_data, surrogate_is_updated, time_limit)
 
     def run(self):
-        print("SAMPLER at RANK", MPI.COMM_WORLD.Get_rank(), "starts (MH)")
+        #print("SAMPLER at RANK", MPI.COMM_WORLD.Get_rank(), "starts (MH)")
         self.prepare()
         for i in range(self.max_samples):
             self.proposed_sample = self.Proposal.propose_sample(self.current_sample)
             self.request_observations()
             if self.is_accepted_sample(self.log_ratio):
+                # if self.is_saved:
+                #     row = [i]
+                #     row.append(self.posterior_proposed_sample)
+                #     self.__writer_accepted.writerow(row)
                 self.if_accepted()
             else:
-                self.if_not_accepted()
+                # if self.is_saved:
+                #     row = [i]
+                #     row.append(self.posterior_proposed_sample)
+                #     self.__writer_rejected.writerow(row)
+                self.if_rejected()
             if time.time() - self.time_start > self.time_limit:
                 print("SAMPLER at RANK", MPI.COMM_WORLD.Get_rank(), "time limit reached - loop",i)
                 break
         self.close_files()
-        print("SAMPLER at RANK", MPI.COMM_WORLD.Get_rank(), "finishes (MH)")
+        #print("SAMPLER at RANK", MPI.COMM_WORLD.Get_rank(), "finishes (MH)")
         
 class Algorithm_DAMH(Algorithm_PARENT): # initiated by SAMPLERs
-    def __init__(self, Problem, Proposal, Solver, max_samples, name, seed=0, initial_sample=None, G_initial_sample=None, Surrogate=None, is_saved=True, surrogate_is_updated=True, time_limit=float('inf')):
-        super().__init__(Problem, Proposal, Solver, max_samples, name, seed, initial_sample, G_initial_sample, Surrogate, is_saved, surrogate_is_updated, time_limit)
+    def __init__(self, Problem, Proposal, Solver, max_samples, name, seed=0, initial_sample=None, G_initial_sample=None, Surrogate=None, is_saved=True, save_raw_data=False, surrogate_is_updated=True, time_limit=float('inf')):
+        super().__init__(Problem, Proposal, Solver, max_samples, name, seed, initial_sample, G_initial_sample, Surrogate, is_saved, save_raw_data, surrogate_is_updated, time_limit)
 
     def run(self):
-        print("SAMPLER at RANK", MPI.COMM_WORLD.Get_rank(), "starts (DAMH) with initial sample",self.current_sample)
+        #print("SAMPLER at RANK", MPI.COMM_WORLD.Get_rank(), "starts (DAMH) with initial sample",self.current_sample)
         self.prepare()
         if self.is_saved:
-            # posterior vs approximated posterior in rejected samples:
-            filename = "saved_samples/" + self.Problem.name + "/rejected/" + self.name + ".csv"
+            # posterior (vs approximated posterior) in rejected samples:
+            filename = "saved_samples/" + self.Problem.name + "/DAMH_rejected/" + self.name + ".csv"
             os.makedirs(os.path.dirname(filename), exist_ok=True)
             self.__file_rejected = open(filename, 'w')
             self.__writer_rejected = csv.writer(self.__file_rejected)
-            # posterior vs approximated posterior in accepted samples:
-            filename = "saved_samples/" + self.Problem.name + "/accepted/" + self.name + ".csv"
+            # posterior (vs approximated posterior) in accepted samples:
+            filename = "saved_samples/" + self.Problem.name + "/DAMH_accepted/" + self.name + ".csv"
             os.makedirs(os.path.dirname(filename), exist_ok=True)
             self.__file_accepted = open(filename, 'w')
             self.__writer_accepted = csv.writer(self.__file_accepted)
@@ -202,19 +222,20 @@ class Algorithm_DAMH(Algorithm_PARENT): # initiated by SAMPLERs
                         row.append(self.posterior_proposed_sample)
                         row.append(pre_posterior_proposed_sample)
                         self.__writer_rejected.writerow(row)
-                    self.if_not_accepted()
+                    self.if_rejected()
             else:
-#                print("prerejected")
                 self.no_prerejected += 1
                 self.no_rejected_current += 1
+                if self.save_raw_data:
+                    row = ['prerejected'] + list(self.proposed_sample)
+                    self.writer_raw.writerow(row)
             if time.time() - self.time_start > self.time_limit:
                 print("SAMPLER at RANK", MPI.COMM_WORLD.Get_rank(), "time limit reached - loop",i)
                 break
         self.close_files()
-        if self.is_saved:
-             self.__file_rejected.close()
-             self.__file_accepted.close()
-        print("SAMPLER at RANK", MPI.COMM_WORLD.Get_rank(), "finishes (DAMH)")
+        self.__file_rejected.close()
+        self.__file_accepted.close()
+        #print("SAMPLER at RANK", MPI.COMM_WORLD.Get_rank(), "finishes (DAMH)")
 
 class Proposal_GaussRandomWalk: # initiated by SAMPLERs
     def __init__(self, no_parameters, proposal_std=1.0, proposal_cov=None, seed=0):
@@ -253,22 +274,35 @@ class Proposal_GaussRandomWalk: # initiated by SAMPLERs
         return sample
     
 class Problem_Gauss: # initiated by SAMPLERs
-    def __init__(self, no_parameters, prior_mean=0.0, prior_std=1.0, prior_cov=None, noise_std=1.0, noise_cov=None, no_observations=None, observations=None, seed=0, name='default_problem_name'):
+    def __init__(self, no_parameters, prior_mean=0.0, prior_std=1.0, noise_std=1.0, noise_cov=None, no_observations=None, observations=None, seed=0, name='default_problem_name'):
         self.no_parameters = no_parameters
         if np.isscalar(prior_mean):
             self.prior_mean = np.full((no_parameters,),prior_mean)
         else:
             self.prior_mean = np.array(prior_mean)
-        self.prior_cov = prior_cov
-        if self.prior_cov is None:
-            self.get_log_prior = self._get_log_prior_uncorrelated
-            if np.isscalar(prior_std):
-                self.prior_std = np.full((no_parameters,),prior_std)
-            else:
-                self.prior_std = np.array(prior_std)
+            
+        # # prior std/cov:
+        # self.prior_cov = prior_cov
+        # if self.prior_cov is None:
+        #     self.get_log_prior = self._get_log_prior_uncorrelated
+        #     if np.isscalar(prior_std):
+        #         self.prior_std = np.full((no_parameters,),prior_std)
+        #     else:
+        #         self.prior_std = np.array(prior_std)
+        # else:
+        #     self.prior_std = None
+        #     self.get_log_prior = self.__get_log_prior_multivariate
+            
+        # prior std is scalar/vector/covariance matrix:
+        if np.isscalar(prior_std):
+            self.prior_std = np.full((no_parameters,),prior_std)
         else:
-            self.prior_std = None
+            self.prior_std = np.array(prior_std)
+        if self.prior_std.ndim == 1: # prior - normal uncorrelated
+            self.get_log_prior = self._get_log_prior_uncorrelated
+        else: # prior - normal correlated
             self.get_log_prior = self.__get_log_prior_multivariate
+            
         self.observations = observations
         if no_observations == None:
             no_observations = len(observations)
@@ -290,7 +324,7 @@ class Problem_Gauss: # initiated by SAMPLERs
     
     def _get_log_likelihood_uncorrelated(self, G_sample):
         v = self.observations - G_sample
-        invCv = v/self.noise_std
+        invCv = v/(self.noise_std**2)
         return -0.5*np.sum(v*invCv)
     
     def __get_log_likelihood_multivariate(self, G_sample):
@@ -300,12 +334,12 @@ class Problem_Gauss: # initiated by SAMPLERs
 
     def _get_log_prior_uncorrelated(self, sample):
         v = sample - self.prior_mean
-        invCv = v/self.prior_std
+        invCv = v/(self.prior_std**2)
         return -0.5*np.dot(v,invCv)
     
     def __get_log_prior_multivariate(self, sample):
         v = sample - self.prior_mean
-        invCv = np.linalg.solve(self.prior_cov,v)
+        invCv = np.linalg.solve(self.prior_std,v)
         return -0.5*np.dot(v,invCv)
     
     def get_log_posterior(self, sample, G_sample):

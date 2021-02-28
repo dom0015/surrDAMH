@@ -12,7 +12,9 @@ comm_world = MPI.COMM_WORLD
 rank_world = comm_world.Get_rank()
 
 from configuration import Configuration
-C = Configuration()
+problem_name = comm_world.recv(source=MPI.ANY_SOURCE)
+C = Configuration(problem_name)
+
 updater_init = C.surr_updater_init
 updater_parameters = C.surr_updater_parameters
 no_samplers = C.no_samplers
@@ -101,24 +103,25 @@ while any(is_active_sampler): # while at least 1 sampling algorithm is active
                     request_Isend[i].Wait()
                 request_Isend[i] = comm_world.Isend(empty_buffers[i], dest=samplers_ranks[i], tag=tag_ready_to_receive)
                 list_received_data.extend(received_data.copy())
-    if len(list_received_data)>0:
-        local_updater_instance.add_data(list_received_data)
-        SOL, no_snapshots = local_updater_instance.update()
-#            print("COLLECTOR computed new update:",SOL[0].shape,SOL[1].shape)
-#        print("RANK", rank_world, "collected snapshots:", no_snapshots)
-#        progress_bar.update(no_snapshots-no_snapshots_old)
-        no_snapshots_old = no_snapshots
-        list_received_data = []
-        is_free_updater = False
-        if any(is_active_sampler & is_ready_sampler):
-            for i in np.nditer(np.where(is_active_sampler & is_ready_sampler)):
-                if request_isend[i] is not None:
-                    request_isend[i].wait()
-                send_buffers[i] = SOL.copy() # TO DO: copy?
-                request_isend[i] = comm_world.isend(send_buffers[i], dest=samplers_ranks[i], tag=tag_sent_data)
-                is_ready_sampler[i] = False
+        if len(list_received_data)>0:
+            # print("COLLECTOR:",len(list_received_data), is_active_sampler)
+            local_updater_instance.add_data(list_received_data)
+            SOL, no_snapshots = local_updater_instance.update()
+    #            print("COLLECTOR computed new update:",SOL[0].shape,SOL[1].shape)
+    #        print("RANK", rank_world, "collected snapshots:", no_snapshots)
+    #        progress_bar.update(no_snapshots-no_snapshots_old)
+            no_snapshots_old = no_snapshots
+            list_received_data = []
+            is_free_updater = False
+            if any(is_active_sampler & is_ready_sampler):
+                for i in np.nditer(np.where(is_active_sampler & is_ready_sampler)):
+                    if request_isend[i] is not None:
+                        request_isend[i].wait()
+                    send_buffers[i] = SOL.copy() # TO DO: copy?
+                    request_isend[i] = comm_world.isend(send_buffers[i], dest=samplers_ranks[i], tag=tag_sent_data)
+                    is_ready_sampler[i] = False
 
-print("RANK", rank_world, "all collected snapshots:", len(list_received_data), len(local_updater_instance.processed_par))
+print("RANK", rank_world, "- all collected snapshots:", len(list_received_data), len(local_updater_instance.processed_par))
 
 comm_world.Barrier()
-print("MPI process", rank_world, "(DATA COLLECTOR) terminated.")
+print("RANK", rank_world, "(DATA COLLECTOR) terminated.")

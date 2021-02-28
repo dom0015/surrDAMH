@@ -34,6 +34,25 @@ class Solver_local_linela4:
         uL = -self.f/k4*self.L*self.L/2 + C4*self.L + D4
         return uL
 
+class Solver_local_linela2_exp:
+    def __init__(self, f=-0.1, L=1.0, M=0.5):
+        self.f = f
+        self.L = L
+        self.M = M
+        self.no_parameters = 2
+        self.no_observations = 1
+        
+    def set_parameters(self,data_par):
+        self.k1 = np.exp(data_par[0])
+        self.k2 = np.exp(data_par[1])
+        
+    def get_observations(self):
+        D1 = (self.f*self.L)/self.k2
+        C1 = D1*self.k2/self.k1
+        D2 = -self.f/(2*self.k1)*(self.M*self.M)+C1*self.M+self.f/(2*self.k2)*(self.M*self.M)-D1*self.M
+        uL = -self.f/(2*self.k2)*(self.L*self.L)+D1*self.L+D2
+        return uL
+
 class Solver_local_linela2:
     def __init__(self, f=-0.1, L=1.0, M=0.5):
         self.f = f
@@ -42,7 +61,7 @@ class Solver_local_linela2:
         self.no_parameters = 2
         self.no_observations = 1
         
-    def pass_parameters(self,data_par):
+    def set_parameters(self,data_par):
         self.k1 = data_par[0]
         self.k2 = data_par[1]
         
@@ -88,7 +107,7 @@ class Solver_local_2to2:
         self.request_solved = True
         self.max_requests = 1
     
-    def pass_parameters(self, data_par):
+    def set_parameters(self, data_par):
         self.data_par = data_par
         
 #    def get_solution(self, ):
@@ -115,7 +134,7 @@ class Solver_local_ntom:
         self.request_solved = True
         self.max_requests = 1
     
-    def pass_parameters(self, data_par):
+    def set_parameters(self, data_par):
         self.data_par = data_par
         
     def get_solution(self, ):

@@ -1,0 +1,48 @@
+{
+    "problem_name": "simple_MPI",
+    "no_parameters": 2,
+    "no_observations": 1,
+    "problem_parameters": {
+        "prior_mean": [5.0, 3.0],
+        "prior_std": [[4,-2],[-2,4]],
+        "observations": [-1e-3],
+        "noise_std": [0.2, 0.1, 0.1]
+    },
+    "solver_module_path": "modules/solver_examples_MPI.py",
+    "solver_module_name": "solver_examples_MPI",
+    "solver_init_name": "Solver_linela2exp_MPI",
+    "solver_parameters": {
+    },
+    "no_solvers": 4,
+    "no_samplers": 8,
+    "samplers_list": [
+        {
+            "type": "MH",
+            "max_samples": 100,
+            "time_limit": 60,
+            "proposal_std": 2.0,
+            "surrogate_is_updated": true
+        },
+        {
+            "type": "DAMH",
+            "max_samples": 1000,
+            "time_limit": 60,
+            "proposal_std": 2.0,
+            "surrogate_is_updated": true
+        },
+        {
+            "type": "DAMH",
+            "max_samples": 5000,
+            "time_limit": 60,
+            "proposal_std": 2.0,
+            "surrogate_is_updated": false
+        }
+    ],
+    "surrogate_type": "poly",
+    "surr_updater_parameters": {
+        "max_degree": 5
+    },
+    "solver_parent_parameters": {
+        "maxprocs": 5
+    }
+}
