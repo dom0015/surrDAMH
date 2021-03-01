@@ -13,13 +13,13 @@ import os
 import sys
 import json
 sys.path.append(os.getcwd())
-from modules import visualization_and_analysis as va
+from surrDAMH.modules import visualization_and_analysis as va
 
 # import os
 # path = os.path.abspath(os.path.dirname(__file__)) # file directory 
 # path_up = os.path.dirname(os.path.dirname(path))
 # conf_path = path_up + "/conf/Darcy.json" 
-conf_path = "conf/Darcy.json" 
+conf_path = "examples/Darcy.json" 
 
 with open(conf_path) as f:
     conf = json.load(f)
@@ -43,7 +43,7 @@ reference_parameters = np.array([-1, -0.5, 0.5, 1])
 solver_instance.set_parameters(reference_parameters)
 reference_observations = solver_instance.get_observations()
 print('ref. obs.:',reference_observations)
-G = va.grf_eigenfunctions.GRF("examples/solvers/unit50.pckl", truncate=100)
+G = va.grf_eigenfunctions.GRF("surrDAMH/modules/unit30.pckl", truncate=100)
 n = conf["solver_parameters"]['n']
 G.plot_realization_interfaces(quantiles=[0.25, 0.5, 0.75, 1.0], nx_new=n, ny_new=n)
 solver_instance.all_solvers[0].plot_solution_image()

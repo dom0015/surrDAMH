@@ -11,13 +11,13 @@ import os
 import sys
 import json
 sys.path.append(os.getcwd())
-from modules import visualization_and_analysis as va
+from surrDAMH.modules import visualization_and_analysis as va
 
 # import os 
 # path = os.path.abspath(os.path.dirname(__file__)) # file directory 
 # path_up = os.path.dirname(os.path.dirname(path))
 # conf_path = path_up + "/conf/simple.json" 
-conf_path = "conf/simple_MPI.json" 
+conf_path = "examples/simple_MPI.json" 
 
 with open(conf_path) as f:
     conf = json.load(f)

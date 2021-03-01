@@ -19,7 +19,7 @@ class Configuration:
 ### MODEL PROBLEM CHOICE:
         if conf_name is None:
             conf_name = "simple_MPI"
-        conf_path = "conf/" + conf_name + ".json"
+        conf_path = "examples/" + conf_name + ".json"
         with open(conf_path) as f:
             conf = json.load(f)
             
