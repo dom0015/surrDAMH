@@ -29,7 +29,7 @@ Obtained samples are saved into saved_samples/**problem_name**.
 
  - executes: `python3 examples/visualization/simple.py 4`
 
-## MPI processes
+## MPI processes 
  - process_SAMPLER.py: **N** sampling processes based on the Metropolis-Hastings (MH) and the delayed-acceptance MH algorithm
  - process_SOLVER.py: solver parent process that spawns new MPI processes (number and type specified in the JSON configuration file)
  - process_COLLECTOR.py: collects snapshots and uses them for the construction and updates of the surrogate model ("poly" or "rbf" ... polynomial or radial basis functions based surrogate model)
