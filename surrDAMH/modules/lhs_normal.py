@@ -7,6 +7,7 @@ Created on Tue Jul 24 13:55:07 2018
 """
 
 import numpy as np
+import numpy.matlib
 from scipy.stats import norm
 
 def lhs_normal(no_parameters,prior_mean,prior_std,n,seed):
