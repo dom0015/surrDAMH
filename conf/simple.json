@@ -8,7 +8,7 @@
         "observations": [-1e-3],
         "noise_std": 2e-4
     },
-    "solver_module_path": "modules/solver_examples.py",
+    "solver_module_path": "examples/solvers/solver_examples.py",
     "solver_module_name": "solver_examples",
     "solver_init_name": "Solver_linela2exp_local",
     "solver_parameters": {
