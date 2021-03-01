@@ -7,7 +7,7 @@ Created on Wed Jan 22 10:15:50 2020
 """
 
 import numpy as np
-#import numpy.matlib
+import numpy.matlib
 import scipy.sparse.linalg as splin
 
 class Surrogate_apply: # initiated by all SAMPLERs
