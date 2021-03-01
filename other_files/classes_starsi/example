@@ -1,2 +1,0 @@
-mpirun -n 3 --oversubscribe python3 process_SAMPLER.py : -n 1 python3 process_SOLVER.py : -n 1 python3 process_COLLECTOR.py
- 
