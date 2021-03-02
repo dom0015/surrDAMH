@@ -64,7 +64,7 @@ Path and constructor arguments of the spawed solver (wrapper) class are specifie
 - `set_parameters(self, parameters: list[no_parameters]) -> None`
 - `get_observations(self) -> list[no_observations]`
 
-![MPI processes](img.pdf "MPI processes")
+![MPI processes](img.png "MPI processes")
 
 ## JSON configuration file example & comments
   `{`<br>
