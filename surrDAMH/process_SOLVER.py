@@ -45,10 +45,8 @@ no_parameters = Solvers[0].no_parameters
 status = MPI.Status()
 received_data = np.zeros(no_parameters)
 request_queue = deque()
-#temp_received_data = [received_data] * no_solvers
 try:
     while any(is_active_sampler): # while at least 1 sampling algorithm is active
-    #        print(is_active_sampler,"while at least 1 sampling algorithm is active - rank", rank_world)
         tmp = comm_world.Iprobe(source=MPI.ANY_SOURCE, tag=MPI.ANY_TAG, status=status)
         # receive one message from one sampler
         if tmp: # if there is an incoming message from any source (not only from sampler)
@@ -56,7 +54,6 @@ try:
             if rank_source in samplers_rank: # if source is sampler
                 tag = status.Get_tag()
                 comm_world.Recv(received_data, source=rank_source, tag=tag)
-    #            print('DEBUG - MANAGER Recv request FROM sampler', rank_source, 'TO:', rank_world, "TAG:", tag)
                 if tag == 0: # if received message has tag 0, switch corresponding sampling alg. to inactive
                     # assumes that there will be no other incoming message from that source 
                     is_active_sampler[samplers_rank == rank_source] = False
@@ -69,7 +66,6 @@ try:
                     is_free[i] = True # mark the solver as free
                     for j in range(len(occupied_by_source[i])):
                         comm_world.Send(sent_data[j,:].copy(), dest=occupied_by_source[i][j], tag=occupied_by_tag[i][j])
-    #                    print('DEBUG - MANAGER Send solution FROM', rank_world, 'TO:', occupied_by_source[i][j], "TAG:", occupied_by_tag[i][j])
             if is_free[i]:
                 occupied_by_source[i] = []
                 occupied_by_tag[i] = []

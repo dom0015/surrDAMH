@@ -1,6 +1,9 @@
 # surrDAMH
 Python implementation of surrogate-accelerated Markov chain Monte Carlo methods for Bayesian inversion
 
+Provides samples from the posterior distribution π(u|y) ∝ f<sub>η</sub>(y -- G(u)) π<sub>0</sub>(u), where y is a given vector of observations, G is an observation operator, f<sub>η</sub> is probability density function (pdf) of Gaussian observational noise, π<sub>0</sub>(u) is Gaussian prior pdf.
+
+
 ## Requirements
 - numpy
 - scipy
@@ -61,8 +64,10 @@ Path and constructor arguments of the spawed solver (wrapper) class are specifie
 - `set_parameters(self, parameters: list[no_parameters]) -> None`
 - `get_observations(self) -> list[no_observations]`
 
+![MPI processes](img.pdf "MPI processes")
+
 ## JSON configuration file example & comments
-  `{<br>`
+  `{`<br>
   `    "problem_name": "Darcy",`<br>
   `    "no_parameters": 4,`<br>
   `    "no_observations": 3, ` *length of the vector of the observations, repetitive observations are not supported*<br>

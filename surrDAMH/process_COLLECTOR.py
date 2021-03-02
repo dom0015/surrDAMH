@@ -8,7 +8,6 @@ Created on Thu Nov  7 13:26:55 2019
 
 from mpi4py import MPI
 import numpy as np
-#from tqdm import tqdm
 from configuration import Configuration
 
 # communicates with: SAMPLERs 
@@ -47,30 +46,9 @@ if any(is_active_sampler):
         # sends signal to this (active) sampler that he is ready to receive data:
         request_Isend[i] = comm_world.Isend(empty_buffers[i], dest=samplers_ranks[i], tag=tag_ready_to_receive)
 status = MPI.Status()
-#progress_bar = tqdm(total=10000)
 no_snapshots_old = 0
 while any(is_active_sampler): # while at least 1 sampling algorithm is active
     # checks if there is an incoming message from any sampling algorithm:
-    # TO DO : check for all possible kinds of message in each loop
-#    tmp = comm_world.Iprobe(source=MPI.ANY_SOURCE, tag=MPI.ANY_TAG, status=status)
-#    if tmp:
-#        rank_source = status.Get_source()
-#        tag = status.Get_tag()
-#        if tag == tag_terminate:
-#            # if received message has tag 0, switch corresponding sampler to inactive
-#            # assumes that there will be no other incoming message from that source 
-#            is_active_sampler[samplers_ranks == rank_source] = False
-##            tmp = comm_world.recv(source=rank_source, tag=tag) # useless received data
-#            tmp = np.empty((1,)) # TO DO: useless pointer / cancel message
-#            comm_world.Recv(tmp,source=rank_source, tag=tag)
-#        elif tag == tag_ready_to_receive:
-#            # if received message has tag 1, the corresponding sampler
-#            # is ready to receive updated data
-#            is_ready_sampler[samplers_ranks == rank_source] = True
-#            tmp = np.empty((1,)) # TO DO: useless pointer / cancel message
-#            comm_world.Recv(tmp,source=rank_source, tag=tag)
-#        else:
-#            print("TO DO: different option!")
     for i in samplers_ranks:
         probe = comm_world.Iprobe(source=i, tag=tag_terminate, status=status)
         if probe:
@@ -89,8 +67,6 @@ while any(is_active_sampler): # while at least 1 sampling algorithm is active
     if any(is_active_sampler):
         for i in np.nditer(np.where(is_active_sampler)):
             # checks if there are incoming data from this active sampler:
-#            tmp = request_recv[i].test()#status=status)
-#            if tmp[0]:
             if request_irecv[i].Get_status():
                 received_data = request_irecv[i].wait()
                 # expects to receive data from this active sampler later:
@@ -101,12 +77,8 @@ while any(is_active_sampler): # while at least 1 sampling algorithm is active
                 request_Isend[i] = comm_world.Isend(empty_buffers[i], dest=samplers_ranks[i], tag=tag_ready_to_receive)
                 list_received_data.extend(received_data.copy())
         if len(list_received_data)>0:
-            # print("COLLECTOR:",len(list_received_data), is_active_sampler)
             local_updater_instance.add_data(list_received_data)
             SOL, no_snapshots = local_updater_instance.update()
-    #            print("COLLECTOR computed new update:",SOL[0].shape,SOL[1].shape)
-    #        print("RANK", rank_world, "collected snapshots:", no_snapshots)
-    #        progress_bar.update(no_snapshots-no_snapshots_old)
             no_snapshots_old = no_snapshots
             list_received_data = []
             is_free_updater = False

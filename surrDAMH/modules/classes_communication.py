@@ -9,7 +9,6 @@ Created on Tue Oct 22 15:00:39 2019
 from mpi4py import MPI
 import numpy as np
 import sys
-# import time
 
 class Solver_MPI_parent: # initiated by full SOLVER
     def __init__(self, no_parameters, no_observations, no_samplers, problem_name, maxprocs=1):
@@ -24,13 +23,10 @@ class Solver_MPI_parent: # initiated by full SOLVER
         self.tag += 1
         self.data_par = data_par.copy()
         self.comm.Bcast(np.array([self.tag]), root=MPI.ROOT)
-        #self.comm.Send(self.data_par, dest=0, tag=self.tag)
         self.comm.Bcast(self.data_par, root=MPI.ROOT)
-        # print('DEBUG - PARENT Send request FROM', self.comm.Get_rank(), '(', MPI.COMM_WORLD.Get_rank(), ')', 'TO child:', 0, "TAG:", self.tag)
         
     def recv_observations(self):
         self.comm.Recv(self.received_data, source=0, tag=self.tag)
-        # print('DEBUG - PARENT Recv solution FROM child', 0, 'TO:', self.comm.Get_rank(), '(', MPI.COMM_WORLD.Get_rank(), ')', "TAG:", self.tag)
         return self.received_data.reshape((1,-1)).copy()
     
     def is_solved(self):
@@ -42,7 +38,6 @@ class Solver_MPI_parent: # initiated by full SOLVER
             return False
     
     def terminate(self):
-        #self.comm.Send(np.empty((1,self.no_parameters)), dest=0, tag=0)
         self.comm.Bcast(np.array([0]), root=MPI.ROOT)
         self.comm.Barrier()
         self.comm.Disconnect()
@@ -59,7 +54,6 @@ class Solver_MPI_collector_MPI: # initiated by SAMPLERs
         self.is_updated = is_updated
         self.rank_collector = rank_collector
         self.tag_solver = 0
-#        self.tag_collector = 0
         self.received_data = np.zeros(self.no_observations)
         self.terminated_solver = None
         self.terminated_collector = True
@@ -70,32 +64,13 @@ class Solver_MPI_collector_MPI: # initiated by SAMPLERs
     def send_parameters(self, sent_data):
         self.tag_solver += 1
         self.comm.Send(sent_data, dest=self.rank_solver, tag=self.tag_solver)
-#        print('DEBUG - Solver_MPI_collector_MPI (', self.rank, ') Send request FROM', self.rank, 'TO:', self.rank_solver, "TAG:", self.tag_solver)
-    
+
     def recv_observations(self, ):
         self.comm.Recv(self.received_data, source=self.rank_solver, tag=self.tag_solver)
-#        print('DEBUG - Solver_MPI_collector_MPI (', self.rank, ') Recv solution FROM', self.rank_solver, 'TO:', self.rank, "TAG:", self.tag_solver)
         return self.received_data.copy()
-    
-#    def send_to_data_collector(self, sent_snapshot):
-#        # needed only if self.is_updated == True
-#        self.tag_collector += 1
-#        print('DEBUG - Solver_MPI_collector_MPI (', self.rank, ') - sent_snapshot', self.rank_collector, self.comm.Get_size(), self.rank)
-#        self.comm.send(sent_snapshot, dest=self.rank_collector, tag=self.tag_collector)
-        
-#TO DO: implement is_solved method (for non-spawned full solvers)
-#    def is_solved(self):
-#        # check COMM_WORLD if there is an incoming message from the solver
-#        tmp = self.comm.Iprobe(source=self.rank_solver, tag=self.tag_solver)
-#        if tmp:
-#            return True
-#        else:
-#            return False
         
     def terminate(self, ):
-        # TO DO: assume that terminate may be called multiple times
         if not self.terminated_solver:
-#            print('DEBUG - Solver_MPI_collector_MPI terminate',self.rank_solver, self.comm.Get_size(), self.rank)
             self.comm.Send(self.empty_buffer, dest=self.rank_solver, tag=0)
             self.terminated_solver = True
         if not self.terminated_collector:
@@ -109,7 +84,7 @@ class Solver_local_collector_MPI: # initiated by SAMPLERs
     def __init__(self, no_parameters, no_observations, local_solver_instance, is_updated=False, rank_collector=None):
         self.max_requests = 1
         self.comm = MPI.COMM_WORLD
-        self.max_buffer_size = 1<<30 #20 # TO DO: hard coded
+        self.max_buffer_size = 1<<30
         self.local_solver_instance = local_solver_instance
         self.is_updated = is_updated
         self.rank_collector = rank_collector
@@ -123,7 +98,7 @@ class Solver_local_collector_MPI: # initiated by SAMPLERs
         self.terminated_data = True
         if not rank_collector is None:
             self.terminated_data = False
-        self.computation_in_progress = False # TO DO: remove?
+        self.computation_in_progress = False
         self.request_recv = self.comm.irecv(self.max_buffer_size, source=self.rank_collector, tag=self.tag_sent_data)
         self.request_send = None
         self.empty_buffer = np.zeros((1,))
@@ -136,7 +111,6 @@ class Solver_local_collector_MPI: # initiated by SAMPLERs
         self.computation_in_progress = True
 
     def recv_observations(self, ):
-        # TO DO: check if SOL is not None, otherwise wait for SOL
         computed_observations = self.local_solver_instance.apply(self.solver_data[self.solver_data_idx],self.parameters)
         self.computation_in_progress = False
         return computed_observations
@@ -149,29 +123,22 @@ class Solver_local_collector_MPI: # initiated by SAMPLERs
         self.list_snapshots_to_send.append(snapshot_to_send)
         tmp = self.comm.Iprobe(source=self.rank_collector, tag=self.tag_ready_to_receive)
         if tmp: # if COLLECTOR is ready to receive new snapshots
-            tmp = np.zeros((1,)) # TO DO: useless pointer / cancel message
+            tmp = np.zeros((1,)) # TO DO: useless / cancel message
             self.comm.Recv(tmp,source=self.rank_collector, tag=self.tag_ready_to_receive)
-#            print('DEBUG - Solver_local_collector_MPI (', self.comm.Get_rank(), ') - sent_snapshots to', self.rank_collector)
             data_to_pickle = self.list_snapshots_to_send.copy()
             if self.request_send is not None:
                 self.request_send.wait()
             self.request_send = self.comm.isend(data_to_pickle, dest=self.rank_collector, tag=self.tag_sent_data)
             self.list_snapshots_to_send = []
-#        time.sleep(0.1)
         self.receive_update_if_ready()
 
     def receive_update_if_ready(self):
         # Receives updated solver data (e.g. for updated surrogate model).
-        # TO DO: when to check for updates
-        # TO DO: avoid copying of received data
         # check COMM_WORLD if there is an incoming message from COLLECTOR:
-#        r = self.request_recv.test()#status=self.status)
-#        if r[0]:
         try:
             tmp = self.request_recv.Get_status()
         except:
             print("EX in Solver_local_collector_MPI")    
-#        print("RANK", self.comm.Get_rank(), "recv status:", tmp)
         if tmp:
             r = self.request_recv.wait()
             self.solver_data_iterator += 1
@@ -179,27 +146,10 @@ class Solver_local_collector_MPI: # initiated by SAMPLERs
             self.solver_data_idx = 1 - self.solver_data_idx
             self.request_recv = self.comm.irecv(self.max_buffer_size, source=self.rank_collector, tag=self.tag_sent_data)
             self.comm.Isend(self.empty_buffer, dest=self.rank_collector, tag=self.tag_ready_to_receive)
-            
-#    def is_solved(self):
-#        if self.computation_in_progress:
-#            return False
-#        else:
-#            return True
 
     def terminate(self, ):
-        # TO DO: remove?
-#        tmp = self.request_recv.Get_status()
-#        if tmp:
-#            print("RANK", self.comm.Get_rank(),"will receive update")
-#            r = self.request_recv.wait()
-#            self.solver_data_iterator += 1
-#            print("RANK", self.comm.Get_rank(), "received update:", self.solver_data_iterator, r[0].shape, r[1].shape)
-#            self.solver_data[1 - self.solver_data_idx] = r
-#            self.solver_data_idx = 1 - self.solver_data_idx
-        # TO DO: assume that terminate may be called multiple times
         if not self.terminated:
             self.terminated = True
         if not self.terminated_data:
-#            self.comm.send([], dest=self.rank_collector, tag=self.tag_terminate)
             self.comm.Isend(self.empty_buffer, dest=self.rank_collector, tag=self.tag_terminate)
             self.terminated_data = True

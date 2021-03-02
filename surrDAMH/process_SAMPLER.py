@@ -19,7 +19,6 @@ size_world = comm_world.Get_size()
 no_samplers, problem_name = comm_world.recv(source=MPI.ANY_SOURCE)
 C = Configuration(no_samplers, problem_name)
 seed0 = max(1000,size_world)*rank_world # TO DO seeds
-# print("PROCESS SAMPLER, seeds:", [seed0, seed0+1, seed0+2], "RANK:", rank_world)
 
 my_Sol = classes_communication.Solver_MPI_collector_MPI(no_parameters=C.no_parameters, 
                               no_observations=C.no_observations, 
@@ -27,8 +26,7 @@ my_Sol = classes_communication.Solver_MPI_collector_MPI(no_parameters=C.no_param
 my_Surr_Solver = C.surr_solver_init(**C.surr_solver_parameters)
 my_Surr = classes_communication.Solver_local_collector_MPI(no_parameters=C.no_parameters, 
                                         no_observations=C.no_observations, 
-                                        local_solver_instance=my_Surr_Solver, 
-                                        #is_updated=C.surrogate_is_updated, 
+                                        local_solver_instance=my_Surr_Solver,
                                         rank_collector=C.rank_surr_collector)
 my_Prob = cS.Problem_Gauss(no_parameters=C.no_parameters,
                            noise_std=C.problem_parameters['noise_std'],
@@ -38,18 +36,13 @@ my_Prob = cS.Problem_Gauss(no_parameters=C.no_parameters,
                            observations=C.problem_parameters['observations'],
                            seed=seed0,
                            name=C.problem_name)
-my_Prop = cS.Proposal_GaussRandomWalk(no_parameters=C.no_parameters,
-                                      seed=seed0+1)
-# initial_sample = my_Prob.prior_mean
+my_Prop = cS.Proposal_GaussRandomWalk(no_parameters=C.no_parameters, seed=seed0+1)
+
 initial_samples = LHS.lhs_normal(C.no_parameters,C.problem_parameters['prior_mean'],C.problem_parameters['prior_std'],C.no_samplers,0)
 initial_sample = initial_samples[rank_world]
-# initial_sample = initial_samples[0]
-# proposal_stds = [0.025, 0.05, 0.075, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5]
-# proposal_std = proposal_stds[rank_world]
 for i,d in enumerate(C.list_alg):
-    # TO DO: adaptive proposal needed?
+    # TO DO: adaptive proposal if needed
     my_Prop.set_covariance(proposal_std = d['proposal_std'])
-    # my_Prop.set_covariance(proposal_std = proposal_std)
     seed = seed0 + 2 + i
     if d['type'] == 'MH':
         my_Alg = cS.Algorithm_MH(my_Prob, my_Prop, my_Sol,
@@ -61,7 +54,7 @@ for i,d in enumerate(C.list_alg):
                          save_raw_data=True,
                          name='alg' + str(i) + 'MH_rank' + str(rank_world),
                          seed=seed)
-    else: # TO DO: first damh sample is last mh sample
+    else:
         my_Alg = cS.Algorithm_DAMH(my_Prob, my_Prop, my_Sol,
                         Surrogate = my_Surr,
                         surrogate_is_updated = d['surrogate_is_updated'],

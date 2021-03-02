@@ -52,11 +52,6 @@ class Algorithm_PARENT:
     def prepare(self):
         self.time_start = time.time()
         if self.is_saved:
-            # chain:
-            # filename = "saved_samples/" + self.Problem.name + "/" + self.name + ".csv"
-            # os.makedirs(os.path.dirname(filename), exist_ok=True)
-            # self.__file = open(filename, 'w')
-            # self.__writer = csv.writer(self.__file)
             # saves [no. sample posterior pre_posterior]:
             filename_G = "saved_samples/" + self.Problem.name + "/data/" + self.name + ".csv"
             os.makedirs(os.path.dirname(filename_G), exist_ok=True)
@@ -106,7 +101,6 @@ class Algorithm_PARENT:
     def close_files(self):
         self.__write_to_file()
         if self.is_saved:
-            # self.__file.close()
             self.__file_G.close()
             filename_notes = "saved_samples/" + self.Problem.name + "/notes/" + self.name + ".csv"
             os.makedirs(os.path.dirname(filename_notes), exist_ok=True)
@@ -125,15 +119,12 @@ class Algorithm_PARENT:
         temp = self.__generator.uniform(0.0,1.0)
         temp = np.log(temp)
         if temp<log_ratio: # accepted
-#            print("class_SAMPLER acceptance - log(rand) =",temp,"< log_ratio =",log_ratio)
             return True
         else:
-#            print("class_SAMPLER acceptance - log(rand) =",temp,"> log_ratio =",log_ratio, "REJECTED")
             return False
         
     def __write_to_file__(self):
         row = [1+self.no_rejected_current] + list(self.current_sample)
-        # self.__writer.writerow(row)
         row.append(self.posterior_current_sample)
         row.append(self.pre_posterior_current_sample)
         self.__writer_G.writerow(row)
@@ -150,35 +141,24 @@ class Algorithm_MH(Algorithm_PARENT): # initiated by SAMPLERs
         super().__init__(Problem, Proposal, Solver, max_samples, name, seed, initial_sample, G_initial_sample, Surrogate, is_saved, save_raw_data, surrogate_is_updated, time_limit)
 
     def run(self):
-        #print("SAMPLER at RANK", MPI.COMM_WORLD.Get_rank(), "starts (MH)")
         self.prepare()
         for i in range(self.max_samples):
             self.proposed_sample = self.Proposal.propose_sample(self.current_sample)
             self.request_observations()
             if self.is_accepted_sample(self.log_ratio):
-                # if self.is_saved:
-                #     row = [i]
-                #     row.append(self.posterior_proposed_sample)
-                #     self.__writer_accepted.writerow(row)
                 self.if_accepted()
             else:
-                # if self.is_saved:
-                #     row = [i]
-                #     row.append(self.posterior_proposed_sample)
-                #     self.__writer_rejected.writerow(row)
                 self.if_rejected()
             if time.time() - self.time_start > self.time_limit:
                 print("SAMPLER at RANK", MPI.COMM_WORLD.Get_rank(), "time limit reached - loop",i)
                 break
         self.close_files()
-        #print("SAMPLER at RANK", MPI.COMM_WORLD.Get_rank(), "finishes (MH)")
         
 class Algorithm_DAMH(Algorithm_PARENT): # initiated by SAMPLERs
     def __init__(self, Problem, Proposal, Solver, max_samples, name, seed=0, initial_sample=None, G_initial_sample=None, Surrogate=None, is_saved=True, save_raw_data=False, surrogate_is_updated=True, time_limit=float('inf')):
         super().__init__(Problem, Proposal, Solver, max_samples, name, seed, initial_sample, G_initial_sample, Surrogate, is_saved, save_raw_data, surrogate_is_updated, time_limit)
 
     def run(self):
-        #print("SAMPLER at RANK", MPI.COMM_WORLD.Get_rank(), "starts (DAMH) with initial sample",self.current_sample)
         self.prepare()
         if self.is_saved:
             # posterior (vs approximated posterior) in rejected samples:
@@ -194,7 +174,6 @@ class Algorithm_DAMH(Algorithm_PARENT): # initiated by SAMPLERs
         self.Surrogate.send_parameters(self.current_sample)
         GS_current_sample = self.Surrogate.recv_observations()
         self.pre_posterior_current_sample = self.compute_posterior(self.current_sample, GS_current_sample)
-#        pre_posterior_current_sample_old_surrogate = pre_posterior_current_sample
         for i in range(self.max_samples):
             self.proposed_sample = self.Proposal.propose_sample(self.current_sample)
             # it is necessary to recalculate GS_current_cample,
@@ -235,7 +214,6 @@ class Algorithm_DAMH(Algorithm_PARENT): # initiated by SAMPLERs
         self.close_files()
         self.__file_rejected.close()
         self.__file_accepted.close()
-        #print("SAMPLER at RANK", MPI.COMM_WORLD.Get_rank(), "finishes (DAMH)")
 
 class Proposal_GaussRandomWalk: # initiated by SAMPLERs
     def __init__(self, no_parameters, proposal_std=1.0, proposal_cov=None, seed=0):
@@ -280,18 +258,6 @@ class Problem_Gauss: # initiated by SAMPLERs
             self.prior_mean = np.full((no_parameters,),prior_mean)
         else:
             self.prior_mean = np.array(prior_mean)
-            
-        # # prior std/cov:
-        # self.prior_cov = prior_cov
-        # if self.prior_cov is None:
-        #     self.get_log_prior = self._get_log_prior_uncorrelated
-        #     if np.isscalar(prior_std):
-        #         self.prior_std = np.full((no_parameters,),prior_std)
-        #     else:
-        #         self.prior_std = np.array(prior_std)
-        # else:
-        #     self.prior_std = None
-        #     self.get_log_prior = self.__get_log_prior_multivariate
             
         # prior std is scalar/vector/covariance matrix:
         if np.isscalar(prior_std):
@@ -353,25 +319,7 @@ class Problem_Gauss: # initiated by SAMPLERs
         sample = generator.multivariate_normal(var_mean,var_cov)
         return sample
     
-#    def sample_prior(self,generator=None):
-#        if generator is None:
-#            generator = self.__generator
-#        if self.prior_cov is None:
-#            sample = self.__sample_uncorrelated(generator, self.prior_mean, self.prior_std)
-#        else:
-#            sample = self.__sample_multivariate(generator, self.prior_mean, self.prior_cov)
-#        return sample
-#    
-#    def sample_noise(self,generator=None):
-#        if generator is None:
-#            generator = self.__generator
-#        if self.noise_cov is None:
-#            sample = self.__sample_uncorrelated(generator, self.noise_mean, self.noise_std)
-#        else:
-#            sample = self.__sample_multivariate(generator, self.noise_mean, self.noise_cov)
-#        return sample
-    
-class Snapshot: # initiated by SAMPLERs (if surrogate is updated) and
+class Snapshot:
     def __init__(self, sample=None, G_sample=None, weight=None):
         self.sample = sample
         self.G_sample = G_sample

@@ -22,21 +22,9 @@ class Surrogate_apply: # initiated by all SAMPLERs
         if degree > self.current_degree:
             self.current_degree = degree
             self.on_degree_change()
-        #GS_datapoints = np.zeros((no_datapoints,self.no_parameters))
-        # phi = np.ones((no_datapoints,self.no_poly))
         hermite_eval = poly_eval_multi(self.hermite,datapoints)
-        # PHI = np.ones((no_datapoints,self.no_poly))
-        # for i in range(self.no_poly):
-        #     for j in range(self.no_parameters):
-        #         # H_row = self.hermite[self.poly[i,j],:]
-        #         # par_col = datapoints[:,j]
-        #         # phi[:,i] *= poly_eval(H_row,par_col)
-        #         PHI[:,i] *= hermite_eval[:,j,self.poly[i,j]]
         PHI = np.ones((no_datapoints,self.no_poly))
         for j in range(self.no_parameters):
-            # H_row = self.hermite[self.poly[i,j],:]
-            # par_col = datapoints[:,j]
-            # phi[:,i] *= poly_eval(H_row,par_col)
             PHI *= hermite_eval[:,j,self.poly[:,j]]
         GS_datapoints = np.matmul(PHI,MAT)
         return GS_datapoints
@@ -51,7 +39,6 @@ class Surrogate_update: # initiated by COLLECTOR
     def __init__(self, no_parameters, no_observations, max_degree=5):
         self.no_parameters = no_parameters
         self.no_observations = no_observations
-#        self.is_updated = is_updated
         self.max_degree = max_degree
         # all processed data (used for surrogate construction):
         self.processed_par = np.empty((0,self.no_parameters))
@@ -74,7 +61,7 @@ class Surrogate_update: # initiated by COLLECTOR
         for i in range(L):
             new_par[i,:] = snapshots[i].sample
             new_obs[i,:] = snapshots[i].G_sample
-            new_wei[i,:] = 1 #snapshots[i].weight # TO DO! TEMP!
+            new_wei[i,:] = 1
         self.non_processed_par = np.vstack((self.non_processed_par, new_par))
         self.non_processed_obs = np.vstack((self.non_processed_obs, new_obs))
         self.non_processed_wei = np.vstack((self.non_processed_wei, new_wei))
@@ -87,12 +74,6 @@ class Surrogate_update: # initiated by COLLECTOR
         if degree > self.current_degree:
             self.current_degree = degree
             self.on_degree_change()
-        # poly_non_processed = np.ones((no_non_processed,self.no_poly))
-        # for i in range(self.no_poly):
-        #     for j in range(self.no_parameters):
-        #         H_row = self.hermite[self.poly[i,j],:]#.reshape((1,degree+1))
-        #         par_col = self.non_processed_par[:,j]#.reshape((no_snapshots,1))
-        #         poly_non_processed[:,i] *= poly_eval(H_row,par_col)
         PHI_non_processed = np.ones((no_non_processed,self.no_poly))
         hermite_eval = poly_eval_multi(self.hermite,self.non_processed_par)
         for j in range(self.no_parameters):
@@ -116,7 +97,7 @@ class Surrogate_update: # initiated by COLLECTOR
         SOL = [MAT, self.current_degree]
         return SOL, no_snapshots
 
-    def on_degree_change(self): # TO DO: check for repetitive calculations
+    def on_degree_change(self):
         self.poly = generate_polynomials_degree(self.no_parameters, self.current_degree)
         self.no_poly = self.poly.shape[0]
         self.hermite = hermite_poly_normalized(self.current_degree)
@@ -125,13 +106,6 @@ class Surrogate_update: # initiated by COLLECTOR
         hermite_eval = poly_eval_multi(self.hermite,self.processed_par)
         for j in range(self.no_parameters):
             self.PHI_processed *= hermite_eval[:,j,self.poly[:,j]]
-            
-        # self.poly_processed = np.ones((self.no_processed,self.no_poly))
-        # for i in range(self.no_poly):
-        #     for j in range(self.no_parameters):
-        #         H_row = self.hermite[self.poly[i,j],:]#.reshape((1,degree+1))
-        #         par_col = self.processed_par[:,j]#.reshape((no_snapshots,1))
-        #         self.poly_processed[:,i] *= poly_eval(H_row,par_col)
         
         self.PHI_processed_wei = (self.PHI_processed * self.processed_wei)#.transpose()
         print("SURROGATE polynomial degree increased to:", self.current_degree, "- no poly:", self.no_poly)
