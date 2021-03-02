@@ -216,23 +216,22 @@ class Algorithm_DAMH(Algorithm_PARENT): # initiated by SAMPLERs
         self.__file_accepted.close()
 
 class Proposal_GaussRandomWalk: # initiated by SAMPLERs
-    def __init__(self, no_parameters, proposal_std=1.0, proposal_cov=None, seed=0):
+    def __init__(self, no_parameters, proposal_std=1.0, seed=0):
         self.no_parameters = no_parameters
         self.__generator = np.random.RandomState(seed)
-        self.set_covariance(proposal_std, proposal_cov)
+        self.set_covariance(proposal_std)
         self.is_symmetric = True
         self.is_exponential = True
         
-    def set_covariance(self, proposal_std=1.0, proposal_cov=None):
-        self.proposal_cov = proposal_cov
-        if self.proposal_cov is None:
-            self.propose_sample = self._propose_sample_uncorrelated
-            if np.isscalar(proposal_std):
-                self.proposal_std = np.full((self.no_parameters,),proposal_std)
-            else:
-                self.proposal_std = np.array(proposal_std)
+    def set_covariance(self, proposal_std=1.0):
+        # prior std is scalar/vector/covariance matrix:
+        if np.isscalar(proposal_std):
+            self.proposal_std = np.full((self.no_parameters,),proposal_std)
         else:
-            self.proposal_std = None
+            self.proposal_std = np.array(proposal_std)
+        if self.proposal_std.ndim == 1: # proposal - normal uncorrelated
+            self.propose_sample = self._propose_sample_uncorrelated
+        else: # proposal - normal correlated
             self.propose_sample = self.__propose_sample_multivariate
 
     def _propose_sample_uncorrelated(self, current_sample):
@@ -240,7 +239,7 @@ class Proposal_GaussRandomWalk: # initiated by SAMPLERs
         return sample
     
     def __propose_sample_multivariate(self, current_sample):
-        sample = self.__sample_multivariate(self.__generator, current_sample, self.proposal_cov)
+        sample = self.__sample_multivariate(self.__generator, current_sample, self.proposal_std)
         return sample
     
     def __sample_uncorrelated(self,generator,var_mean,var_std):
@@ -252,7 +251,7 @@ class Proposal_GaussRandomWalk: # initiated by SAMPLERs
         return sample
     
 class Problem_Gauss: # initiated by SAMPLERs
-    def __init__(self, no_parameters, prior_mean=0.0, prior_std=1.0, noise_std=1.0, noise_cov=None, no_observations=None, observations=None, seed=0, name='default_problem_name'):
+    def __init__(self, no_parameters, prior_mean=0.0, prior_std=1.0, noise_std=1.0, no_observations=None, observations=None, seed=0, name='default_problem_name'):
         self.no_parameters = no_parameters
         if np.isscalar(prior_mean):
             self.prior_mean = np.full((no_parameters,),prior_mean)
@@ -274,16 +273,17 @@ class Problem_Gauss: # initiated by SAMPLERs
             no_observations = len(observations)
         self.no_observations = no_observations
         self.noise_mean = np.zeros((no_observations,))
-        self.noise_cov = noise_cov
-        if self.noise_cov is None:
-            self.get_log_likelihood = self._get_log_likelihood_uncorrelated
-            if np.isscalar(noise_std):
-                self.noise_std = np.full((no_observations,),noise_std)
-            else:
-                self.noise_std = np.array(noise_std)
+        
+        # noise std is scalar/vector/covariance matrix:
+        if np.isscalar(noise_std):
+            self.noise_std = np.full((no_observations,),noise_std)
         else:
-            self.noise_std = None
+            self.noise_std = np.array(noise_std)
+        if self.noise_std.ndim == 1: # noise - normal uncorrelated
+            self.get_log_likelihood = self._get_log_likelihood_uncorrelated
+        else: # noise - normal correlated
             self.get_log_likelihood = self.__get_log_likelihood_multivariate
+        
         self.name = name
         self.is_exponential = True
         self.__generator = np.random.RandomState(seed)
@@ -295,7 +295,7 @@ class Problem_Gauss: # initiated by SAMPLERs
     
     def __get_log_likelihood_multivariate(self, G_sample):
         v = self.observations - G_sample
-        invCv = np.linalg.solve(self.noise_cov,v)
+        invCv = np.linalg.solve(self.noise_std,v)
         return -0.5*np.dot(v,invCv)
 
     def _get_log_prior_uncorrelated(self, sample):
@@ -310,14 +310,6 @@ class Problem_Gauss: # initiated by SAMPLERs
     
     def get_log_posterior(self, sample, G_sample):
         return self.get_log_likelihood(G_sample) + self.get_log_prior(sample)
-    
-    def __sample_uncorrelated(self,generator,var_mean,var_std):
-        sample = generator.normal(var_mean,var_std)
-        return sample
-    
-    def __sample_multivariate(self,generator,var_mean,var_cov):
-        sample = generator.multivariate_normal(var_mean,var_cov)
-        return sample
     
 class Snapshot:
     def __init__(self, sample=None, G_sample=None, weight=None):

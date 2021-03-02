@@ -19,10 +19,6 @@ class Surrogate_apply: # initiated by all SAMPLERs
 
     def apply(self, SOL, datapoints):
         COEFS, self.alldata_par = SOL
-#        if self.alldata_par == None:
-        # self.alldata_par = alldata_par
-#        else:
-#        self.alldata_par = np.vstack((self.alldata_par,alldata_par))
         no_snapshots = self.alldata_par.shape[0]
         datapoints = datapoints.reshape(-1,self.no_parameters)
         no_datapoints = datapoints.shape[0]
@@ -43,7 +39,7 @@ class Surrogate_apply: # initiated by all SAMPLERs
         GS_datapoints = np.reshape(GS_datapoints,(no_datapoints,self.no_observations)) + np.reshape(pp,(no_datapoints,self.no_observations))
         return GS_datapoints
 
-class Surrogate_update: # initiated by COLLECTOR # no_keep=50, expensive=True
+class Surrogate_update: # initiated by COLLECTOR
     def __init__(self, no_parameters, no_observations, initial_iteration=None, no_keep=None, expensive=False, kernel_type=0, solver_tol_exp=-6, solver_type='minres'):
         self.no_parameters = no_parameters
         self.no_observations = no_observations
@@ -66,14 +62,13 @@ class Surrogate_update: # initiated by COLLECTOR # no_keep=50, expensive=True
     def add_data(self,snapshots):
         # add new data to a matrix of non-processed data
         L = len(snapshots)
-        # print("new snapshots:",L)
         new_par = np.empty((L,self.no_parameters))
         new_obs = np.empty((L,self.no_observations))
         new_wei = np.empty((L,1))
         for i in range(L):
             new_par[i,:] = snapshots[i].sample
             new_obs[i,:] = snapshots[i].G_sample
-            new_wei[i,:] = 1 #snapshots[i].weight # TO DO! TEMP!
+            new_wei[i,:] = 1
         self.non_processed_par = np.vstack((self.non_processed_par, new_par))
         self.non_processed_obs = np.vstack((self.non_processed_obs, new_obs))
         self.non_processed_wei = np.vstack((self.non_processed_wei, new_wei))
@@ -83,7 +78,7 @@ class Surrogate_update: # initiated by COLLECTOR # no_keep=50, expensive=True
         no_non_processed = self.non_processed_par.shape[0]
         no_snapshots = self.no_processed + no_non_processed # both processed and non-processed
         TEMP = np.zeros((no_snapshots,no_snapshots))
-        ## TO DO: temporary
+
         self.processed_par = np.vstack((self.processed_par, self.non_processed_par))
         self.processed_obs = np.vstack((self.processed_obs, self.non_processed_obs))
         self.processed_wei = np.vstack((self.processed_wei, self.non_processed_wei))
@@ -99,15 +94,14 @@ class Surrogate_update: # initiated by COLLECTOR # no_keep=50, expensive=True
             T = np.transpose(Q)
             TEMP = TEMP + np.power(Q-T,2)
         np.sqrt(TEMP,out=TEMP) # distances between all points
-        # print("surr TEMP shape:",TEMP.shape)
         if self.no_keep is not None:
             MAX = 2*np.max(TEMP)
             M = TEMP+MAX*np.eye(no_snapshots) # add MAX to zero distances on diagonal
             to_keep = np.ones(no_snapshots,dtype=bool) # bool - centers to keep
-            for i in range(no_snapshots - self.no_keep): # (no_snapshots - no_keep) have to ne removed 
+            for i in range(no_snapshots - self.no_keep): # (no_snapshots - no_keep) have to be removed 
                 argmin = np.argmin(M)
                 xx = argmin // no_snapshots
-                if self.expensive == True: # TO DO: check - yy is unused
+                if self.expensive == True:
                     S=sum(M)
                     yy = argmin % no_snapshots
                     M[xx,yy]=MAX
@@ -117,8 +111,6 @@ class Surrogate_update: # initiated by COLLECTOR # no_keep=50, expensive=True
                 M[xx,:]=MAX
                 M[:,xx]=MAX
                 to_keep[xx]=False
-            # aaa = np.arange(no_snapshots)
-            # print(aaa[to_keep==False])
             TEMP = TEMP[to_keep,:]
             TEMP = TEMP[:,to_keep]
             self.processed_par = self.processed_par[to_keep,:]
@@ -126,13 +118,6 @@ class Surrogate_update: # initiated by COLLECTOR # no_keep=50, expensive=True
             self.processed_wei = self.processed_wei[to_keep,:]
             self.no_processed = self.processed_par.shape[0]
             no_snapshots = self.no_processed
-#            try:
-#                print(to_keep)
-#                to_keep=np.append(to_keep,np.ones(self.no_parameters+1,dtype=bool))
-#                print(to_keep)
-#                self.initial_iteration = self.initial_iteration[to_keep]
-#            except:
-#                print("Exception!")    
         kernel(TEMP,self.kernel_type)
         P = np.ones((no_snapshots,1)) # only constant polynomials
         P = np.append(self.processed_par,P,axis=1) # plus linear polynomials
@@ -141,8 +126,6 @@ class Surrogate_update: # initiated by COLLECTOR # no_keep=50, expensive=True
         TEMP2 = np.append(np.transpose(P),np.zeros([no_polynomials,no_polynomials]),axis=1)
         TEMP2 = np.vstack([TEMP,TEMP2])
         RHS = np.vstack([ self.processed_obs, np.zeros((no_polynomials,self.no_observations)) ])
-#        print("Condition_number:",np.linalg.cond(TEMP2))
-#        print("DEBUG2:", TEMP2.shape, np.linalg.matrix_rank(TEMP2), RHS.shape)
         if self.solver_type == 'direct':
             COEFS=np.linalg.solve(TEMP2,RHS)
         else:
@@ -150,19 +133,8 @@ class Surrogate_update: # initiated by COLLECTOR # no_keep=50, expensive=True
             for i in range(self.no_observations):
                 c_=splin.minres(TEMP2,RHS[:,i],x0=self.initial_iteration,tol=pow(10,self.solver_tol_exp),show=False)
                 COEFS[:,i]=c_[0]
-    #    RES=RHS-np.reshape(np.matmul(TEMP2,SOL),(no_evaluations+no_polynomials,1))
-    #    print("Residual norm:",np.linalg.norm(RES), "RHSnorm:", np.linalg.norm(RHS))
-        # SOL = [None] * 2
-        # SOL[0] = COEFS.copy()
-        # SOL[1] = self.processed_par.copy()
         SOL = [COEFS.copy(), self.processed_par.copy()]
-        # print("Surrogate updated:",SOL[0].shape,SOL[1].shape)
         return SOL, no_snapshots
-        
-    #minres(A, b, x0=None, shift=0.0, tol=1e-05, maxiter=None, xtype=None, M=None, callback=None, show=False, check=False)
-    #gmres(A, b, x0=None, tol=1e-05, restart=None, maxiter=None, M=None, callback=None, restrt=None, atol=None)
-        
-
 
 def analyze(SOL, TEMP2, RHS):
     cond_num = 0 # np.linalg.cond(TEMP2)
