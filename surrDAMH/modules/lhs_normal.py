@@ -32,7 +32,6 @@ def lhs_normal(no_parameters,prior_mean,prior_std,n,seed):
         if quality > maxmin:
             LHS_final = LHS_uni
     
-    # TO DO: target covariance matrix
     if np.array(prior_std).ndim == 2:
         prior_std = np.sqrt(np.diag(prior_std))
     LHS_norm = norm.ppf(LHS_final, loc=prior_mean, scale=prior_std)
