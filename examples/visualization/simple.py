@@ -12,6 +12,9 @@ import json
 sys.path.append(os.getcwd())
 from surrDAMH.modules import visualization_and_analysis as va
 
+# path = os.path.abspath(os.path.dirname(__file__)) # file directory 
+# path_up = os.path.dirname(os.path.dirname(path))
+# conf_path = path_up + "/conf/simple.json" 
 conf_path = "examples/simple.json"
 
 with open(conf_path) as f:

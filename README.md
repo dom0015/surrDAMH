@@ -75,7 +75,7 @@ Path and constructor arguments of the spawed solver (wrapper) class are specifie
   `        "prior_mean": 0.0, ` *scalar or vector of length no_parameters*<br>
   `        "prior_std": 1.0, ` *scalar or vector or covariance matrix*<br>
 `        "observations": [9.62638828, -5.90755323, -3.71883564], ` *vector of observations*<br>
-`        "noise_std": [0.2, 0.1, 0.1] ` *standard deviation or covariance matrix of observational noise*<br>
+`        "noise_std": [0.2, 0.1, 0.1] ` *standard deviation of observational noise (independent components)*<br>
 `    },`<br>
 `    "paths_to_append": [ ` *optional*<br>
 `        "/home/simona/GIT/Simple_Python_PETSc_FEM"`<br>
@@ -94,7 +94,7 @@ Path and constructor arguments of the spawed solver (wrapper) class are specifie
 `            "type": "MH", ` *MH (does not use surrogate model) or DAMH (uses surrogate model)*<br>
 `            "max_samples": 200, ` *maximal length of the chain*<br>
 `            "time_limit": 60, ` *maximal sampling time in seconds*<br>
-`            "proposal_std": 0.2, ` *standard deviation or covariance matrix of Gaussian proposal distribution*<br>
+`            "proposal_std": 0.2, ` *standard deviation of the proposal distribution*<br>
 `            "surrogate_is_updated": true ` *update surrogate while sampling*<br>
 `        },`<br>
 `        {`<br>

@@ -56,7 +56,7 @@ class Solver_linela2exp_MPI:
             if self.size>1:
                 self.comm.Send(self.data, dest=0)
         # else:
-        #     print("Rank", self.rank, "has nothing to do.")
+        #     print("I am dwarf", self.rank, "and I'm digging a hole.")
         if self.rank == 0:
             return self.data.copy()
         else:

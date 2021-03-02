@@ -22,6 +22,13 @@ class Configuration:
         conf_path = "examples/" + conf_name + ".json"
         with open(conf_path) as f:
             conf = json.load(f)
+            
+        # if "modules_to_load" in conf.keys():
+        #     import importlib.util as iu
+        #     for path, name in conf["modules_to_load"]:
+        #         spec = iu.spec_from_file_location(name, path)
+        #         mod = importlib.util.module_from_spec(spec)
+        #         spec.loader.exec_module(mod)
     
 ### PROBLEM PARAMETERS:
         if "problem_name" in conf.keys():
@@ -51,7 +58,7 @@ class Configuration:
         if "surrogate_type" in conf.keys():
             if conf["surrogate_type"] == "rbf": # radial basis functions surrogate model
                 from modules import surrogate_rbf as surr
-            else: # polynomial surrogate model
+            else:
                 from modules import surrogate_poly as surr
             self.surr_solver_init = surr.Surrogate_apply
             self.surr_updater_init = surr.Surrogate_update
@@ -67,7 +74,11 @@ class Configuration:
                 self.surr_updater_parameters.update(conf["surr_updater_parameters"])
         
 ### OTHER SETTINGS:
-        # COMMUNICATION TYPE 1 (solvers are spawned):
+        self.max_buffer_size = 1<<30 #20s
+        self.solver_parent_rank = self.no_samplers
+        self.rank_surr_collector = self.no_samplers + 1
+        
+        # TYPE 1 (solvers are spawned):
         self.solver_parent_init = classes_communication.Solver_MPI_parent
         tmp = {"no_parameters": self.no_parameters,
                "no_observations": self.no_observations,
@@ -77,7 +88,3 @@ class Configuration:
         if "solver_parent_parameters" in conf.keys():
             tmp.update(conf["solver_parent_parameters"])
         self.solver_parent_parameters = [tmp] * self.no_full_solvers
-        
-        self.max_buffer_size = 1<<30
-        self.solver_parent_rank = self.no_samplers
-        self.rank_surr_collector = self.no_samplers + 1

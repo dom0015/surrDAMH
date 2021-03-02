@@ -30,6 +30,7 @@ class Surrogate_apply: # initiated by all SAMPLERs
         return GS_datapoints
 
     def on_degree_change(self):
+        # TO DO: use previous poly and hermite
         self.poly = generate_polynomials_degree(self.no_parameters, self.current_degree)
         self.no_poly = self.poly.shape[0]
         self.hermite = hermite_poly_normalized(self.current_degree)
@@ -106,7 +107,7 @@ class Surrogate_update: # initiated by COLLECTOR
         for j in range(self.no_parameters):
             self.PHI_processed *= hermite_eval[:,j,self.poly[:,j]]
         
-        self.PHI_processed_wei = (self.PHI_processed * self.processed_wei)
+        self.PHI_processed_wei = (self.PHI_processed * self.processed_wei)#.transpose()
         print("SURROGATE polynomial degree increased to:", self.current_degree, "- no poly:", self.no_poly)
 
 def generate_polynomials_degree(dim,degree):

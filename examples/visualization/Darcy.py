@@ -15,6 +15,10 @@ import json
 sys.path.append(os.getcwd())
 from surrDAMH.modules import visualization_and_analysis as va
 
+# import os
+# path = os.path.abspath(os.path.dirname(__file__)) # file directory 
+# path_up = os.path.dirname(os.path.dirname(path))
+# conf_path = path_up + "/conf/Darcy.json" 
 conf_path = "examples/Darcy.json" 
 
 with open(conf_path) as f:
@@ -26,6 +30,7 @@ else:
     no_samplers = 4
 
 ### REFERENCE SOLUTION:
+# module_path = path_up + "/" + conf["solver_module_path"] 
 if "paths_to_append" in conf.keys():
     for path in conf["paths_to_append"]:
         sys.path.append(path)

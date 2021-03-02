@@ -119,10 +119,11 @@ class Solver_local_collector_MPI: # initiated by SAMPLERs
         # Adds new snapsahot to a list; if COLLECTOR is ready to receive new
         # snapshots, sends list of snapshots to COLLECTOR and empties the list.
         # (needed only if is_updated == True)
+        # TO DO: double buffer for list of snapshots
         self.list_snapshots_to_send.append(snapshot_to_send)
         tmp = self.comm.Iprobe(source=self.rank_collector, tag=self.tag_ready_to_receive)
         if tmp: # if COLLECTOR is ready to receive new snapshots
-            tmp = np.zeros((1,))
+            tmp = np.zeros((1,)) # TO DO: useless / cancel message
             self.comm.Recv(tmp,source=self.rank_collector, tag=self.tag_ready_to_receive)
             data_to_pickle = self.list_snapshots_to_send.copy()
             if self.request_send is not None:
