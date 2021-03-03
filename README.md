@@ -1,8 +1,7 @@
 # surrDAMH
 Python implementation of surrogate-accelerated Markov chain Monte Carlo methods for Bayesian inversion
 
-Provides samples from the posterior distribution π(u|y) ∝ f<sub>η</sub>(y -- G(u)) π<sub>0</sub>(u), where y is a given vector of observations, G is an observation operator, f<sub>η</sub> is probability density function (pdf) of Gaussian observational noise, π<sub>0</sub>(u) is Gaussian prior pdf.
-
+Provides samples from the posterior distribution π(u|y) ∝ f<sub>η</sub>(y - G(u)) π<sub>0</sub>(u), where y is a given vector of observations, G is an observation operator, f<sub>η</sub> is probability density function (pdf) of Gaussian observational noise, π<sub>0</sub>(u) is Gaussian prior pdf.
 
 ## Requirements
 - numpy
@@ -113,10 +112,10 @@ Path and constructor arguments of the spawed solver (wrapper) class are specifie
 `        }`<br>
 `    ],`<br>
 `    "surrogate_type": "rbf", ` *"poly" or "rbf" (polynomial or radial basis functions based surrogate model)*<br>
-`    "surr_solver_parameters": { ` *optional - arguments of class that evaluates surrogate model*<br>
+`    "surr_solver_parameters": { ` *optional - arguments of class Surrogate_apply that evaluates surrogate model*<br>
 `        "kernel_type": 1`<br>
 `    },`<br>
-`    "surr_updater_parameters": { ` *optional - arguments of class that updates surrogate model*<br>
+`    "surr_updater_parameters": { ` *optional - arguments of class Surrogate_update that updates surrogate model*<br>
 `        "kernel_type": 1,`<br>
 `        "no_keep": 500,`<br>
 `        "expensive": false`<br>
