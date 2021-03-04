@@ -16,8 +16,8 @@ comm_world = MPI.COMM_WORLD
 rank_world = comm_world.Get_rank()
 size_world = comm_world.Get_size()
 
-no_samplers, problem_name = comm_world.recv(source=MPI.ANY_SOURCE)
-C = Configuration(no_samplers, problem_name)
+no_samplers, conf_name = comm_world.recv(source=MPI.ANY_SOURCE)
+C = Configuration(no_samplers, conf_name)
 seed0 = max(1000,size_world)*rank_world # TO DO seeds
 
 my_Sol = classes_communication.Solver_MPI_collector_MPI(no_parameters=C.no_parameters, 
@@ -35,7 +35,7 @@ my_Prob = cS.Problem_Gauss(no_parameters=C.no_parameters,
                            no_observations=C.no_observations,
                            observations=C.problem_parameters['observations'],
                            seed=seed0,
-                           name=C.problem_name)
+                           saved_samples_name=C.saved_samples_name)
 my_Prop = cS.Proposal_GaussRandomWalk(no_parameters=C.no_parameters, seed=seed0+1)
 
 initial_samples = LHS.lhs_normal(C.no_parameters,C.problem_parameters['prior_mean'],C.problem_parameters['prior_std'],C.no_samplers,0)

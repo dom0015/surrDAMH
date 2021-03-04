@@ -12,30 +12,45 @@ import json
 sys.path.append(os.getcwd())
 from surrDAMH.modules import visualization_and_analysis as va
 
-# path = os.path.abspath(os.path.dirname(__file__)) # file directory 
-# path_up = os.path.dirname(os.path.dirname(path))
-# conf_path = path_up + "/conf/simple.json" 
-conf_path = "examples/simple.json"
+### DEFAULT PARAMETERS:
+conf_name = "simple" # requires configuration file "conf/" + conf_name + ".json"
+N = 4 # number of sampling processes
 
+### PARSE COMMAND LINE ARGUMENTS: 
+len_argv = len(sys.argv)
+if len_argv>1:
+    no_samplers = int(sys.argv[1]) # number of MH/DAMH chains
+if len_argv>2:
+    conf_name = sys.argv[2]
+
+### LOAD CONFIGURATION:
+conf_path = "examples/" + conf_name + ".json"
 with open(conf_path) as f:
     conf = json.load(f)
-
-if len(sys.argv)>1:
-    no_samplers = int(sys.argv[1]) # number of MH/DAMH chains
-else:
-    no_samplers = 4
-
-### SAMPLES VISUALIZATION:
-problem_name = conf["problem_name"]
-S = va.Samples()
+saved_samples_name = conf["saved_samples_name"]
 no_parameters = conf["no_parameters"]
-S.load_notes('saved_samples/' + problem_name,no_samplers)
-S.load_MH('saved_samples/' + problem_name,no_parameters)
+list_alg = conf["samplers_list"]
 
-# Which part of the sampling process is analyzed? 0/1/2 = MH/DAMH-SMU/DAMH
-setnumber = 2;
-S.extract_chains(range(setnumber*no_samplers,(setnumber+1)*no_samplers)) # keep only the corresponding chains
+### LOAD SAMPLES:
+folder_samples = "saved_samples/" + saved_samples_name
+S = va.Samples()
+S.load_notes(folder_samples, no_samplers)
+no_alg = len(list_alg)
+for i in range(no_alg):
+    print("Notes - ALGORTIHM " + str(i) + ":")
+    print(S.notes[i])
+S.load_MH(folder_samples, no_parameters)
 S.calculate_properties()
 S.print_properties()
-S.plot_hist_grid(bins1d=30, bins2d=30)
-S.plot_average(show_legend = True)
+
+### SAMPLES VISUALIZATION:
+S.plot_hist_grid(bins1d=30, bins2d=30, show_title = True)
+# plot convergence of averages for all parts of the sampling process
+for i in range(no_alg):
+    parameters_disp = range(min(no_parameters,5))
+    S.plot_average(parameters_disp = parameters_disp, chains_disp = range(i*no_samplers,(i+1)*no_samplers), show_legend = True)
+
+# plot all chains
+for i in range(no_alg):
+    parameters_disp = range(min(no_parameters,5))
+    S.plot_segment(parameters_disp = parameters_disp, chains_disp = range(i*no_samplers,(i+1)*no_samplers), show_legend = True)

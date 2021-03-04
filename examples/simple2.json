@@ -1,4 +1,5 @@
 {
+    "saved_samples_name": "simple2_samples",
     "no_parameters": 2,
     "no_observations": 1,
     "problem_parameters": {
@@ -9,11 +10,8 @@
     },
     "solver_module_path": "examples/solvers/solver_examples.py",
     "solver_module_name": "solver_examples",
-    "solver_init_name": "Solver_linela2exp_MPI",
+    "solver_init_name": "Solver_linela2exp_local",
     "solver_parameters": {
-    },
-    "solver_parent_parameters": {
-        "maxprocs": 4
     },
     "no_solvers": 3,
     "samplers_list": [
@@ -21,21 +19,21 @@
             "type": "MH",
             "max_samples": 100,
             "time_limit": 60,
-            "proposal_std": 1.0,
+            "proposal_std": [[1.0,-0.2],[-0.2,1.0]],
             "surrogate_is_updated": true
         },
         {
             "type": "DAMH",
             "max_samples": 1000,
             "time_limit": 60,
-            "proposal_std": 1.0,
+            "proposal_std": [[1.0,-0.2],[-0.2,1.0]],
             "surrogate_is_updated": true
         },
         {
             "type": "DAMH",
             "max_samples": 10000,
             "time_limit": 60,
-            "proposal_std": 1.0,
+            "proposal_std": [[1.0,-0.2],[-0.2,1.0]],
             "surrogate_is_updated": false
         }
     ],

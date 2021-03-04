@@ -25,9 +25,10 @@ class Algorithm_PARENT:
             self.current_sample = self.Problem.prior_mean.copy()
         self.G_current_sample = G_initial_sample
         self.Surrogate = Surrogate
+        self.surrogate_is_updated = surrogate_is_updated
         if Surrogate is None:
             self.__send_to_surrogate = self._empty_function
-        elif surrogate_is_updated is True:
+        elif self.surrogate_is_updated is True:
             self.__send_to_surrogate = self.__send_to_surrogate__
         else:
             self.__send_to_surrogate = self._empty_function
@@ -53,7 +54,7 @@ class Algorithm_PARENT:
         self.time_start = time.time()
         if self.is_saved:
             # saves [no. sample posterior pre_posterior]:
-            filename_G = "saved_samples/" + self.Problem.name + "/data/" + self.name + ".csv"
+            filename_G = "saved_samples/" + self.Problem.saved_samples_name + "/data/" + self.name + ".csv"
             os.makedirs(os.path.dirname(filename_G), exist_ok=True)
             self.__file_G = open(filename_G, 'w')
             self.__writer_G = csv.writer(self.__file_G)
@@ -61,7 +62,7 @@ class Algorithm_PARENT:
         else:
             self.__write_to_file = self._empty_function
         if self.save_raw_data:
-            filename = "saved_samples/" + self.Problem.name + "/raw_data/" + self.name + ".csv"
+            filename = "saved_samples/" + self.Problem.saved_samples_name + "/raw_data/" + self.name + ".csv"
             os.makedirs(os.path.dirname(filename), exist_ok=True)
             self.__file_raw = open(filename, 'w')
             self.writer_raw = csv.writer(self.__file_raw)
@@ -102,11 +103,11 @@ class Algorithm_PARENT:
         self.__write_to_file()
         if self.is_saved:
             self.__file_G.close()
-            filename_notes = "saved_samples/" + self.Problem.name + "/notes/" + self.name + ".csv"
+            filename_notes = "saved_samples/" + self.Problem.saved_samples_name + "/notes/" + self.name + ".csv"
             os.makedirs(os.path.dirname(filename_notes), exist_ok=True)
-            labels = ["accepted", "rejected", "pre-rejected", "sum", "seed"]
+            labels = ["name", "surrogate_is_updated", "no_accepted", "no_rejected", "no_prerejected", "no_all", "seed"]
             no_all = self.no_accepted + self.no_rejected + self.no_prerejected
-            notes = [self.no_accepted, self.no_rejected, self.no_prerejected, no_all, self.seed]
+            notes = [self.name, self.surrogate_is_updated, self.no_accepted, self.no_rejected, self.no_prerejected, no_all, self.seed]
             file_notes = open(filename_notes, 'w')
             writer_notes = csv.writer(file_notes)
             writer_notes.writerow(labels)
@@ -162,12 +163,12 @@ class Algorithm_DAMH(Algorithm_PARENT): # initiated by SAMPLERs
         self.prepare()
         if self.is_saved:
             # posterior (vs approximated posterior) in rejected samples:
-            filename = "saved_samples/" + self.Problem.name + "/DAMH_rejected/" + self.name + ".csv"
+            filename = "saved_samples/" + self.Problem.saved_samples_name + "/DAMH_rejected/" + self.name + ".csv"
             os.makedirs(os.path.dirname(filename), exist_ok=True)
             self.__file_rejected = open(filename, 'w')
             self.__writer_rejected = csv.writer(self.__file_rejected)
             # posterior (vs approximated posterior) in accepted samples:
-            filename = "saved_samples/" + self.Problem.name + "/DAMH_accepted/" + self.name + ".csv"
+            filename = "saved_samples/" + self.Problem.saved_samples_name + "/DAMH_accepted/" + self.name + ".csv"
             os.makedirs(os.path.dirname(filename), exist_ok=True)
             self.__file_accepted = open(filename, 'w')
             self.__writer_accepted = csv.writer(self.__file_accepted)
@@ -251,7 +252,7 @@ class Proposal_GaussRandomWalk: # initiated by SAMPLERs
         return sample
     
 class Problem_Gauss: # initiated by SAMPLERs
-    def __init__(self, no_parameters, prior_mean=0.0, prior_std=1.0, noise_std=1.0, no_observations=None, observations=None, seed=0, name='default_problem_name'):
+    def __init__(self, no_parameters, prior_mean=0.0, prior_std=1.0, noise_std=1.0, no_observations=None, observations=None, seed=0, saved_samples_name='default_problem_name'):
         self.no_parameters = no_parameters
         if np.isscalar(prior_mean):
             self.prior_mean = np.full((no_parameters,),prior_mean)
@@ -284,7 +285,7 @@ class Problem_Gauss: # initiated by SAMPLERs
         else: # noise - normal correlated
             self.get_log_likelihood = self.__get_log_likelihood_multivariate
         
-        self.name = name
+        self.saved_samples_name = saved_samples_name
         self.is_exponential = True
         self.__generator = np.random.RandomState(seed)
     

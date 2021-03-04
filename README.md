@@ -18,13 +18,13 @@ Provides samples from the posterior distribution π(u|y) ∝ f<sub>η</sub>(y - 
 - cython (for pcdeflation build)
 
 ## Run
-- **problem_name**
+- **conf_name**
     - prepared toy examples: "simple", "simple_MPI", "Darcy"
-    - loads configuration file "conf/" + **problem_name** + ".json"
+    - loads configuration file "conf/" + **conf_name** + ".json"
 - **N** = number of sampling processes
  
 ### run sampling process:
-> ### `python3 run.py problem_name N (oversubscribe)`
+> ### `python3 run.py conf_name N (oversubscribe)`
 
 - toy examples:
     - `python3 run.py simple 4`
@@ -36,10 +36,10 @@ Provides samples from the posterior distribution π(u|y) ∝ f<sub>η</sub>(y - 
 - `python3 run.py simple 4` &nbsp; **<=>** &nbsp; `mpirun -n 4 python3 -m mpi4py surrDAMH/process_SAMPLER.py : -n 1 python3 -m mpi4py surrDAMH/process_SOLVER.py simple : -n 1 python3 -m mpi4py surrDAMH/process_COLLECTOR.py`
 - `python3 run.py simple 4 oversubscribe` &nbsp; **<=>** &nbsp; `mpirun -n 4 --oversubscribe python3 -m mpi4py surrDAMH/process_SAMPLER.py : -n 1 --oversubscribe python3 -m mpi4py surrDAMH/process_SOLVER.py simple : -n 1 --oversubscribe python3 -m mpi4py surrDAMH/process_COLLECTOR.py`
 
-Obtained samples are saved into saved_samples/**problem_name**.
+Obtained samples are saved into saved_samples/**conf_name**.
 
 ### run visualization of obtained samples:
-> ### `python3 run.py problem_name N visualize`
+> ### `python3 run.py conf_name N visualize`
 
 - toy examples:
     - `python3 run.py simple 4 visualize`
@@ -67,14 +67,16 @@ Path and constructor arguments of the spawed solver (wrapper) class are specifie
 
 ## JSON configuration file example & comments
   `{`<br>
-  `    "problem_name": "Darcy",`<br>
-  `    "no_parameters": 4,`<br>
-  `    "no_observations": 3, ` *length of the vector of the observations, repetitive observations are not supported*<br>
+  `    "no_parameters": 4,` *length of the vector of parameters<br>
+  `    "no_observations": 3, ` *length of the vector of observations, repetitive observations are not supported*<br>
   `    "problem_parameters": {`<br>
   `        "prior_mean": 0.0, ` *scalar or vector of length no_parameters*<br>
   `        "prior_std": 1.0, ` *scalar or vector or covariance matrix*<br>
 `        "observations": [9.62638828, -5.90755323, -3.71883564], ` *vector of observations*<br>
 `        "noise_std": [0.2, 0.1, 0.1] ` *standard deviation or covariance matrix of observational noise*<br>
+  `    "saved_samples_name": "Darcy",` *optional - use "saved_samples/saved_samples_name/" instead of saved_samples/conf_name/*<br>
+  `    "visualization_filename": "Darcy.py",` *optional - use a specific visualization script*<br>
+  `    "visualization_path": "examples/visualization/",` *optional - folder of the visualization script*<br>
 `    },`<br>
 `    "paths_to_append": [ ` *optional*<br>
 `        "/home/simona/GIT/Simple_Python_PETSc_FEM"`<br>

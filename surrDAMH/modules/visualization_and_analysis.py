@@ -84,20 +84,20 @@ class Samples:
         self.xp = list(x[i] - self.mean[i] for i in all_chains)
 
     def print_properties(self):
-        print('known autocorr. time:', self.known_autocorr_time)
-        if self.known_autocorr_time:
-            print('true autocorr. time:', self.autocorr_time_true)
         print('number of chains:', self.no_chains)
         print('number of parameters:',self.no_parameters)
         print('length:',self.length)
-        print('mean:')
-        print(self.mean)
-        print('std:')
-        print(self.std)
+        print('known autocorr. time:', self.known_autocorr_time)
+        if self.known_autocorr_time:
+            print('true autocorr. time:', self.autocorr_time_true)
+        # print('mean:')
+        # print(self.mean)
+        # print('std:')
+        # print(self.std)
         
 ### BASIC VISUALIZATION OF GENERATED CHAINS:
         
-    def plot_segment(self, begin_disp = None, end_disp = None, parameters_disp = None, chains_disp = None, show_legend = False):
+    def plot_segment(self, begin_disp = None, end_disp = None, parameters_disp = None, chains_disp = None, show_legend = False, show_title = True):
         if parameters_disp == None:
             parameters_disp = range(self.no_parameters)
         if chains_disp == None:
@@ -106,7 +106,7 @@ class Samples:
             begin_disp = [0] * len(parameters_disp)
         if end_disp == None:
             end_disp = [max([self.length[i] for i in chains_disp])] * len(parameters_disp)
-        fig, axes = plt.subplots(1, len(parameters_disp), figsize=(12, 3), sharey=True)
+        fig, axes = plt.subplots(1, len(parameters_disp), sharey=True)
         for idj,j in enumerate(parameters_disp):
             begin_disp[idj] = min(max(self.length),begin_disp[idj])
             end_disp[idj] = min(max(self.length),end_disp[idj])
@@ -122,9 +122,11 @@ class Samples:
             if self.known_autocorr_time:
                 axes[idj].set_title("$\\tau_\mathrm{{true}} = {0:.0f}$".format(self.autocorr_time_true[j]));
         axes[0].set_ylabel("samples")
+        if show_title:
+            fig.suptitle("Based on samples from chains in " + str(chains_disp))
         plt.show()
         
-    def plot_average(self, burn_in = None, begin_disp = None, end_disp = None, parameters_disp = None, chains_disp = None, show_legend = False):
+    def plot_average(self, burn_in = None, begin_disp = None, end_disp = None, parameters_disp = None, chains_disp = None, show_legend = False, show_title = True):
         if parameters_disp == None:
             parameters_disp = range(self.no_parameters)
         if chains_disp == None:
@@ -135,7 +137,7 @@ class Samples:
             begin_disp = [0] * len(parameters_disp)
         if end_disp == None:
             end_disp = [max([self.length[i] for i in chains_disp])] * len(parameters_disp)
-        fig, axes = plt.subplots(1, len(parameters_disp), figsize=(12, 3), sharey=True)
+        fig, axes = plt.subplots(1, len(parameters_disp), sharey=True)
         for idj,j in enumerate(parameters_disp):
             for idi,i in enumerate(chains_disp):
                 xx = np.arange(burn_in[idi],min(end_disp[idj],self.length[i]))
@@ -149,9 +151,11 @@ class Samples:
             if self.known_autocorr_time:
                 axes[idj].set_title("$\\tau_\mathrm{{true}} = {0:.0f}$".format(self.autocorr_time_true[j]));
         axes[0].set_ylabel("convergence of averages")
+        if show_title:
+            fig.suptitle("Based on samples from chains in " + str(chains_disp))
         plt.show()
         
-    def plot_average_reverse(self, burn_in = None, begin_disp = None, end_disp = None, parameters_disp = None, chains_disp = None, show_legend = False):
+    def plot_average_reverse(self, burn_in = None, begin_disp = None, end_disp = None, parameters_disp = None, chains_disp = None, show_legend = False, show_title = True):
         if parameters_disp == None:
             parameters_disp = range(self.no_parameters)
         if chains_disp == None:
@@ -162,7 +166,7 @@ class Samples:
             begin_disp = [0] * len(parameters_disp)
         if end_disp == None:
             end_disp = [max([self.length[i] for i in chains_disp])] * len(parameters_disp)
-        fig, axes = plt.subplots(1, len(parameters_disp), figsize=(12, 3), sharey=True)
+        fig, axes = plt.subplots(1, len(parameters_disp), sharey=True)
         for idj,j in enumerate(parameters_disp):
             for idi,i in enumerate(chains_disp):
                 xx = np.arange(burn_in[idi],min(end_disp[idj],self.length[i]))
@@ -176,6 +180,8 @@ class Samples:
             if self.known_autocorr_time:
                 axes[idj].set_title("$\\tau_\mathrm{{true}} = {0:.0f}$".format(self.autocorr_time_true[j]));
         axes[0].set_ylabel("convergence of averages")
+        if show_title:
+            fig.suptitle("Based on samples from chains in " + str(chains_disp))
         plt.show()
     
 ### HISTOGRAMS:
@@ -187,7 +193,7 @@ class Samples:
             chains_disp = range(self.no_chains)
         if burn_in == None:
             burn_in = [0] * len(chains_disp)
-        fig, axes = plt.subplots(1, len(parameters_disp), figsize=(12, 3), sharey=True)
+        fig, axes = plt.subplots(1, len(parameters_disp), sharey=True)
         for idj,j in enumerate(parameters_disp):
             for idi,i in enumerate(chains_disp):
                 yy = self.x[i][burn_in[idi]:,j]
@@ -233,7 +239,7 @@ class Samples:
         if show:
             plt.show()
     
-    def plot_hist_grid(self, burn_in = None, parameters_disp = None, chains_disp = None, bins1d = 20, bins2d = 20):
+    def plot_hist_grid(self, burn_in = None, parameters_disp = None, chains_disp = None, bins1d = 20, bins2d = 20, show_title = True):
         if parameters_disp == None:
             parameters_disp = range(self.no_parameters)
         if chains_disp == None:
@@ -242,7 +248,7 @@ class Samples:
             burn_in = [0] * len(chains_disp)
         n = len(parameters_disp)
         idx = 1
-        fig, axes = plt.subplots(n, n, sharex=True, sharey=True) # figsize=(12,12)
+        fig, axes = plt.subplots(n, n, sharex=True, sharey=True)
         for idi,i in enumerate(parameters_disp):
             for idj,j in enumerate(parameters_disp):
                 plt.subplot(n, n, idx)
@@ -253,6 +259,8 @@ class Samples:
                 if idx<=n:
                     plt.title("$par. {0}$".format(j))
                 idx = idx + 1
+        if show_title:
+            fig.suptitle("Based on samples from chains in " + str(chains_disp))
         plt.show()
 
 ### DAMH ANALYSIS:
@@ -433,15 +441,17 @@ class Samples:
     #         self.tau_sliding_min[i] = np.min(self.autocorr_time_mean)
     #         print("i, mean, min, max:", i, self.tau_sliding_mean[i], self.tau_sliding_min[i], self.tau_sliding_max[i])
 
-    def plot_autocorr_function(self, length_disp, plot_mean=False, parameters_disp = None, chains_disp = None, show_legend = False):
+    def plot_autocorr_function(self, length_disp=None, plot_mean=False, parameters_disp = None, chains_disp = None, show_legend = False):
         if parameters_disp == None:
             parameters_disp = range(self.no_parameters)
         no_parameters_disp = len(parameters_disp)
         if chains_disp == None:
             chains_disp = range(self.no_chains)
-        fig, axes = plt.subplots(1, no_parameters_disp, figsize=(12, 3), sharey=True)
+        if length_disp == None:
+            length_disp = [max(self.length)] * no_parameters_disp
         for idj,j in enumerate(parameters_disp):
             length_disp[idj] = min(max(self.length),length_disp[idj])
+        fig, axes = plt.subplots(1, no_parameters_disp, sharey=True)
         for idj,j in enumerate(parameters_disp):
             for idi,i in enumerate(chains_disp):
                 axes[idj].plot(self.autocorr_function[i][:length_disp[idj],j], label=i)

@@ -2,6 +2,7 @@
 
 import os
 import sys
+import json
 
 """
 python3 run.py problem_name N (oversubscribe) (visualize)
@@ -32,7 +33,20 @@ if len_argv>3:
         visualize = False
 
 if visualize:
-    command = "python3 examples/visualization/" + problem_name + ".py " + str(N)
+    ### LOAD CONFIGURATION:
+    conf_path = "examples/" + problem_name + ".json"
+    with open(conf_path) as f:
+        conf = json.load(f)
+    if "visualization_filename" in conf.keys(): # if visualization_filename is given
+        if "visualization_path" in conf.keys():
+            visualization_path = conf["visualization_path"] + conf["visualization_filename"]
+        else:
+            visualization_path = "examples/visualization/" + conf["visualization_filename"]
+    else:
+        visualization_path = "examples/visualization/" + problem_name + ".py" # if "visualization/problem_name.py" exists
+        if not os.path.isfile(visualization_path): # else use general visualization script
+            visualization_path = "examples/visualization/general_visualization.py"
+    command = "python3 " + visualization_path + " " + str(N) + " " + problem_name
 else:
     if oversubscribe:
         opt = " --oversubscribe "
@@ -43,11 +57,5 @@ else:
     collector = " -n 1" + opt + "python3 -m mpi4py surrDAMH/process_COLLECTOR.py "
     command = "mpirun" + sampler + ":" + solver + ":" + collector
 
-# path = os.path.abspath(os.path.dirname(__file__)) # file directory 
-# sys.path.append(path)
-# print("path append:", path)
-# print(sys.path)
 print(command)
 os.system(command)
-
-# comment

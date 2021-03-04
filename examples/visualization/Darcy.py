@@ -15,6 +15,7 @@ import json
 sys.path.append(os.getcwd())
 from surrDAMH.modules import visualization_and_analysis as va
 
+saved_samples_name = "Darcy"
 conf_path = "examples/Darcy.json" 
 
 with open(conf_path) as f:
@@ -44,11 +45,10 @@ G.plot_realization_interfaces(quantiles=[0.25, 0.5, 0.75, 1.0], nx_new=n, ny_new
 solver_instance.all_solvers[0].plot_solution_image()
 
 ### SAMPLES VISUALIZATION:
-problem_name = conf["problem_name"]
 S = va.Samples()
 no_parameters = conf["no_parameters"]
-S.load_notes('saved_samples/' + problem_name,no_samplers)
-S.load_MH('saved_samples/' + problem_name,no_parameters)
+S.load_notes('saved_samples/' + saved_samples_name,no_samplers)
+S.load_MH('saved_samples/' + saved_samples_name,no_parameters)
 
 # components 0,1 of a MH + DAMH-SMU + DAMH chain:
 no_chain=0;
@@ -63,8 +63,8 @@ plt.show()
 
 # Which part of the sampling process is analyzed? 0/1/2 = MH/DAMH-SMU/DAMH
 setnumber = 2;
-S.extract_chains(range(setnumber*no_samplers,(setnumber+1)*no_samplers)) # keep only the corresponding chains
 S.calculate_properties()
 S.print_properties()
-S.plot_average(show_legend = True)
-S.plot_hist_grid(bins1d=20, bins2d=20)
+chains_disp = range(setnumber*no_samplers,(setnumber+1)*no_samplers)
+S.plot_hist_grid(chains_disp = chains_disp, bins1d=20, bins2d=20)
+S.plot_average(chains_disp = chains_disp, show_legend = True)

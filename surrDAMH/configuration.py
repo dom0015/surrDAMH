@@ -24,10 +24,10 @@ class Configuration:
             conf = json.load(f)
     
 ### PROBLEM PARAMETERS:
-        if "problem_name" in conf.keys():
-            self.problem_name = conf["problem_name"]
+        if "saved_samples_name" in conf.keys():
+            self.saved_samples_name = conf["saved_samples_name"]
         else:
-            self.problem_name = conf_name
+            self.saved_samples_name = conf_name
         self.no_parameters = conf["no_parameters"]
         self.no_observations = conf["no_observations"] # length of the vector of observations, not repeated observations
         self.problem_parameters = conf["problem_parameters"]
