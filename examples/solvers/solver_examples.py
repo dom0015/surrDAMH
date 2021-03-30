@@ -61,3 +61,15 @@ class Solver_linela2exp_MPI:
             return self.data.copy()
         else:
             return None
+
+class Solver_uninformative:
+    def __init__(self, no_parameters, no_observations):
+        self.no_parameters = no_parameters
+        self.no_observations = no_observations
+        
+    def set_parameters(self,data_par):
+        self.data_par = data_par
+        
+    def get_observations(self):
+        observations = np.full((self.no_observations,),0.0)
+        return observations

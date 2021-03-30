@@ -1,0 +1,111 @@
+{
+    "saved_samples_name": "uninformative2",
+    "visualization_filename": "proposal_scaling2.py",
+    "no_parameters": 6,
+    "no_observations": 1,
+    "problem_parameters": {
+        "prior_mean": 0.0,
+        "prior_std": 3.0,
+        "observations": 1.0,
+        "noise_std": 1.0
+    },
+    "solver_module_path": "examples/solvers/solver_examples.py",
+    "solver_module_name": "solver_examples",
+    "solver_init_name": "Solver_uninformative",
+    "solver_parameters": {
+        "no_parameters": 6,
+        "no_observations": 1
+    },
+    "no_solvers": 3,
+    "samplers_list": [
+        {
+            "type": "MH",
+            "max_samples": 1000,
+            "time_limit": 30,
+            "proposal_std": 0.5,
+            "surrogate_is_updated": false
+        },
+        {
+            "type": "MH",
+            "max_samples": 1000,
+            "time_limit": 30,
+            "proposal_std": 1.0,
+            "surrogate_is_updated": false
+        },
+        {
+            "type": "MH",
+            "max_samples": 1000,
+            "time_limit": 30,
+            "proposal_std": 1.5,
+            "surrogate_is_updated": false
+        },
+        {
+            "type": "MH",
+            "max_samples": 1000,
+            "time_limit": 30,
+            "proposal_std": 2.0,
+            "surrogate_is_updated": false
+        },
+        {
+            "type": "MH",
+            "max_samples": 1000,
+            "time_limit": 30,
+            "proposal_std": 2.5,
+            "surrogate_is_updated": false
+        },
+        {
+            "type": "MH",
+            "max_samples": 1000,
+            "time_limit": 30,
+            "proposal_std": 3.0,
+            "surrogate_is_updated": false
+        },
+        {
+            "type": "MH",
+            "max_samples": 1000,
+            "time_limit": 30,
+            "proposal_std": 3.5,
+            "surrogate_is_updated": false
+        },
+        {
+            "type": "MH",
+            "max_samples": 1000,
+            "time_limit": 30,
+            "proposal_std": 4.0,
+            "surrogate_is_updated": false
+        },
+        {
+            "type": "MH",
+            "max_samples": 1000,
+            "time_limit": 30,
+            "proposal_std": 4.5,
+            "surrogate_is_updated": false
+        },
+        {
+            "type": "MH",
+            "max_samples": 1000,
+            "time_limit": 30,
+            "proposal_std": 5.0,
+            "surrogate_is_updated": false
+        },
+        {
+            "type": "MH",
+            "max_samples": 1000,
+            "time_limit": 30,
+            "proposal_std": 5.5,
+            "surrogate_is_updated": false
+        },
+        {
+            "type": "MH",
+            "max_samples": 1000,
+            "time_limit": 30,
+            "proposal_std": 6.0,
+            "surrogate_is_updated": false
+        }
+    ],
+    "initial_sample_type": "prior",
+    "surrogate_type": "poly",
+    "surr_updater_parameters": {
+        "max_degree": 1
+    }
+}

@@ -1,0 +1,43 @@
+{
+    "saved_samples_name": "uninformative",
+    "visualization_filename": "proposal_scaling.py",
+    "no_parameters": 2,
+    "no_observations": 1,
+    "problem_parameters": {
+        "prior_mean": 0.0,
+        "prior_std": 3.0,
+        "observations": 1.0,
+        "noise_std": 1.0
+    },
+    "solver_module_path": "examples/solvers/solver_examples.py",
+    "solver_module_name": "solver_examples",
+    "solver_init_name": "Solver_uninformative",
+    "solver_parameters": {
+        "no_parameters": 2,
+        "no_observations": 1
+    },
+    "no_solvers": 3,
+    "samplers_list": [
+        {
+            "type": "MH",
+            "max_samples": 100000,
+            "time_limit": 180,
+            "proposal_differs": true,
+            "proposal_std": [5.0, 5.5, 6.0, 6.5, 7.0, 7.5, 8.0, 8.5, 9.0, 9.5, 10.0],
+            "surrogate_is_updated": false
+        },
+        {
+            "type": "MH",
+            "max_samples": 100000,
+            "time_limit": 180,
+            "proposal_differs": true,
+            "proposal_std": [5.0, 5.5, 6.0, 6.5, 7.0, 7.5, 8.0, 8.5, 9.0, 9.5, 10.0],
+            "surrogate_is_updated": false
+        }
+    ],
+    "initial_sample_type": "prior",
+    "surrogate_type": "poly",
+    "surr_updater_parameters": {
+        "max_degree": 1
+    }
+}

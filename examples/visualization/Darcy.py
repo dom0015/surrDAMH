@@ -13,7 +13,6 @@ import os
 import sys
 import json
 sys.path.append(os.getcwd())
-from surrDAMH.modules import visualization_and_analysis as va
 
 saved_samples_name = "Darcy"
 conf_path = "examples/Darcy.json" 
@@ -39,6 +38,8 @@ reference_parameters = np.array([-1, -0.5, 0.5, 1])
 solver_instance.set_parameters(reference_parameters)
 reference_observations = solver_instance.get_observations()
 print('ref. obs.:',reference_observations)
+
+from surrDAMH.modules import visualization_and_analysis as va
 G = va.grf_eigenfunctions.GRF("surrDAMH/modules/unit30.pckl", truncate=100)
 n = conf["solver_parameters"]['n']
 G.plot_realization_interfaces(quantiles=[0.25, 0.5, 0.75, 1.0], nx_new=n, ny_new=n)

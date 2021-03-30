@@ -18,7 +18,7 @@ size_world = comm_world.Get_size()
 
 no_samplers, conf_name = comm_world.recv(source=MPI.ANY_SOURCE)
 C = Configuration(no_samplers, conf_name)
-seed0 = max(1000,size_world)*rank_world # TO DO seeds
+seed0 = 1+max(101,size_world)*rank_world # TO DO seeds
 
 my_Sol = classes_communication.Solver_MPI_collector_MPI(no_parameters=C.no_parameters, 
                               no_observations=C.no_observations, 
@@ -38,11 +38,22 @@ my_Prob = cS.Problem_Gauss(no_parameters=C.no_parameters,
                            saved_samples_name=C.saved_samples_name)
 my_Prop = cS.Proposal_GaussRandomWalk(no_parameters=C.no_parameters, seed=seed0+1)
 
-initial_samples = LHS.lhs_normal(C.no_parameters,C.problem_parameters['prior_mean'],C.problem_parameters['prior_std'],C.no_samplers,0)
-initial_sample = initial_samples[rank_world]
+if C.initial_sample_type == "lhs":
+    initial_samples = LHS.lhs_normal(C.no_parameters,C.problem_parameters['prior_mean'],C.problem_parameters['prior_std'],C.no_samplers,0)
+    initial_sample = initial_samples[rank_world]
+else:
+    initial_sample = None # will be set to prior mean
 for i,d in enumerate(C.list_alg):
     # TO DO: adaptive proposal if needed
-    my_Prop.set_covariance(proposal_std = d['proposal_std'])
+    if "proposal_differs" in d:
+        if d["proposal_differs"]:
+            my_Prop.set_covariance(proposal_std = d['proposal_std'][rank_world])
+        else:
+            my_Prop.set_covariance(proposal_std = d['proposal_std'])
+    else:
+        my_Prop.set_covariance(proposal_std = d['proposal_std'])
+    if "initial_sample" in d:
+        initial_sample = d['initial_sample']
     seed = seed0 + 2 + i
     if d['type'] == 'MH':
         my_Alg = cS.Algorithm_MH(my_Prob, my_Prop, my_Sol,

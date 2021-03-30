@@ -79,6 +79,7 @@ while any(is_active_sampler): # while at least 1 sampling algorithm is active
         if len(list_received_data)>0:
             local_updater_instance.add_data(list_received_data)
             SOL, no_snapshots = local_updater_instance.update()
+            #print("surrogate model updated - snapshots:", len(local_updater_instance.processed_par))
             no_snapshots_old = no_snapshots
             list_received_data = []
             is_free_updater = False

@@ -46,6 +46,10 @@ class Configuration:
         self.no_full_solvers = conf["no_solvers"]
         self.no_samplers = no_samplers
         self.list_alg = conf["samplers_list"]
+        if "initial_sample_type" in conf.keys():
+            self.initial_sample_type = conf["initial_sample_type"]
+        else:
+            self.initial_sample_type = "lhs"
 
 ### SURROGATE MODEL SPECIFICATION:
         if "surrogate_type" in conf.keys():

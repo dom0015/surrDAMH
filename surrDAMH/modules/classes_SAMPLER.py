@@ -20,9 +20,10 @@ class Algorithm_PARENT:
         self.max_samples = max_samples
         self.name = name
         self.seed = seed
-        self.current_sample = initial_sample
-        if self.current_sample is None:
+        if initial_sample is None:
             self.current_sample = self.Problem.prior_mean.copy()
+        else:
+            self.current_sample = np.array(initial_sample)
         self.G_current_sample = G_initial_sample
         self.Surrogate = Surrogate
         self.surrogate_is_updated = surrogate_is_updated
@@ -105,9 +106,11 @@ class Algorithm_PARENT:
             self.__file_G.close()
             filename_notes = "saved_samples/" + self.Problem.saved_samples_name + "/notes/" + self.name + ".csv"
             os.makedirs(os.path.dirname(filename_notes), exist_ok=True)
-            labels = ["name", "surrogate_is_updated", "no_accepted", "no_rejected", "no_prerejected", "no_all", "seed"]
+            labels = ["name", "surrogate_is_updated", "no_accepted", "no_rejected", "no_prerejected", "no_all", "acceptance_rate", "proposal_std", "proposal_scale", "seed"]
             no_all = self.no_accepted + self.no_rejected + self.no_prerejected
-            notes = [self.name, self.surrogate_is_updated, self.no_accepted, self.no_rejected, self.no_prerejected, no_all, self.seed]
+            acceptance_rate = self.no_accepted/no_all
+            proposal_scale = np.array(self.Proposal.proposal_std).reshape((-1,))[0]
+            notes = [self.name, self.surrogate_is_updated, self.no_accepted, self.no_rejected, self.no_prerejected, no_all, acceptance_rate, self.Proposal.proposal_std, proposal_scale, self.seed]
             file_notes = open(filename_notes, 'w')
             writer_notes = csv.writer(file_notes)
             writer_notes.writerow(labels)
