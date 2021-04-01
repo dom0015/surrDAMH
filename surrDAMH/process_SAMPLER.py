@@ -63,7 +63,7 @@ for i,d in enumerate(C.list_alg):
                          max_samples=d['max_samples'],
                          time_limit=d['time_limit'],
                          save_raw_data=True,
-                         name='alg' + str(i) + 'MH_rank' + str(rank_world),
+                         name='alg' + "{:03d}".format(i) + 'MH_rank' + str(rank_world),
                          seed=seed)
     else:
         my_Alg = cS.Algorithm_DAMH(my_Prob, my_Prop, my_Sol,
@@ -73,7 +73,7 @@ for i,d in enumerate(C.list_alg):
                         max_samples=d['max_samples'],
                         time_limit=d['time_limit'],
                         save_raw_data=True,
-                        name='alg' + str(i) + 'DAMH_rank' + str(rank_world),
+                        name='alg' + "{:03d}".format(i) + 'DAMH_rank' + str(rank_world),
                         seed=seed)
     print('--- SAMPLER ' + my_Alg.name + ' starts ---')
     my_Alg.run()

@@ -362,7 +362,6 @@ class Samples:
         folder_samples = folder_samples + '/raw_data'
         file_samples = [f for f in listdir(folder_samples) if isfile(join(folder_samples, f))]
         file_samples.sort()
-        print(file_samples)
         if chains_range == None:
             chains_range = range(self.no_chains)
         N = len(chains_range)
@@ -381,10 +380,8 @@ class Samples:
             for j in range(begin_disp, end_disp):
                 sample1 = raw_data[idx][j,:]
                 if sample_type[idx][j] == "accepted":
-                    # plt.plot([sample0[par0],sample1[par0]],[sample0[par1],sample1[par1]],'r', linewidth=1)
-                    # plt.plot(sample1[par0],sample1[par1],'r.')
                     sample0=sample1
-                elif sample_type[idx][j] == "rejected":
+                elif sample_type[idx][j] == "prerejected":
                     plt.plot([sample0[par0],sample1[par0]],[sample0[par1],sample1[par1]], linewidth=1, color="silver")
                     plt.plot(sample1[par0],sample1[par1],'.', color="silver")
             sample0 = self.x[i][begin_disp,:]
@@ -393,11 +390,21 @@ class Samples:
             for j in range(begin_disp, end_disp):
                 sample1 = raw_data[idx][j,:]
                 if sample_type[idx][j] == "accepted":
-                    plt.plot([sample0[par0],sample1[par0]],[sample0[par1],sample1[par1]],'r', linewidth=1)
-                    plt.plot(sample1[par0],sample1[par1],'r.')
+                    sample0=sample1
+                elif sample_type[idx][j] == "rejected":
+                    plt.plot([sample0[par0],sample1[par0]],[sample0[par1],sample1[par1]], linewidth=1, color="tab:orange")
+                    plt.plot(sample1[par0],sample1[par1],'.', color="tab:orange")
+            sample0 = self.x[i][begin_disp,:]
+            if end_disp == None:
+                end_disp = raw_data[idx].shape[0]
+            for j in range(begin_disp, end_disp):
+                sample1 = raw_data[idx][j,:]
+                if sample_type[idx][j] == "accepted":
+                    plt.plot([sample0[par0],sample1[par0]],[sample0[par1],sample1[par1]], color="tab:blue", linewidth=1)
+                    plt.plot(sample1[par0],sample1[par1],'.', color="tab:blue")
                     sample0=sample1
             sample0 = self.x[i][begin_disp,:]
-            plt.plot(sample0[par0], sample0[par1], '.', color="lime", markersize=10)
+            plt.plot(sample0[par0], sample0[par1], '.', color="tab:red", markersize=10)
         plt.xlabel("$u_1$")
         plt.ylabel("$u_2$")
         plt.grid()
@@ -529,30 +536,40 @@ class Samples:
         axes[0].set_ylabel("autocorr. function")
         plt.show()
 
-    def calculate_tau(self, no_samplers, quiet = True, c=5):
+    def calculate_tau(self, no_samplers, quiet = True, c=5, smooth=0):
         # no_samplers ... number of sampling processes
         # no_alg ... number of MH/DAMH stages in the sampling process
         no_alg = int(self.no_chains/no_samplers)
+        self.tau_aggregate = [None]*no_alg
         for i in range(no_alg):
             chains = range(i*no_samplers,(i+1)*no_samplers)
             self.calculate_autocorr_function(chains = chains)
+            if smooth>0:
+                tmp0 = [self.autocorr_time[ii] for ii in chains]
+                tmp = [t.mean() for t in tmp0]
+                med = np.median(tmp)
+                order = np.argsort(np.abs(tmp-med))[:-smooth]
+                chains = [chains[ii] for ii in order]
             self.calculate_autocorr_function_mean(chains = chains)
             self.calculate_autocorr_time_mean(chains = chains, c=c)
+            #tau = [np.mean(self.autocorr_time_mean[ii]) for ii in chains]
+            self.tau_aggregate[i] = np.mean(self.autocorr_time_mean[chains[0]])
         #self.tau = np.array([max(i) for i in self.autocorr_time_mean]) # working autororrelation time
-        self.tau = np.array([np.mean(i) for i in self.autocorr_time_mean]) # working autororrelation time
-        self.tau_aggregate = self.tau[::no_samplers]
+        #self.tau = np.array([np.mean(i) for i in self.autocorr_time_mean]) # working autororrelation time
+        #self.tau_aggregate = self.tau[::no_samplers]
+        self.tau_aggregate = np.array(self.tau_aggregate)
         self.known_tau = True
-        reliability = self.length/self.tau # should be higher than 50
-        if not quiet:
-            print("Maximum of autocorrelation time estimations for each chain:")
-            print(self.tau.reshape(no_alg,no_samplers))
-            print("Reliability of the estimation (should be higher than 50):")
-            print(reliability.reshape(no_alg,no_samplers))
+        # reliability = self.length/self.tau # should be higher than 50
+        # if not quiet:
+        #     print("Maximum of autocorrelation time estimations for each chain:")
+        #     print(self.tau.reshape(no_alg,no_samplers))
+        #     print("Reliability of the estimation (should be higher than 50):")
+        #     print(reliability.reshape(no_alg,no_samplers))
 
     def calculate_burn_in(self, no_samplers, multiplier = 2, c=5):
         # no_samplers ... number of sampling processes
         # multiplier ... how many autocorrelation times should be removed
-        self.calculate_tau(no_samplers, c=c)
+        self.calculate_tau(no_samplers, c=c, smooth=0)
         tmp = np.ceil(self.tau*multiplier)
         tmp_nan = np.isnan(tmp)
         if True in tmp_nan:
@@ -569,12 +586,12 @@ class Samples:
         for i in range(no_alg):
             no_full_evaluations = np.array(self.notes[i]["no_accepted"] + self.notes[i]["no_rejected"])
             no_all = np.array(self.notes[i]["no_all"])
-            chains = range(i*no_samplers,(i+1)*no_samplers)
-            autocorr_time = self.tau[chains]
+            #chains = range(i*no_samplers,(i+1)*no_samplers)
+            autocorr_time = self.tau_aggregate[i]
             CpUS = (no_full_evaluations/no_all + surr_cost_ratio) * autocorr_time
-            CpUS_aggregate[i] = CpUS[0]
+            CpUS_aggregate[i] = np.mean(CpUS)
             print("ALGORITHM", i, "CpUS:", CpUS)
-        return CpUS_aggregate
+        return np.array(CpUS_aggregate)
         
 ### GAUSSIAN RANDOM FIELDS:
         

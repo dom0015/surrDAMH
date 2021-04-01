@@ -24,6 +24,6 @@
     ],
     "surrogate_type": "poly",
     "surr_updater_parameters": {
-        "max_degree": 5
+        "max_degree": 2
     }
 }
