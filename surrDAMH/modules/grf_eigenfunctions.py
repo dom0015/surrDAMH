@@ -11,6 +11,7 @@ import scipy.linalg
 import scipy.sparse.linalg
 import scipy.interpolate
 import matplotlib.pyplot as plt
+import matplotlib as mpl
 import time
 
 def cov_function(r,sigma,lam):
@@ -270,12 +271,19 @@ class GRF:
             interfaces_applied[tmp>bounds[i]] = i+1
         return interfaces_applied
     
-    def plot_realization_interfaces(self, eta = None, quantiles=[0.5, 1.0], nx_new = None, ny_new = None, cmap="viridis"):
+    def plot_realization_interfaces(self, eta = None, quantiles=[0.5, 1.0], nx_new = None, ny_new = None):
         if eta is None:
             eta = np.ones((self.no_truncate,))
         interfaces = self.realization_interfaces(eta, quantiles, nx_new, ny_new)
-        fig, axes = plt.subplots(1, 1, figsize=(4, 3), sharey=True)
-        axes.imshow(interfaces,origin="lower",extent=[0, self.lx, 0, self.ly],cmap=cmap)
+        #fig, axes = plt.subplots(1, 1, figsize=(4, 3), sharey=True)
+        plt.figure()
+        plt.imshow(interfaces,origin="lower",extent=[0, self.lx, 0, self.ly])
+        no_parameters = len(quantiles)
+        cm = mpl.cm.viridis
+        bounds = np.arange(no_parameters+1)-0.5
+        norm = mpl.colors.BoundaryNorm(bounds, cm.N)
+        cbar = plt.colorbar(mpl.cm.ScalarMappable(norm=norm, cmap=cm), ticks=np.arange(no_parameters))
+        cbar.ax.set_yticklabels(np.arange(no_parameters)+1)
         plt.show()
     
     def realization_grid_new(self, eta, x_new, y_new):

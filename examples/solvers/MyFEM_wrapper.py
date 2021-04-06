@@ -15,7 +15,9 @@ from examples.solvers.pcdeflation import pcdeflation
 
 class FEM:
     # FEM solver preparation
-    def __init__(self, no_parameters = 5, no_observations = 5, no_configurations = 1, n = 100, quiet = True, tolerance = None, PC = "none", use_deflation = False, deflation_imp = None):    
+    def __init__(self, no_parameters = 5, no_observations = 5, no_configurations = 1, n = 100, filename = None, quiet = True, tolerance = None, PC = "none", use_deflation = False, deflation_imp = None):    
+        if filename == None:
+            filename = 'surrDAMH/modules/unit30.pckl'
         petsc4py.init()
         self.nrows = (n+1)*(n+1)
         # TRIANGULAR MESH SETTING -----------------------------------------------------
@@ -106,7 +108,7 @@ class FEM:
         self.deflation_imp = deflation_imp
         
         truncate = 100
-        self.grf_instance = grf.GRF('surrDAMH/modules/unit30.pckl', truncate=truncate)
+        self.grf_instance = grf.GRF(filename=filename, truncate=truncate)
         quantiles = np.cumsum(np.ones((no_parameters,))/no_parameters)
         midpoints = self.my_problem_left.geometry.nodes[self.my_problem_left.geometry.elems].mean(axis=1)
         x = midpoints[:, 0]

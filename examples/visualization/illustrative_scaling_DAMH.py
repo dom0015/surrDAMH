@@ -21,7 +21,8 @@ from surrDAMH.modules import visualization_and_analysis as va
 
 ### DEFAULT PARAMETERS:
 conf_name = "illustrative_scaling_DAMH" # requires configuration file "conf/" + conf_name + ".json"
-no_samplers = 10 # number of sampling processes
+conf_name = "interfaces_scaling"
+no_samplers = 4 # number of sampling processes
 
 ### PARSE COMMAND LINE ARGUMENTS: 
 len_argv = len(sys.argv)
@@ -36,6 +37,7 @@ conf_path = wdir + "/examples/" + conf_name + ".json"
 with open(conf_path) as f:
     conf = json.load(f)
 saved_samples_name = conf_name
+saved_samples_name = "interfaces_scaling"
 no_parameters = conf["no_parameters"]
 list_alg = conf["samplers_list"]
 
@@ -43,7 +45,7 @@ list_alg = conf["samplers_list"]
 folder_samples = wdir + "/saved_samples/" + saved_samples_name
 S = va.Samples()
 S.load_notes(folder_samples, no_samplers)
-no_alg = 47 #len(list_alg) #12
+no_alg = len(list_alg) #47
 alg_range = range(1,no_alg)
 no_alg = no_alg-1
 for i in range(no_alg):
