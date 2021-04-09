@@ -3,7 +3,7 @@
 import os
 import sys
 import json
-
+from mpi4py import MPI
 """
 python3 run.py problem_name N (oversubscribe) (visualize)
 example: python3 run.py simple 4 oversubscribe
@@ -39,7 +39,7 @@ if visualize:
     command = "python3 examples/visualization/" + problem_name + ".py " + str(N)
 else:
     if oversubscribe:
-        opt = " --oversubscribe --mca opal_warn_on_missing_libcuda 0 "
+        opt = " --oversubscribe "
     else:
         opt = " "
     sampler = " -n " + str(N) + opt + "python3 -m mpi4py surrDAMH/process_SAMPLER.py "
@@ -55,6 +55,8 @@ else:
 # print("path append:", path)
 # print(sys.path)
 print(command)
-os.system(command)
+#os.system(command)
 
-# comment
+sys.path.append("surrDAMH")
+from configuration import Configuration
+C = Configuration(N, problem_name)

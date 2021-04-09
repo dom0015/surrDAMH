@@ -17,17 +17,24 @@ rank_world = comm_world.Get_rank()
 size_world = comm_world.Get_size()
 
 no_samplers, problem_name = comm_world.recv(source=MPI.ANY_SOURCE)
+# data = None
+# data = comm_world.bcast(data,root=MPI.ANY_SOURCE)
+# no_samplers, problem_name = data
+# print(rank_world,size_world,no_samplers,problem_name)
 C = Configuration(no_samplers, problem_name)
 seed0 = max(1000,size_world)*rank_world # TO DO seeds
 
 my_Sol = classes_communication.Solver_MPI_collector_MPI(no_parameters=C.no_parameters, 
                               no_observations=C.no_observations, 
                               rank_solver=C.solver_parent_rank) # only knows the MPI rank to communicate with
-my_Surr_Solver = C.surr_solver_init(**C.surr_solver_parameters)
-my_Surr = classes_communication.Solver_local_collector_MPI(no_parameters=C.no_parameters, 
-                                        no_observations=C.no_observations, 
-                                        local_solver_instance=my_Surr_Solver,
-                                        rank_collector=C.rank_surr_collector)
+if C.use_surrogate:
+    my_Surr_Solver = C.surr_solver_init(**C.surr_solver_parameters)
+    my_Surr = classes_communication.Solver_local_collector_MPI(no_parameters=C.no_parameters, 
+                                            no_observations=C.no_observations, 
+                                            local_solver_instance=my_Surr_Solver,
+                                            rank_collector=C.rank_surr_collector)
+else:
+    my_Surr = None
 my_Prob = cS.Problem_Gauss(no_parameters=C.no_parameters,
                            noise_std=C.problem_parameters['noise_std'],
                            prior_mean=C.problem_parameters['prior_mean'], 

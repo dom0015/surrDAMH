@@ -1,0 +1,31 @@
+{
+    "problem_name": "minimal",
+    "debug": true,
+    "no_parameters": 2,
+    "no_observations": 1,
+    "problem_parameters": {
+        "prior_mean": [5.0, 3.0],
+        "prior_std": [[4,-2],[-2,4]],
+        "observations": [-1e-3],
+        "noise_std": 2e-4
+    },
+    "solver_module_path": "examples/solvers/solver_examples.py",
+    "solver_module_name": "solver_examples",
+    "solver_init_name": "Solver_linela2exp_local",
+    "solver_parameters": {
+    },
+    "no_solvers": 2,
+    "samplers_list": [
+        {
+            "type": "MH",
+            "max_samples": 10,
+            "time_limit": 10,
+            "proposal_std": 1.0,
+            "surrogate_is_updated": true
+        }
+    ],
+    "surrogate_type": "poly",
+    "surr_updater_parameters": {
+        "max_degree": 5
+    }
+}

@@ -9,10 +9,14 @@ Created on Wed Jul 15 15:12:30 2020
 import petsc4py
 import numpy as np
 import time
+import sys
+print("WRAPPER",sys.path)
 from MyFEM import Mesh, ProblemSetting, Assemble, Solvers
+print("WRAPPER")
 import surrDAMH.modules.grf_eigenfunctions as grf
+print("WRAPPER")
 from examples.solvers.pcdeflation import pcdeflation
-
+print("WRAPPER g")
 class FEM:
     # FEM solver preparation
     def __init__(self, no_parameters = 5, no_observations = 5, no_configurations = 1, n = 100, quiet = True, tolerance = None, PC = "none", use_deflation = False, deflation_imp = None):    
@@ -257,8 +261,8 @@ class FEM:
         opts = petsc4py.PETSc.Options()
         opts.setValue("deflation_pc_pc_type",self.PC)
         ksp.setFromOptions()
-        if self.ncols > 0:
-            pcdeflation.setDeflationMat(ksp_pc,self.W,False);
+        # if self.ncols > 0:
+        #     pcdeflation.setDeflationMat(ksp_pc,self.W,False);
         ksp.setUp()
         ksp.solve(solver.assembled_matrices.rhss["final"], solver.solution)
         if self.quiet == False:
