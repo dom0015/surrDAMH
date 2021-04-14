@@ -261,8 +261,8 @@ class FEM:
         opts = petsc4py.PETSc.Options()
         opts.setValue("deflation_pc_pc_type",self.PC)
         ksp.setFromOptions()
-        # if self.ncols > 0:
-        #     pcdeflation.setDeflationMat(ksp_pc,self.W,False);
+        if self.ncols > 0:
+            pcdeflation.setDeflationMat(ksp_pc,self.W,False);
         ksp.setUp()
         ksp.solve(solver.assembled_matrices.rhss["final"], solver.solution)
         if self.quiet == False:

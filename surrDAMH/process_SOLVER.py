@@ -21,13 +21,11 @@ problem_name = None
 if len(sys.argv)>1:
     problem_name = sys.argv[1]
 print(rank_world,size_world, no_samplers, problem_name)
-C = Configuration(no_samplers,problem_name)
-print(rank_world,size_world, no_samplers, problem_name)
 for i in range(size_world):
     print(rank_world,size_world,i)
     if i != rank_world:
         comm_world.send([no_samplers,problem_name],dest=i)
-# comm_world.bcast([no_samplers, problem_name],root=rank_world)
+C = Configuration(no_samplers,problem_name)
 
 solver_init = C.solver_parent_init
 solver_parameters = C.solver_parent_parameters
