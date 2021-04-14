@@ -39,9 +39,19 @@ S.load_notes('saved_samples/' + problem_name,no_samplers)
 S.load_MH('saved_samples/' + problem_name,no_parameters)
 
 # Which part of the sampling process is analyzed? 0/1/2 = MH/DAMH-SMU/DAMH
-setnumber = 0;
-S.extract_chains(range(setnumber*no_samplers,(setnumber+1)*no_samplers)) # keep only the corresponding chains
-S.calculate_properties()
-S.print_properties()
-S.plot_hist_grid(bins1d=30, bins2d=30)
-S.plot_average(show_legend = True)
+try:
+    setnumber = 2;
+    print("set nuber:", setnumber)
+    S.extract_chains(range(setnumber*no_samplers,(setnumber+1)*no_samplers)) # keep only the corresponding chains
+    S.calculate_properties()
+    S.print_properties()
+    S.plot_hist_grid(bins1d=30, bins2d=30)
+    S.plot_average(show_legend = True)
+except:
+    setnumber = 0;
+    print("set nuber:", setnumber)
+    S.extract_chains(range(setnumber*no_samplers,(setnumber+1)*no_samplers)) # keep only the corresponding chains
+    S.calculate_properties()
+    S.print_properties()
+    S.plot_hist_grid(bins1d=30, bins2d=30)
+    S.plot_average(show_legend = True)
