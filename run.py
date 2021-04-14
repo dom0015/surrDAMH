@@ -36,12 +36,17 @@ with open("examples/" + problem_name + ".json") as f:
     conf = json.load(f)
 
 if visualize:
-    command = "python3 examples/visualization/" + problem_name + ".py " + str(N)
+    if os.path.exists("examples/visualization/" + problem_name + ".py"):
+        command = "python3 examples/visualization/" + problem_name + ".py " + str(N)
+    else:
+        command = "python3 examples/visualization/general_visualization.py " + str(N) + " " + problem_name
 else:
     if oversubscribe:
-        opt = " --oversubscribe --mca opal_warn_on_missing_libcuda 0 "
+        opt = " --oversubscribe " 
     else:
         opt = " "
+    # opt = opt + "--mca opal_warn_on_missing_libcuda 0 "
+    # opt = opt + "--mca orte_base_help_aggregate 0 "
     sampler = " -n " + str(N) + opt + "python3 -m mpi4py surrDAMH/process_SAMPLER.py "
     solver = " -n 1" + opt + "python3 -m mpi4py surrDAMH/process_SOLVER.py " + problem_name + " "
     collector = " -n 1" + opt + "python3 -m mpi4py surrDAMH/process_COLLECTOR.py "

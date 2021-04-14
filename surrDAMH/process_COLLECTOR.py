@@ -90,17 +90,14 @@ while any(sampler_is_active): # while at least 1 sampling algorithm is active
         # checks if there are incoming data from this active sampler:
         if request_irecv[i].Get_status():
             received_data = request_irecv[i].wait()
-            print("DEBUG COLL data received")
             # expects to receive data from this active sampler later:
             request_irecv[i] = comm_world.irecv(max_buffer_size,source=r, tag=tag_sent_data)
             # sends signal to this active sampler that he is ready to receive data:
             if request_Isend[i] is not None:
                 request_Isend[i].Wait()
             request_Isend[i] = comm_world.Isend(empty_buffers[i], dest=r, tag=tag_ready_to_receive)
-            print("DEBUG COLL ISend ready to recv")
             list_received_data.extend(received_data.copy())
     if len(list_received_data)>0 and any(sampler_is_active):
-        print("DEBUG received data length",len(list_received_data))
         local_updater_instance.add_data(list_received_data)
         SOL, no_snapshots = local_updater_instance.update()
         list_received_data = []

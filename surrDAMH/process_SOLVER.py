@@ -20,9 +20,7 @@ no_samplers = rank_world
 problem_name = None
 if len(sys.argv)>1:
     problem_name = sys.argv[1]
-print(rank_world,size_world, no_samplers, problem_name)
 for i in range(size_world):
-    print(rank_world,size_world,i)
     if i != rank_world:
         comm_world.send([no_samplers,problem_name],dest=i)
 C = Configuration(no_samplers,problem_name)

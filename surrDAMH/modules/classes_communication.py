@@ -105,9 +105,7 @@ class Solver_local_collector_MPI: # initiated by SAMPLERs
         self.request_recv = self.comm.irecv(self.max_buffer_size, source=self.rank_collector, tag=self.tag_sent_data)
         self.request_send = None
         self.empty_buffer = np.zeros((1,))
-        print("DEBUG",self.comm.Get_rank(), self.terminated_data)
         self.request_Isend = self.comm.Isend(self.empty_buffer, dest=self.rank_collector, tag=self.tag_ready_to_receive)
-        print("DEBUG",self.comm.Get_rank())
         self.list_snapshots_to_send = []
         self.status = MPI.Status()
 
@@ -136,14 +134,12 @@ class Solver_local_collector_MPI: # initiated by SAMPLERs
         self.list_snapshots_to_send.append(snapshot_to_send)
         probe = self.comm.Iprobe(source=self.rank_collector, tag=self.tag_ready_to_receive)
         if probe: # if COLLECTOR is ready to receive new snapshots
-            print("DEBUG comm - collectior is redy to recv")
             tmp = np.zeros((1,))
             self.comm.Recv(tmp,source=self.rank_collector, tag=self.tag_ready_to_receive)
             data_to_pickle = self.list_snapshots_to_send.copy()
             if self.request_send is not None:
                 self.request_send.wait()
             self.request_send = self.comm.isend(data_to_pickle, dest=self.rank_collector, tag=self.tag_sent_data)
-            print("DEBUG data sent to collector", len(data_to_pickle))
             self.list_snapshots_to_send = []
         self.receive_update_if_ready()
 
@@ -167,8 +163,6 @@ class Solver_local_collector_MPI: # initiated by SAMPLERs
         if not self.terminated:
             self.terminated = True
         if not self.terminated_data:
-            print("DEBUG term",self.comm.Get_rank(), "to", self.rank_collector)
             self.request_Isend.Wait()
             self.request_Isend = self.comm.Isend(self.empty_buffer, dest=self.rank_collector, tag=self.tag_terminate)
-            print("DEBUG term",self.comm.Get_rank())
             self.terminated_data = True
