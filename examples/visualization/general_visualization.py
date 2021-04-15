@@ -31,7 +31,10 @@ if len_argv>2:
 conf_path = wdir + "/examples/" + conf_name + ".json"
 with open(conf_path) as f:
     conf = json.load(f)
-saved_samples_name = conf["saved_samples_name"]
+if "saved_samples_name" in conf:
+    saved_samples_name = conf["saved_samples_name"]
+else:
+    saved_samples_name = conf_name
 no_parameters = conf["no_parameters"]
 list_alg = conf["samplers_list"]
 
@@ -47,22 +50,23 @@ S.load_MH(folder_samples, no_parameters)
 
 print("\nBEFORE BURN-IN PERIOD REMOVAL:")
 S.print_properties()
-burn_in = S.calculate_burn_in(no_samplers, multiplier = 2)
-S.remove_burn_in(burn_in)
+# burn_in = S.calculate_burn_in(no_samplers, multiplier = 2)
+# S.remove_burn_in(burn_in)
 
-print("\nAFTER BURN-IN PERIOD REMOVAL:")
-S.print_properties()
-S.calculate_tau(no_samplers)
+# print("\nAFTER BURN-IN PERIOD REMOVAL:")
+# S.print_properties()
+# S.calculate_tau(no_samplers)
+S.calculate_autocorr_time(tol=1)
 
-print("\nSAMPLING EFFICIENCY:")
-S.calculate_CpUS(no_samplers, surr_cost_ratio = 0.0)
+# print("\nSAMPLING EFFICIENCY:")
+# S.calculate_CpUS(no_samplers, surr_cost_ratio = 0.0)
 
 ### SAMPLES VISUALIZATION: 
 parameters_disp = range(min(no_parameters,5))
-S.plot_hist_grid(parameters_disp = parameters_disp, bins1d=30, bins2d=30, show_title = True)
+S.plot_hist_grid(parameters_disp = parameters_disp, bins1d=30, bins2d=30, show_title = True, sharex=False, sharey=False)
 # plot convergence of averages for all parts of the sampling process
 for i in range(no_alg):
-    S.plot_average(parameters_disp = parameters_disp, chains_disp = range(i*no_samplers,(i+1)*no_samplers), show_legend = True)
+    S.plot_average(parameters_disp = parameters_disp, chains_disp = range(i*no_samplers,(i+1)*no_samplers), show_legend = True, sharey=False)
 
 # plot all chains
 # for i in range(no_alg):

@@ -16,6 +16,7 @@ problem_name = None
 if len(sys.argv)>1:
     problem_name = sys.argv[2]
 C = Configuration(no_samplers,problem_name)
+no_parameters = C.no_parameters
 
 parent_comm = MPI.Comm.Get_parent()
 rank = parent_comm.Get_rank()
@@ -29,7 +30,7 @@ solver_instance = C.child_solver_init(**C.child_solver_parameters)
 # methods "set_parameters" and "get_observations" are called by all ranks
 # observation are sent to parent by rank 0
 #received_data = np.empty((solver_instance.no_parameters,),dtype='float64')
-received_data = np.empty(solver_instance.no_parameters,dtype='d')
+received_data = np.empty(no_parameters,dtype='d')
 #tag = np.empty((1,),dtype=int);
 tag = np.array(0, dtype='i')
 solver_is_active = True
@@ -43,7 +44,7 @@ while solver_is_active:
         solver_is_active = False
     else:
         parent_comm.Bcast([received_data, MPI.DOUBLE], root=0)
-        solver_instance.set_parameters(received_data.reshape((solver_instance.no_parameters,)))
+        solver_instance.set_parameters(received_data.reshape((no_parameters,)))
         sent_data = solver_instance.get_observations()
         if rank==0:
             parent_comm.Send(sent_data, dest=0, tag=tag)

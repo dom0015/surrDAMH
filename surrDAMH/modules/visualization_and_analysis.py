@@ -132,7 +132,7 @@ class Samples:
             fig.suptitle(title)
         plt.show()
         
-    def plot_average(self, burn_in = None, begin_disp = None, end_disp = None, parameters_disp = None, chains_disp = None, show_legend = False, show_title = True):
+    def plot_average(self, burn_in = None, begin_disp = None, end_disp = None, parameters_disp = None, chains_disp = None, show_legend = False, show_title = True, sharey=True):
         if parameters_disp is None:
             parameters_disp = range(self.no_parameters)
         if chains_disp is None:
@@ -143,7 +143,7 @@ class Samples:
             begin_disp = [0] * len(parameters_disp)
         if end_disp is None:
             end_disp = [max(self.length[chains_disp])] * len(parameters_disp)
-        fig, axes = plt.subplots(1, len(parameters_disp), sharey=True)
+        fig, axes = plt.subplots(1, len(parameters_disp), sharey=sharey)
         for idj,j in enumerate(parameters_disp):
             for idi,i in enumerate(chains_disp):
                 xx = np.arange(burn_in[idi],min(end_disp[idj],self.length[i]))
@@ -247,7 +247,7 @@ class Samples:
         if show:
             plt.show()
     
-    def plot_hist_grid(self, burn_in = None, parameters_disp = None, chains_disp = None, bins1d = 20, bins2d = 20, show_title = True):
+    def plot_hist_grid(self, burn_in = None, parameters_disp = None, chains_disp = None, bins1d = 20, bins2d = 20, show_title = True, sharex = True, sharey=True):
         if parameters_disp == None:
             parameters_disp = range(self.no_parameters)
         if chains_disp == None:
@@ -256,7 +256,7 @@ class Samples:
             burn_in = [0] * len(chains_disp)
         n = len(parameters_disp)
         idx = 1
-        fig, axes = plt.subplots(n, n, sharex=True, sharey=True)
+        fig, axes = plt.subplots(n, n, sharex=sharex, sharey=sharey)
         for idi,i in enumerate(parameters_disp):
             for idj,j in enumerate(parameters_disp):
                 plt.subplot(n, n, idx)
