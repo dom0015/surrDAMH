@@ -32,6 +32,8 @@ if len_argv>3:
     else:
         visualize = False
 
+    conf = json.load(f)
+
 if visualize:
     ### LOAD CONFIGURATION:
     conf_path = "examples/" + problem_name + ".json"
@@ -52,10 +54,15 @@ else:
         opt = " --oversubscribe "
     else:
         opt = " "
+    # opt = opt + "--mca opal_warn_on_missing_libcuda 0 "
+    # opt = opt + "--mca orte_base_help_aggregate 0 "
     sampler = " -n " + str(N) + opt + "python3 -m mpi4py surrDAMH/process_SAMPLER.py "
     solver = " -n 1" + opt + "python3 -m mpi4py surrDAMH/process_SOLVER.py " + problem_name + " "
     collector = " -n 1" + opt + "python3 -m mpi4py surrDAMH/process_COLLECTOR.py "
-    command = "mpirun" + sampler + ":" + solver + ":" + collector
+    if "surrogate_type" in conf.keys():
+        command = "mpirun" + sampler + ":" + solver + ":" + collector
+    else:
+        command = "mpirun" + sampler + ":" + solver
 
 print(command)
 os.system(command)
