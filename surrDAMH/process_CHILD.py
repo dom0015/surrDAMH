@@ -35,7 +35,7 @@ received_data = np.empty(no_parameters,dtype='d')
 tag = np.array(0, dtype='i')
 solver_is_active = True
 while solver_is_active:
-    parent_comm.Barrier()
+    #parent_comm.Barrier()
     parent_comm.Bcast([tag, MPI.INT], root=0)
     #if tag[0] == 0:
     if tag == 0:

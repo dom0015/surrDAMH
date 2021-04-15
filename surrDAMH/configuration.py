@@ -53,6 +53,8 @@ class Configuration:
 
 ### SURROGATE MODEL SPECIFICATION:
         if "surrogate_type" in conf.keys():
+            self.use_surrogate = True
+            self.rank_surr_collector = self.no_samplers + 1
             if conf["surrogate_type"] == "rbf": # radial basis functions surrogate model
                 from modules import surrogate_rbf as surr
             else: # polynomial surrogate model
@@ -69,6 +71,8 @@ class Configuration:
                                             }
             if "surr_updater_parameters" in conf.keys():
                 self.surr_updater_parameters.update(conf["surr_updater_parameters"])
+        else:
+            self.use_surrogate = False
         
 ### OTHER SETTINGS:
         # COMMUNICATION TYPE 1 (solvers are spawned):
@@ -81,7 +85,8 @@ class Configuration:
         if "solver_parent_parameters" in conf.keys():
             tmp.update(conf["solver_parent_parameters"])
         self.solver_parent_parameters = [tmp] * self.no_full_solvers
-        
         self.max_buffer_size = 1<<30
         self.solver_parent_rank = self.no_samplers
-        self.rank_surr_collector = self.no_samplers + 1
+        self.debug = False
+        if "debug" in conf.keys():
+            self.debug = conf["debug"]
