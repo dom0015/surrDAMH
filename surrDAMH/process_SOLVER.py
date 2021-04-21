@@ -53,8 +53,8 @@ def receive_observations_from_child(i):
     for j in range(len(occupied_by_source[i])):
         rank_dest = occupied_by_source[i][j]
         comm_world.Send(sent_data[j,:].copy(), dest=rank_dest, tag=occupied_by_tag[i][j])
-        # if C.debug:
-        #     print("debug - RANK", rank_world, "POOL Send", rank_dest, occupied_by_tag[i][j])
+        if C.debug:
+            print("debug - RANK", rank_world, "POOL Send", rank_dest, occupied_by_tag[i][j])
         sampler_can_send[samplers_rank == rank_dest] = True
 
 while any(sampler_is_active): # while at least 1 sampling algorithm is active
@@ -68,8 +68,8 @@ while any(sampler_is_active): # while at least 1 sampling algorithm is active
             rank_source = status.Get_source()
             tag = status.Get_tag()
             comm_world.Recv(received_data, source=rank_source, tag=tag)
-            # if C.debug:
-            #     print("debug - RANK", rank_world, "POOL Recv", rank_source)
+            if C.debug:
+                print("debug - RANK", rank_world, "POOL Recv", rank_source)
             if tag == 0: # if received message has tag 0, switch corresponding sampling alg. to inactive
                 # assumes that there will be no other incoming message from that source 
                 sampler_is_active[samplers_rank == rank_source] = False

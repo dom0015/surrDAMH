@@ -28,4 +28,4 @@ class Wrapper:
     def get_observations(self):
         res = self.sim.get_observations()
         print(res)
-        return res[-4:]
+        return res

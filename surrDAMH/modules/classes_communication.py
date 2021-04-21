@@ -22,7 +22,7 @@ class Solver_MPI_parent: # initiated by full SOLVER
     def send_parameters(self, data_par):
         self.tag += 1
         self.data_par = data_par.copy()
-        self.comm.Barrier()
+        #self.comm.Barrier()
         self.comm.Bcast([np.array(self.tag,'i'), MPI.INT], root=MPI.ROOT)
         #self.data_par.shape=(-1,)
         self.comm.Bcast([self.data_par, MPI.DOUBLE], root=MPI.ROOT)
@@ -40,7 +40,7 @@ class Solver_MPI_parent: # initiated by full SOLVER
             return False
     
     def terminate(self):
-        self.comm.Barrier()
+        #self.comm.Barrier()
         self.comm.Bcast([np.array(0,'i'), MPI.INT], root=MPI.ROOT)
         self.comm.Barrier()
         self.comm.Disconnect()

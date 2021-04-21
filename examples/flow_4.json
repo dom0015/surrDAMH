@@ -1,10 +1,16 @@
 {
     "no_parameters": 2,
-    "no_observations": 4,
+    "no_observations": 32,
     "problem_parameters": {
-        "prior_mean": [4e-15, 0.15],
-        "prior_std": [1e-14,0.3],
-        "observations": [137.87949742, 138.13859665, 138.37059699, 138.67958571],
+        "prior_mean": [6e-15, 0.17],
+        "prior_std": [1e-15,0.01],
+        "observations": [300.0,        354.27519706, 408.82054411, 463.56751733, 490.98934732,
+ 518.45812716, 545.97235742, 573.53071004, 300.0,        331.98351846,
+ 364.22782815, 396.6383229,  412.88037189, 429.15544765, 445.46018039,
+ 461.79171459, 300.0,        241.56387704, 184.1983095,  127.68905052,
+  99.62935052,  71.74657646,  44.02443659,  16.4479899,  300.0,
+ 275.26760918, 250.57911007, 225.90144958, 213.56681966, 201.2372882,
+ 188.91354465, 176.59600766],
         "noise_std": 1.0
     },
     "paths_to_append": [
@@ -19,28 +25,10 @@
     "samplers_list": [
         {
             "type": "MH",
-            "max_samples": 100,
-            "time_limit": 12,
-            "proposal_std": [2e-15,0.2],
-            "surrogate_is_updated": true
-        },
-        {
-            "type": "DAMH",
-            "max_samples": 1000,
-            "time_limit": 24,
-            "proposal_std": [2e-15,0.2],
-            "surrogate_is_updated": true
-        },
-        {
-            "type": "DAMH",
-            "max_samples": 10000,
-            "time_limit": 60,
-            "proposal_std": [2e-15,0.2],
+            "max_samples": 10,
+            "time_limit": 400,
+            "proposal_std": [1e-15,0.01],
             "surrogate_is_updated": false
         }
-    ],
-    "surrogate_type": "poly",
-    "surr_updater_parameters": {
-        "max_degree": 5
-    }
+    ]
 }

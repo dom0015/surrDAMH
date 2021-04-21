@@ -32,6 +32,7 @@ if len_argv>3:
     else:
         visualize = False
 
+with open("examples/" + problem_name + ".json") as f:
     conf = json.load(f)
 
 if visualize:
