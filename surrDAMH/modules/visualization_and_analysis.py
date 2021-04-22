@@ -410,6 +410,97 @@ class Samples:
         plt.grid()
         # plt.show()
 
+    def plot_rejected_cumsum(self, folder_samples, no_parameters, chains_range = None, begin_disp = 0, end_disp = None):
+        folder_samples = folder_samples + '/raw_data'
+        file_samples = [f for f in listdir(folder_samples) if isfile(join(folder_samples, f))]
+        file_samples.sort()
+        if chains_range == None:
+            chains_range = range(self.no_chains)
+        N = len(chains_range)
+        raw_data = [None] * N
+        sample_type = [None] * N
+        plt.figure()
+        rejected_cumsum_mean = None
+        for idx,i in enumerate(chains_range):
+            path_samples = folder_samples + "/" + file_samples[i]
+            print("PATH:", path_samples)
+            df_samples = pd.read_csv(path_samples, header=None)
+            raw_data[idx] = np.array(df_samples.iloc[:,1:1+no_parameters])
+            sample_type[idx] = np.array(df_samples.iloc[:,0])
+            if end_disp == None:
+                end_disp = raw_data[idx].shape[0]
+            rejected = sample_type[idx][begin_disp:end_disp] == "rejected"
+            rejected_cumsum = np.cumsum(rejected)
+            plt.plot(rejected_cumsum)
+            if rejected_cumsum_mean is None:
+                rejected_cumsum_mean = rejected_cumsum
+            else:
+                rejected_cumsum_mean += rejected_cumsum
+        plt.show()
+        #rejected_cumsum_mean = rejected_cumsum_mean/len(chains_range)
+        plt.figure()
+        plt.plot(rejected_cumsum_mean)
+
+    def plot_rejected_sliding(self, folder_samples, no_parameters, chains_range = None, begin_disp = 0, end_disp = None, window_length = 100):
+        folder_samples = folder_samples + '/raw_data'
+        file_samples = [f for f in listdir(folder_samples) if isfile(join(folder_samples, f))]
+        file_samples.sort()
+        if chains_range == None:
+            chains_range = range(self.no_chains)
+        N = len(chains_range)
+        raw_data = [None] * N
+        sample_type = [None] * N
+        plt.figure()
+        rejected_sliding_list = [None] * len(chains_range)
+        for idx,i in enumerate(chains_range):
+            path_samples = folder_samples + "/" + file_samples[i]
+            print("PATH:", path_samples)
+            df_samples = pd.read_csv(path_samples, header=None)
+            raw_data[idx] = np.array(df_samples.iloc[:,1:1+no_parameters])
+            sample_type[idx] = np.array(df_samples.iloc[:,0])
+            if end_disp == None:
+                end_disp = raw_data[idx].shape[0]
+            rejected = sample_type[idx][begin_disp:end_disp] == "rejected"
+            tmp = np.cumsum(rejected)
+            rejected_sliding = (tmp[window_length:]-tmp[:-window_length])/window_length
+            plt.plot(rejected_sliding)
+            rejected_sliding_list[idx] = rejected_sliding
+        plt.show()
+        plt.figure()
+        # difference from mean
+        rejected_sliding_mean = np.mean(rejected_sliding_list, axis=0)
+        norm = [np.linalg.norm(rejected_sliding_mean - x) for x in rejected_sliding_list]
+        plt.plot(rejected_sliding_mean)
+        plt.show()
+        order = np.argsort(norm) 
+        print(rejected_sliding_mean)
+        return np.array(chains_range)[order], rejected_sliding_list
+
+    def plot_surrogate_info(self, folder_samples, no_parameters, chains_range = None, begin_disp = 0, end_disp = None):
+        folder_samples = folder_samples + '/raw_data'
+        file_samples = [f for f in listdir(folder_samples) if isfile(join(folder_samples, f))]
+        file_samples.sort()
+        if chains_range == None:
+            chains_range = range(self.no_chains)
+        N = len(chains_range)
+        surrogate_info = [None] * N
+        plt.figure()
+        for idx,i in enumerate(chains_range):
+            path_samples = folder_samples + "/" + file_samples[i]
+            print("PATH:", path_samples)
+            df_samples = pd.read_csv(path_samples, header=None)
+            surrogate_info[idx] = np.array(df_samples.iloc[:,-1])
+            if end_disp == None:
+                end_disp = surrogate_info[idx].shape[0]
+            surrogate_info[idx] = surrogate_info[idx][begin_disp:end_disp]
+            plt.plot(surrogate_info[idx])
+        plt.show()
+        plt.figure()
+        # mean
+        surrogate_info_mean = np.mean(surrogate_info, axis=0)
+        plt.plot(surrogate_info_mean)
+        plt.show()
+        
 
 ### AUTOCORRELATION:
 # Autocorrelation analysis using emcee, Foreman-Mackey,

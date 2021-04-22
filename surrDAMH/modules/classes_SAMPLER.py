@@ -89,7 +89,12 @@ class Algorithm_PARENT:
         self.G_current_sample = self.G_proposed_sample
         self.posterior_current_sample = self.posterior_proposed_sample
         if self.save_raw_data:
-            row = ['accepted'] + list(self.proposed_sample)
+            data = self.Surrogate.solver_data[self.Surrogate.solver_data_idx]
+            if data is None:
+                l = 0
+            else:
+                l = len(self.Surrogate.solver_data[self.Surrogate.solver_data_idx][0])
+            row = ['accepted'] + list(self.proposed_sample) + [l]
             self.writer_raw.writerow(row)
         
     def if_rejected(self):
@@ -97,7 +102,12 @@ class Algorithm_PARENT:
         self.no_rejected_current += 1
         self.__send_to_surrogate(sample=self.proposed_sample.copy(), G_sample=self.G_proposed_sample.copy(), weight=0)
         if self.save_raw_data:
-            row = ['rejected'] + list(self.proposed_sample)
+            data = self.Surrogate.solver_data[self.Surrogate.solver_data_idx]
+            if data is None:
+                l = 0
+            else:
+                l = len(self.Surrogate.solver_data[self.Surrogate.solver_data_idx][0])
+            row = ['rejected'] + list(self.proposed_sample) + [l]
             self.writer_raw.writerow(row)
         
     def close_files(self):
@@ -210,7 +220,12 @@ class Algorithm_DAMH(Algorithm_PARENT): # initiated by SAMPLERs
                 self.no_prerejected += 1
                 self.no_rejected_current += 1
                 if self.save_raw_data:
-                    row = ['prerejected'] + list(self.proposed_sample)
+                    data = self.Surrogate.solver_data[self.Surrogate.solver_data_idx]
+                    if data is None:
+                        l = 0
+                    else:
+                        l = len(self.Surrogate.solver_data[self.Surrogate.solver_data_idx][0])
+                    row = ['prerejected'] + list(self.proposed_sample) + [l]
                     self.writer_raw.writerow(row)
             if time.time() - self.time_start > self.time_limit:
                 print("SAMPLER at RANK", MPI.COMM_WORLD.Get_rank(), "time limit reached - loop",i)

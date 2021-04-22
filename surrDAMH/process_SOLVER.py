@@ -11,10 +11,13 @@ import numpy as np
 import sys
 from collections import deque
 from configuration import Configuration
+import time
 
 comm_world = MPI.COMM_WORLD
 rank_world = comm_world.Get_rank()
 size_world = comm_world.Get_size()
+t = time.time()
+print("RANK", rank_world, "(SOLVERS POOL) starts.")
 
 no_samplers = rank_world
 problem_name = None
@@ -111,4 +114,4 @@ for i in range(no_solvers):
         Solvers[i].terminate()
         
 comm_world.Barrier()
-print("RANK", rank_world, "(SOLVERS POOL) terminated.")
+print("RANK", rank_world, "(SOLVERS POOL) terminated.", time.time()-t)

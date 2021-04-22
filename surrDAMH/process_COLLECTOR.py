@@ -9,11 +9,14 @@ Created on Thu Nov  7 13:26:55 2019
 from mpi4py import MPI
 import numpy as np
 from configuration import Configuration
+import time
 
 # communicates with: SAMPLERs 
 comm_world = MPI.COMM_WORLD
 rank_world = comm_world.Get_rank()
 size_world = comm_world.Get_size()
+t = time.time()
+print("RANK", rank_world, "(COLLECTOR) starts.")
 
 # print(rank_world,size_world)
 no_samplers, problem_name = comm_world.recv(source=MPI.ANY_SOURCE)
@@ -115,4 +118,4 @@ while any(sampler_is_active): # while at least 1 sampling algorithm is active
 print("RANK", rank_world, "- all collected snapshots:", len(local_updater_instance.processed_par))
 
 comm_world.Barrier()
-print("RANK", rank_world, "(DATA COLLECTOR) terminated.")
+print("RANK", rank_world, "(COLLECTOR) terminated.", time.time()-t)

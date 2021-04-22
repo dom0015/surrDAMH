@@ -14,8 +14,8 @@ import sys
 import json
 sys.path.append(os.getcwd())
 
-saved_samples_name = "interfaces1"
-conf_path = "examples/interfaces1.json" 
+saved_samples_name = "interfaces_test"
+conf_path = "examples/interfaces_test.json" 
 
 with open(conf_path) as f:
     conf = json.load(f)
@@ -42,6 +42,9 @@ print('ref. obs.:',reference_observations)
 from surrDAMH.modules import visualization_and_analysis as va
 G = va.grf_eigenfunctions.GRF("surrDAMH/modules/unit30.pckl", truncate=100)
 n = conf["solver_parameters"]['n']
+G.plot_realization_interfaces(quantiles=[0.25, 0.5, 0.75, 1.0], nx_new=n, ny_new=n)
+solver_instance.all_solvers[0].plot_solution_image()
+n = 200
 G.plot_realization_interfaces(quantiles=[0.25, 0.5, 0.75, 1.0], nx_new=n, ny_new=n)
 solver_instance.all_solvers[0].plot_solution_image()
 

@@ -11,10 +11,13 @@ from modules import classes_SAMPLER as cS
 from modules import classes_communication
 from modules import lhs_normal as LHS
 from configuration import Configuration
+import time
 
 comm_world = MPI.COMM_WORLD
 rank_world = comm_world.Get_rank()
 size_world = comm_world.Get_size()
+t = time.time()
+print("RANK", rank_world, "(SAMPLER) starts.")
 
 no_samplers, problem_name = comm_world.recv(source=MPI.ANY_SOURCE)
 # data = None
@@ -96,4 +99,4 @@ if callable(f):
     my_Surr.terminate()
 
 comm_world.Barrier()
-print("RANK", rank_world, "(SAMPLER) terminated.")
+print("RANK", rank_world, "(SAMPLER) terminated.", time.time()-t)
