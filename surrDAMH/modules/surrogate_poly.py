@@ -61,9 +61,9 @@ class Surrogate_update: # initiated by COLLECTOR
             new_par[i,:] = snapshots[i].sample
             new_obs[i,:] = snapshots[i].G_sample
             if snapshots[i].weight==0:
-                new_wei[i,:] = 0
+                new_wei[i,:] = 1#0
             else:
-                new_wei[i,:] = snapshots[i].weight #1
+                new_wei[i,:] = 1#snapshots[i].weight #1
         self.non_processed_par = np.vstack((self.non_processed_par, new_par))
         self.non_processed_obs = np.vstack((self.non_processed_obs, new_obs))
         self.non_processed_wei = np.vstack((self.non_processed_wei, new_wei))

@@ -143,7 +143,9 @@ class Samples:
             begin_disp = [0] * len(parameters_disp)
         if end_disp is None:
             end_disp = [max(self.length[chains_disp])] * len(parameters_disp)
-        fig, axes = plt.subplots(1, len(parameters_disp), sharey=sharey)
+        w = 2.0 + 2.2*len(parameters_disp)
+        w = min(w,12.8)
+        fig, axes = plt.subplots(1, len(parameters_disp), sharey=sharey, figsize = [w, 4.8])
         for idj,j in enumerate(parameters_disp):
             for idi,i in enumerate(chains_disp):
                 xx = np.arange(burn_in[idi],min(end_disp[idj],self.length[i]))
@@ -152,7 +154,7 @@ class Samples:
                 axes[idj].plot(xx[begin_disp[idj]:], yy[begin_disp[idj]:], label=i)
             if show_legend:
                 axes[idj].legend(loc=1)
-            axes[idj].set_xlabel("$par.  {0}$".format(j))
+            axes[idj].set_title("$par.  {0}$".format(j))
             axes[idj].grid(True)
         axes[0].set_ylabel("convergence of averages")
         if show_title:
@@ -256,7 +258,7 @@ class Samples:
             burn_in = [0] * len(chains_disp)
         n = len(parameters_disp)
         idx = 1
-        fig, axes = plt.subplots(n, n, sharex=sharex, sharey=sharey)
+        fig, axes = plt.subplots(n, n, sharex=sharex, sharey=sharey, figsize = [6.4*2, 4.8*2])
         for idi,i in enumerate(parameters_disp):
             for idj,j in enumerate(parameters_disp):
                 plt.subplot(n, n, idx)
@@ -264,9 +266,11 @@ class Samples:
                     self.plot_hist_1d(dimension = i, burn_in = burn_in, chains_disp=chains_disp, bins=bins1d, show = False)
                 else:
                     self.plot_hist_2d(dimensions = [j,i],  burn_in = burn_in, chains_disp=chains_disp, bins=bins2d, show = False)
+                    #axes[idi,idj].set_aspect('equal', 'box')
                 if idx<=n:
                     plt.title("$par. {0}$".format(j))
                 idx = idx + 1
+        plt.subplots_adjust(wspace=1)
         if show_title:
             fig.suptitle("Based on samples from chains in " + str(chains_disp))
         plt.show()
@@ -370,7 +374,7 @@ class Samples:
         # plt.figure()
         for idx,i in enumerate(chains_range):
             path_samples = folder_samples + "/" + file_samples[i]
-            print("PATH:", path_samples)
+            #print("PATH:", path_samples)
             df_samples = pd.read_csv(path_samples, header=None)
             raw_data[idx] = np.array(df_samples.iloc[:,1:1+no_parameters])
             sample_type[idx] = np.array(df_samples.iloc[:,0])
@@ -409,8 +413,58 @@ class Samples:
         plt.ylabel("$u_2$")
         plt.grid()
         # plt.show()
+        
+    def get_length_order(self, folder_samples, no_parameters, chains_range = None):
+        folder_samples = folder_samples + '/raw_data'
+        file_samples = [f for f in listdir(folder_samples) if isfile(join(folder_samples, f))]
+        file_samples.sort()
+        if chains_range == None:
+            chains_range = range(self.no_chains)
+        N = len(chains_range)
+        raw_data = [None] * N
+        lengths = [None] * N
+        for idx,i in enumerate(chains_range):
+            path_samples = folder_samples + "/" + file_samples[i]
+            df_samples = pd.read_csv(path_samples, header=None)
+            raw_data[idx] = np.array(df_samples.iloc[:,1:1+no_parameters])
+            lengths[idx] = raw_data[idx].shape[0]
+        order = np.argsort(np.array(lengths))
+        return np.array(chains_range)[order], lengths
+    
+    def plot_evaluation_time(self, folder_samples, no_parameters, chains_range = None, plot=True):
+        folder_samples = folder_samples + '/raw_data'
+        file_samples = [f for f in listdir(folder_samples) if isfile(join(folder_samples, f))]
+        file_samples.sort()
+        if chains_range == None:
+            chains_range = range(self.no_chains)
+        N = len(chains_range)
+        time_G = [None] * N
+        time_GS = [None] * N
+        for idx,i in enumerate(chains_range):
+            path_samples = folder_samples + "/" + file_samples[i]
+            df_samples = pd.read_csv(path_samples, header=None)
+            time_G[idx] = np.array(df_samples.iloc[:,2+no_parameters])
+            time_GS[idx] = np.array(df_samples.iloc[:,3+no_parameters])
+        if plot:
+            plt.figure()
+            plt.title("Observation operator evaluation time")
+        mean_G = [None] * N
+        for idx,i in enumerate(chains_range):
+            if plot:
+                plt.plot(time_G[idx])
+            x = time_G[idx][~np.isnan(time_G[idx])]
+            mean_G[idx] = np.mean(x)
+        if plot:
+            plt.figure()
+            plt.title("Surrogate model evaluation time")
+        mean_GS = [None] * N
+        for idx,i in enumerate(chains_range):
+            if plot:
+                plt.plot(time_GS[idx])
+            mean_GS[idx] = np.mean(time_GS[idx])
+        return mean_G, mean_GS
 
-    def plot_rejected_cumsum(self, folder_samples, no_parameters, chains_range = None, begin_disp = 0, end_disp = None):
+    def plot_rejected_cumsum(self, folder_samples, no_parameters, chains_range = None, begin_disp = 0, end_disp = None, plot=True):
         folder_samples = folder_samples + '/raw_data'
         file_samples = [f for f in listdir(folder_samples) if isfile(join(folder_samples, f))]
         file_samples.sort()
@@ -419,11 +473,13 @@ class Samples:
         N = len(chains_range)
         raw_data = [None] * N
         sample_type = [None] * N
-        plt.figure()
-        rejected_cumsum_mean = None
+        rejected_cumsum_all = [None] * N
+        accepted_cumsum_all = [None] * N
+        if plot:
+            plt.figure()
         for idx,i in enumerate(chains_range):
             path_samples = folder_samples + "/" + file_samples[i]
-            print("PATH:", path_samples)
+            #print("PATH:", path_samples)
             df_samples = pd.read_csv(path_samples, header=None)
             raw_data[idx] = np.array(df_samples.iloc[:,1:1+no_parameters])
             sample_type[idx] = np.array(df_samples.iloc[:,0])
@@ -431,15 +487,41 @@ class Samples:
                 end_disp = raw_data[idx].shape[0]
             rejected = sample_type[idx][begin_disp:end_disp] == "rejected"
             rejected_cumsum = np.cumsum(rejected)
-            plt.plot(rejected_cumsum)
-            if rejected_cumsum_mean is None:
-                rejected_cumsum_mean = rejected_cumsum
-            else:
-                rejected_cumsum_mean += rejected_cumsum
-        plt.show()
-        #rejected_cumsum_mean = rejected_cumsum_mean/len(chains_range)
-        plt.figure()
-        plt.plot(rejected_cumsum_mean)
+            rejected_cumsum_all[idx] = rejected_cumsum
+            accepted = sample_type[idx][begin_disp:end_disp] == "accepted"
+            accepted_cumsum = np.cumsum(accepted)
+            accepted_cumsum_all[idx] = accepted_cumsum
+            if plot:
+                plt.plot(accepted_cumsum,rejected_cumsum)
+        if plot:
+            plt.xlabel("number of accepted samples")
+            plt.ylabel("number of rejected samples")
+            plt.figure()
+            for x in accepted_cumsum_all:
+                plt.plot(x)
+                plt.xlabel("number of samples")
+                plt.ylabel("number of accepted samples")
+            plt.figure()
+            for x in rejected_cumsum_all:
+                plt.plot(x)
+                plt.xlabel("number of samples")
+                plt.ylabel("number of rejected samples")
+        lengths = [len(x) for x in rejected_cumsum_all]
+        l = min(lengths)
+        rejected_cumsum_all = [x[:l] for x in rejected_cumsum_all]
+        accepted_cumsum_all = [x[:l] for x in accepted_cumsum_all]
+        rejected_cumsum_mean = np.mean(rejected_cumsum_all, axis=0)
+        accepted_cumsum_mean = np.mean(accepted_cumsum_all, axis=0)
+        if plot:
+            plt.figure()
+            plt.plot(rejected_cumsum_mean)
+            plt.xlabel("number of samples")
+            plt.ylabel("number of rejected samples (mean)")
+            plt.figure()
+            plt.plot(accepted_cumsum_mean)
+            plt.xlabel("number of samples")
+            plt.ylabel("number of accepted samples (mean)")
+        return rejected_cumsum_mean, accepted_cumsum_mean
 
     def plot_rejected_sliding(self, folder_samples, no_parameters, chains_range = None, begin_disp = 0, end_disp = None, window_length = 100):
         folder_samples = folder_samples + '/raw_data'
@@ -454,7 +536,7 @@ class Samples:
         rejected_sliding_list = [None] * len(chains_range)
         for idx,i in enumerate(chains_range):
             path_samples = folder_samples + "/" + file_samples[i]
-            print("PATH:", path_samples)
+            #print("PATH:", path_samples)
             df_samples = pd.read_csv(path_samples, header=None)
             raw_data[idx] = np.array(df_samples.iloc[:,1:1+no_parameters])
             sample_type[idx] = np.array(df_samples.iloc[:,0])
@@ -468,8 +550,11 @@ class Samples:
         plt.show()
         plt.figure()
         # difference from mean
-        rejected_sliding_mean = np.mean(rejected_sliding_list, axis=0)
-        norm = [np.linalg.norm(rejected_sliding_mean - x) for x in rejected_sliding_list]
+        lengths = [len(x) for x in rejected_sliding_list]
+        min_length = min(lengths)
+        rejected_sliding_list_cut = [x[:min_length] for  x in rejected_sliding_list]
+        rejected_sliding_mean = np.mean(rejected_sliding_list_cut, axis=0)
+        norm = [np.linalg.norm(rejected_sliding_mean - x) for x in rejected_sliding_list_cut]
         plt.plot(rejected_sliding_mean)
         plt.show()
         order = np.argsort(norm) 
@@ -487,7 +572,7 @@ class Samples:
         plt.figure()
         for idx,i in enumerate(chains_range):
             path_samples = folder_samples + "/" + file_samples[i]
-            print("PATH:", path_samples)
+            #print("PATH:", path_samples)
             df_samples = pd.read_csv(path_samples, header=None)
             surrogate_info[idx] = np.array(df_samples.iloc[:,-1])
             if end_disp == None:
@@ -674,15 +759,21 @@ class Samples:
         no_alg = int(self.no_chains/no_samplers)
         print("calculated for surrogate evaluation cost ratio", surr_cost_ratio)
         CpUS_aggregate = [None] * no_alg
+        acceptance_rate = [None] * no_alg
+        rejectance_rate = [None] * no_alg
         for i in range(no_alg):
-            no_full_evaluations = np.array(self.notes[i]["no_accepted"] + self.notes[i]["no_rejected"])
+            no_accepted = np.array(self.notes[i]["no_accepted"])
+            no_rejected = np.array(self.notes[i]["no_rejected"])
+            no_full_evaluations = no_accepted + no_rejected
             no_all = np.array(self.notes[i]["no_all"])
             #chains = range(i*no_samplers,(i+1)*no_samplers)
             autocorr_time = self.tau_aggregate[i]
             CpUS = (no_full_evaluations/no_all + surr_cost_ratio) * autocorr_time
             CpUS_aggregate[i] = np.mean(CpUS)
+            acceptance_rate[i] = np.mean(no_accepted/no_all)
+            rejectance_rate[i] = np.mean(no_rejected/no_all)
             print("ALGORITHM", i, "CpUS:", CpUS)
-        return np.array(CpUS_aggregate)
+        return np.array(CpUS_aggregate), np.array(acceptance_rate), np.array(rejectance_rate)
         
 ### GAUSSIAN RANDOM FIELDS:
         

@@ -1,0 +1,30 @@
+{
+    "no_parameters": 2,
+    "no_observations": 1,
+    "problem_parameters": {
+        "prior_mean": [0.0, 0.0],
+        "prior_std": 1.0,
+        "observations": [3.14159],
+        "noise_std": 0.5
+    },
+    "solver_module_path": "examples/solvers/solver_examples.py",
+    "solver_module_name": "solver_examples",
+    "solver_init_name": "Solver_spiral",
+    "solver_parameters": {
+    },
+    "no_solvers": 30,
+    "samplers_list": [
+        {
+            "type": "MH",
+            "max_samples": 1000,
+            "time_limit": 60,
+            "proposal_std": 0.05,
+            "surrogate_is_updated": false,
+            "initial_sample": [12.56637, 0.0]
+        }
+    ],
+    "surrogate_type": "poly",
+    "surr_updater_parameters": {
+        "max_degree": 2
+    }
+}

@@ -1,0 +1,127 @@
+{
+    "no_parameters": 4,
+    "no_observations": 5,
+    "problem_parameters": {
+        "prior_mean": 0.0,
+        "prior_std": 1.0,
+        "observations": [10.24629079, -4.69450881, -1.38765272, -1.57846092, -2.58566868],
+        "noise_std": [0.4, 0.1, 0.1, 0.1, 0.1]
+    },
+    "paths_to_append": [
+        "/home/simona/GIT/Simple_Python_PETSc_FEM"
+    ],
+    "solver_module_path": "examples/solvers/MyFEM_wrapper.py",
+    "solver_module_name": "MyFEM_wrapper",
+    "solver_init_name": "FEM",
+    "solver_parameters": {
+        "no_parameters": 4,
+        "no_observations": 5,
+        "no_configurations": 1,
+        "n": 60,
+        "quiet": true,
+        "tolerance": 1e-8,
+        "PC": "icc",
+        "use_deflation": false,
+        "deflation_imp": 1e-2
+    },
+    "no_solvers": 30,
+    "samplers_list": [
+        {
+            "type": "MH",
+            "max_samples": 50000,
+            "time_limit": 2000,
+            "proposal_std": 0.025,
+            "surrogate_is_updated": false,
+            "initial_sample": [-1, -0.5, 0.5, 1]
+        },
+        {
+            "type": "MH",
+            "max_samples": 50000,
+            "time_limit": 2000,
+            "proposal_std": 0.0375,
+            "surrogate_is_updated": false,
+            "initial_sample": [-1, -0.5, 0.5, 1]
+        },
+        {
+            "type": "MH",
+            "max_samples": 50000,
+            "time_limit": 2000,
+            "proposal_std": 0.05,
+            "surrogate_is_updated": false,
+            "initial_sample": [-1, -0.5, 0.5, 1]
+        },
+        {
+            "type": "MH",
+            "max_samples": 50000,
+            "time_limit": 2000,
+            "proposal_std": 0.075,
+            "surrogate_is_updated": false,
+            "initial_sample": [-1, -0.5, 0.5, 1]
+        },
+        {
+            "type": "MH",
+            "max_samples": 50000,
+            "time_limit": 2000,
+            "proposal_std": 0.1,
+            "surrogate_is_updated": false,
+            "initial_sample": [-1, -0.5, 0.5, 1]
+        },
+        {
+            "type": "MH",
+            "max_samples": 50000,
+            "time_limit": 2000,
+            "proposal_std": 0.125,
+            "surrogate_is_updated": false,
+            "initial_sample": [-1, -0.5, 0.5, 1]
+        },
+        {
+            "type": "MH",
+            "max_samples": 50000,
+            "time_limit": 2000,
+            "proposal_std": 0.15,
+            "surrogate_is_updated": false,
+            "initial_sample": [-1, -0.5, 0.5, 1]
+        },
+        {
+            "type": "MH",
+            "max_samples": 50000,
+            "time_limit": 2000,
+            "proposal_std": 0.175,
+            "surrogate_is_updated": false,
+            "initial_sample": [-1, -0.5, 0.5, 1]
+        },
+        {
+            "type": "MH",
+            "max_samples": 50000,
+            "time_limit": 2000,
+            "proposal_std": 0.2,
+            "surrogate_is_updated": false,
+            "initial_sample": [-1, -0.5, 0.5, 1]
+        },
+        {
+            "type": "MH",
+            "max_samples": 50000,
+            "time_limit": 2000,
+            "proposal_std": 0.225,
+            "surrogate_is_updated": false,
+            "initial_sample": [-1, -0.5, 0.5, 1]
+        },
+        {
+            "type": "MH",
+            "max_samples": 50000,
+            "time_limit": 2000,
+            "proposal_std": 0.25,
+            "surrogate_is_updated": false,
+            "initial_sample": [-1, -0.5, 0.5, 1]
+        }
+    ],
+    "surrogate_type": "rbf",
+    "surr_solver_parameters": {
+        "kernel_type": 1
+    },
+    "surr_updater_parameters": {
+        "kernel_type": 1,
+        "no_keep": 500,
+        "expensive": false
+    }
+}

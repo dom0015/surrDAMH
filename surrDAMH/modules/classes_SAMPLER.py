@@ -63,6 +63,7 @@ class Algorithm_PARENT:
         else:
             self.__write_to_file = self._empty_function
         if self.save_raw_data:
+            self.time_GS = None
             filename = "saved_samples/" + self.Problem.saved_samples_name + "/raw_data/" + self.name + ".csv"
             os.makedirs(os.path.dirname(filename), exist_ok=True)
             self.__file_raw = open(filename, 'w')
@@ -75,8 +76,12 @@ class Algorithm_PARENT:
         self.pre_posterior_current_sample = 0
         
     def request_observations(self):
+        if self.save_raw_data:
+            t = time.time()
         self.Solver.send_parameters(self.proposed_sample)
         self.G_proposed_sample = self.Solver.recv_observations()
+        if self.save_raw_data:
+            self.time_G = time.time() - t
         self.posterior_proposed_sample = self.compute_posterior(self.proposed_sample, self.G_proposed_sample)
         self.log_ratio = self.posterior_proposed_sample - self.posterior_current_sample
         
@@ -94,7 +99,7 @@ class Algorithm_PARENT:
                 l = 0
             else:
                 l = len(self.Surrogate.solver_data[self.Surrogate.solver_data_idx][0])
-            row = ['accepted'] + list(self.proposed_sample) + [l]
+            row = ['accepted'] + list(self.proposed_sample) + [l] + [self.time_G] + [self.time_GS]
             self.writer_raw.writerow(row)
         
     def if_rejected(self):
@@ -107,7 +112,7 @@ class Algorithm_PARENT:
                 l = 0
             else:
                 l = len(self.Surrogate.solver_data[self.Surrogate.solver_data_idx][0])
-            row = ['rejected'] + list(self.proposed_sample) + [l]
+            row = ['rejected'] + list(self.proposed_sample) + [l] + [self.time_G] + [self.time_GS]
             self.writer_raw.writerow(row)
         
     def close_files(self):
@@ -192,8 +197,12 @@ class Algorithm_DAMH(Algorithm_PARENT): # initiated by SAMPLERs
             self.proposed_sample = self.Proposal.propose_sample(self.current_sample)
             # it is necessary to recalculate GS_current_cample,
             # because the surrogate model may have changed
+            if self.save_raw_data:
+                t = time.time()
             self.Surrogate.send_parameters(np.array([self.current_sample,self.proposed_sample]))
             tmp = self.Surrogate.recv_observations()
+            if self.save_raw_data:
+                self.time_GS = time.time() - t
             GS_current_sample = tmp[0,:]
             # TO DO: do not recalculate posterior if GS_current_sample did not change
             self.pre_posterior_current_sample = self.compute_posterior(self.current_sample, GS_current_sample)
@@ -225,7 +234,7 @@ class Algorithm_DAMH(Algorithm_PARENT): # initiated by SAMPLERs
                         l = 0
                     else:
                         l = len(self.Surrogate.solver_data[self.Surrogate.solver_data_idx][0])
-                    row = ['prerejected'] + list(self.proposed_sample) + [l]
+                    row = ['prerejected'] + list(self.proposed_sample) + [l] + [None] + [self.time_GS]
                     self.writer_raw.writerow(row)
             if time.time() - self.time_start > self.time_limit:
                 print("SAMPLER at RANK", MPI.COMM_WORLD.Get_rank(), "time limit reached - loop",i)

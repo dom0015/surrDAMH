@@ -10,6 +10,7 @@ import os
 import sys
 import json
 import numpy as np
+import matplotlib.pyplot as plt
 
 wdir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))) 
 # wdir = os.getcwd() 
@@ -18,7 +19,8 @@ from surrDAMH.modules import visualization_and_analysis as va
 
 ### DEFAULT PARAMETERS:
 conf_name = "illustrative_updates" # requires configuration file "conf/" + conf_name + ".json"
-no_samplers = 4 # number of sampling processes
+conf_name = "interfaces_updates_rbf"
+no_samplers = 40 # number of sampling processes
 
 ### PARSE COMMAND LINE ARGUMENTS: 
 len_argv = len(sys.argv)
@@ -80,10 +82,15 @@ for i in range(no_alg):
 #     S.plot_autocorr_function(parameters_disp = parameters_disp, chains_disp = chains, length_disp = length_disp, plot_mean = True, show_legend = True)
 
 i=1
-window_length=20000
-end_disp = 70000
-order, res = S.plot_rejected_sliding(folder_samples, no_parameters, chains_range=range(i*no_samplers,(i+1)*no_samplers), window_length=window_length, end_disp = end_disp)
-order, res = S.plot_rejected_sliding(folder_samples, no_parameters, chains_range=list(order[:20]), window_length=window_length, end_disp = end_disp)
-order, res = S.plot_rejected_sliding(folder_samples, no_parameters, chains_range=list(order[:10]), window_length=window_length, end_disp = end_disp)
+window_length=500
+end_disp = None
+#order, lengths = S.get_length_order(folder_samples, no_parameters, chains_range=range(i*no_samplers,(i+1)*no_samplers))
+#order, res = S.plot_rejected_sliding(folder_samples, no_parameters, chains_range=list(order[10:]), window_length=window_length, end_disp = end_disp)
+#order, res = S.plot_rejected_sliding(folder_samples, no_parameters, chains_range=range(i*no_samplers,(i+1)*no_samplers), window_length=window_length, end_disp = end_disp)
+#order, res = S.plot_rejected_sliding(folder_samples, no_parameters, chains_range=list(order[:20]), window_length=window_length, end_disp = end_disp)
+#order, res = S.plot_rejected_sliding(folder_samples, no_parameters, chains_range=list(order[:10]), window_length=window_length, end_disp = end_disp)
 S.plot_rejected_cumsum(folder_samples, no_parameters, chains_range=range(i*no_samplers,(i+1)*no_samplers), end_disp = end_disp)
-S.plot_surrogate_info(folder_samples, no_parameters, chains_range=range(i*no_samplers,(i+1)*no_samplers), end_disp = end_disp)
+#S.plot_surrogate_info(folder_samples, no_parameters, chains_range=range(i*no_samplers,(i+1)*no_samplers), end_disp = end_disp)
+[time_G, time_GS] = S.plot_evaluation_time(folder_samples, no_parameters, chains_range=range(i*no_samplers,(i+1)*no_samplers))
+print(np.mean(time_G),np.mean(time_GS),np.mean(time_GS)/np.mean(time_G))
+plt.show()

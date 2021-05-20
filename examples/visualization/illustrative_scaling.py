@@ -19,7 +19,7 @@ from surrDAMH.modules import visualization_and_analysis as va
 
 ### DEFAULT PARAMETERS:
 conf_name = "illustrative_scaling2" # requires configuration file "conf/" + conf_name + ".json"
-conf_name = "interfaces_scaling"
+#conf_name = "interfaces_scaling"
 no_samplers = 4 # number of sampling processes
 
 ### PARSE COMMAND LINE ARGUMENTS: 
@@ -35,7 +35,7 @@ conf_path = wdir + "/examples/" + conf_name + ".json"
 with open(conf_path) as f:
     conf = json.load(f)
 saved_samples_name = "illustrative_scaling2"
-saved_samples_name = "interfaces_scaling"
+#saved_samples_name = "interfaces_scaling"
 no_parameters = conf["no_parameters"]
 list_alg = conf["samplers_list"]
 

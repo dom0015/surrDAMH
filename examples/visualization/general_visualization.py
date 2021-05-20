@@ -64,6 +64,8 @@ S.calculate_autocorr_time(tol=1)
 ### SAMPLES VISUALIZATION: 
 parameters_disp = range(min(no_parameters,5))
 S.plot_hist_grid(parameters_disp = parameters_disp, bins1d=30, bins2d=30, show_title = True, sharex=False, sharey=False)
+S.plot_hist_grid(chains_disp = range(no_samplers*(no_alg-1),no_samplers*no_alg), parameters_disp = parameters_disp, bins1d=40, bins2d=40, show_title = True, sharex=False, sharey=False)
+
 # plot convergence of averages for all parts of the sampling process
 for i in range(no_alg):
     S.plot_average(parameters_disp = parameters_disp, chains_disp = range(i*no_samplers,(i+1)*no_samplers), show_legend = True, sharey=False)

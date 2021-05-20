@@ -24,26 +24,26 @@
         "use_deflation": false,
         "deflation_imp": 1e-2
     },
-    "no_solvers": 3,
+    "no_solvers": 10,
     "samplers_list": [
         {
             "type": "MH",
-            "max_samples": 200,
-            "time_limit": 60,
+            "max_samples": 100000,
+            "time_limit": 30,
             "proposal_std": 0.2,
             "surrogate_is_updated": true
         },
         {
             "type": "DAMH",
-            "max_samples": 2000,
-            "time_limit": 60,
+            "max_samples": 100000,
+            "time_limit": 30,
             "proposal_std": 0.2,
             "surrogate_is_updated": true
         },
         {
             "type": "DAMH",
-            "max_samples": 50000,
-            "time_limit": 480,
+            "max_samples": 100000,
+            "time_limit": 30,
             "proposal_std": 0.2,
             "surrogate_is_updated": false
         }

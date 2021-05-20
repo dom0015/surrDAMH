@@ -15,9 +15,9 @@ from examples.solvers.pcdeflation import pcdeflation
 
 class FEM:
     # FEM solver preparation
-    def __init__(self, no_parameters = 5, no_observations = 5, no_configurations = 1, n = 100, filename = None, quiet = True, tolerance = None, PC = "none", use_deflation = False, deflation_imp = None):    
-        if filename == None:
-            filename = 'surrDAMH/modules/unit30.pckl'
+    def __init__(self, no_parameters = 5, no_observations = 5, no_configurations = 1, n = 100, grf_filename = None, quiet = True, tolerance = None, PC = "none", use_deflation = False, deflation_imp = None, threshold_iter = 0):    
+        if grf_filename == None:
+            grf_filename = 'surrDAMH/modules/unit30.pckl'
         petsc4py.init()
         self.nrows = (n+1)*(n+1)
         # TRIANGULAR MESH SETTING -----------------------------------------------------
@@ -106,9 +106,12 @@ class FEM:
         if self.use_deflation:
             self.deflation_init()
         self.deflation_imp = deflation_imp
+        self.threshold_iter = threshold_iter
+        self.ncols = 0
+        self.no_iter = 0
         
         truncate = 100
-        self.grf_instance = grf.GRF(filename=filename, truncate=truncate)
+        self.grf_instance = grf.GRF(filename=grf_filename, truncate=truncate)
         quantiles = np.cumsum(np.ones((no_parameters,))/no_parameters)
         midpoints = self.my_problem_left.geometry.nodes[self.my_problem_left.geometry.elems].mean(axis=1)
         x = midpoints[:, 0]
@@ -128,15 +131,20 @@ class FEM:
         for i,solver in enumerate(self.all_solvers):
             if self.use_deflation:
                 self.get_solution_DCG(solver)
-                self.deflation_extend_optional(solver.solution)
+                self.solution = solver.solution # TEMP (just for testing)
+                #self.deflation_extend_optional(solver.solution)
             else:
                 solver.ksp_cg_with_pc(self.PC,self.tolerance)
+                self.solution = solver.solution # TEMP (just for testing)
+                self.no_iter = solver.ksp.getIterationNumber()
+                self.residual_norm = solver.ksp.getResidualNorm()
                 if self.quiet == False:
-                    print("SOLVER iterations:",solver.ksp.getIterationNumber(),"normres:",solver.ksp.getResidualNorm())
-            if self.quiet == False:
-                print("SOLVER time:", time.time()-t)
+                    print("SOLVER iterations:",self.no_iter,"normres:",self.residual_norm)
             solver.calculate_window_flow()
             result[i]=solver.window_flow
+        self.comp_time = time.time()-t
+        if self.quiet == False:
+            print("SOLVER time:", self.comp_time)
         return np.concatenate(result)
 
     def assemble(self):
@@ -215,21 +223,36 @@ class FEM:
         self.W.setPreallocationNNZ(0)
         self.W.assemblyBegin()
         self.W.assemblyEnd()
+
+        # self.W = petsc4py.PETSc.Mat()
+        # self.W.createDense((self.nrows,0))
+        # self.W.setUp()
+        # self.W.assemblyBegin()
+        # self.W.assemblyEnd()
+        
+        # self.Wt = petsc4py.PETSc.Mat()
+        # self.Wt.createDense((0,self.nrows))
+        # self.Wt.setUp()
+        # self.Wt.assemblyBegin()
+        # self.Wt.assemblyEnd()
+        
         self.ncols = 0
 
     def deflation_extend_optional(self, v):
         # decide if v should be added to W
-        vnp = v[:]/v.norm()
         if self.ncols == 0:
+            vnp = v[:]/v.norm()
             self.deflation_extend(vnp)
             return
-        for i in range(self.ncols):
-            w = self.W[:,i]
-            dotprod = vnp.dot(w)
-            vnp = vnp - dotprod * w
-        imp = np.linalg.norm(vnp)
-        if imp>self.deflation_imp:
-            self.deflation_extend(vnp/imp)
+        if self.no_iter>self.threshold_iter:
+            vnp = v[:]/v.norm()
+            for i in range(self.ncols):
+                w = self.W[:,i]
+                dotprod = vnp.dot(w)
+                vnp = vnp - dotprod * w
+            imp = np.linalg.norm(vnp)
+            if imp>self.deflation_imp:
+                self.deflation_extend(vnp/imp)
 
     def deflation_extend(self, v):
         W_old = self.W.copy()
@@ -240,9 +263,49 @@ class FEM:
         self.W.setPreallocationNNZ(self.nrows*(self.ncols+1))
         self.W.setValues(range(self.nrows),range(self.ncols),W_old[:,:])
         self.W.setValues(range(self.nrows),range(self.ncols,self.ncols+1),v[:])
-        self.ncols += 1
         self.W.assemblyBegin()
         self.W.assemblyEnd()
+        
+        # W_old = self.W.copy()
+        # self.W = petsc4py.PETSc.Mat()
+        # self.W.createDense((self.nrows,self.ncols+1))
+        # self.W.setUp()
+        # self.W.setValues(range(self.nrows),range(self.ncols),W_old[:,:])
+        # self.W.setValues(range(self.nrows),range(self.ncols,self.ncols+1),v[:])
+        # self.W.assemblyBegin()
+        # self.W.assemblyEnd()
+        
+        # Wt_old = self.Wt.copy()
+        # self.Wt = petsc4py.PETSc.Mat()
+        # self.Wt.createDense((self.ncols+1,self.nrows),(self.ncols+1,self.nrows))
+        # self.Wt.setUp()
+        # self.Wt.setValues(range(self.ncols),range(self.nrows),Wt_old[:,:])
+        # self.Wt.setValues(range(self.ncols,self.ncols+1),range(self.nrows),v[:])
+        # self.Wt.assemblyBegin()
+        # self.Wt.assemblyEnd()
+        
+        self.ncols += 1
+        
+    # def set_deflation_basis(self, W):
+    #     self.ncols = W.shape[1]
+    #     self.W = petsc4py.PETSc.Mat()
+    #     self.W.create(petsc4py.PETSc.COMM_WORLD)
+    #     self.W.setSizes((self.nrows,self.ncols))
+    #     self.W.setType("aij")
+    #     self.W.setPreallocationNNZ(self.nrows*(self.ncols))
+    #     self.W.setValues(range(self.nrows),range(self.ncols),W[:,:])
+    #     self.W.assemblyBegin()
+    #     self.W.assemblyEnd()
+
+    #     # self.ncols = W.shape[1]
+    #     # self.W = petsc4py.PETSc.Mat()
+    #     # self.W.createSeqDense(petsc4py.PETSc.COMM_WORLD)
+    #     # self.W.setSizes((self.nrows,self.ncols))
+    #     # #self.W.setType("aij")
+    #     # #self.W.setPreallocationNNZ(self.nrows*(self.ncols))
+    #     # self.W.setValues(range(self.nrows),range(self.ncols),W[:,:])
+    #     # self.W.assemblyBegin()
+    #     # self.W.assemblyEnd()
 
 ## PC deflation - deflacni matice je nastavovana pres wrapper od Kuby,
 ## mozna, ze uz je to primo soucasti petsc4py. 
@@ -253,19 +316,22 @@ class FEM:
         ksp.setOperators(solver.assembled_matrices.matrices["A_dirichlet"])
         ksp.setType('cg')
         v = ksp.getTolerances()
-        ksp.setTolerances(self.tolerance,v[1],v[2],v[3])
+        #ksp.setTolerances(self.tolerance,v[1],v[2],v[3]) # relative
+        ksp.setTolerances(1e-50,self.tolerance,v[2],v[3]) # absolute
         ksp_pc = ksp.getPC()
         ksp_pc.setType('deflation')
         opts = petsc4py.PETSc.Options()
         opts.setValue("deflation_pc_pc_type",self.PC)
         ksp.setFromOptions()
         if self.ncols > 0:
-            pcdeflation.setDeflationMat(ksp_pc,self.W,False);
+            pcdeflation.setDeflationMat(ksp_pc,self.W,False)
+        ksp.setNormType(petsc4py.PETSc.KSP.NormType.NORM_UNPRECONDITIONED) # optional
         ksp.setUp()
         ksp.solve(solver.assembled_matrices.rhss["final"], solver.solution)
+        self.no_iter = ksp.getIterationNumber()
+        self.residual_norm = ksp.getResidualNorm()
         if self.quiet == False:
-            print("iterations:",ksp.getIterationNumber(),"W size:",self.ncols,"normres:",ksp.getResidualNorm())
-        return solver.solution
+            print("iterations:",self.no_iter,"W size:",self.ncols,"normres:",self.residual_norm)
 ## ---------
 
 def demo_prepare_and_solve():

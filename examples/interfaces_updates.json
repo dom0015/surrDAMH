@@ -28,17 +28,17 @@
     "samplers_list": [
         {
             "type": "MH",
-            "max_samples": 100,
+            "max_samples": 10,
             "time_limit": 60,
-            "proposal_std": 0.2,
+            "proposal_std": 0.4,
             "surrogate_is_updated": true,
             "initial_sample": [1.0, 1.0, 1.0, 1.0]
         },
         {
             "type": "DAMH",
-            "max_samples": 100000,
+            "max_samples": 200000,
             "time_limit": 120,
-            "proposal_std": 0.2,
+            "proposal_std": 0.4,
             "surrogate_is_updated": true,
             "initial_sample": [1.0, 1.0, 1.0, 1.0]
         }

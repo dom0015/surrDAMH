@@ -311,6 +311,7 @@ class GRF:
     def plot_grf(self, eta, cmap = "viridis"):
         z = self.realization_grid_new(eta,np.linspace(0,self.lx,self.nx),np.linspace(0,self.ly,self.ny))
         fig, axes = plt.subplots(1, 1, figsize=(4, 3), sharey=True)
-        axes.imshow(z,origin="lower",extent=[0, self.lx, 0, self.ly],cmap=cmap)
+        data = axes.imshow(z,origin="lower",extent=[0, self.lx, 0, self.ly],cmap=cmap)
+        fig.colorbar(data, ax=axes)
         plt.show()
         

@@ -73,3 +73,18 @@ class Solver_uninformative:
     def get_observations(self):
         observations = np.full((self.no_observations,),0.0)
         return observations
+
+class Solver_spiral:
+    def __init__(self):
+        self.no_parameters = 2
+        self.no_observations = 1
+        
+    def set_parameters(self,data_par):
+        self.x = data_par[0]
+        self.y = data_par[1]
+        
+    def get_observations(self):
+        r = np.sqrt(self.x**2 + self.y**2)
+        angle = np.arctan2(self.y,self.x)
+        observations = np.abs(np.mod(r-angle,2*np.pi)-np.pi)
+        return observations
