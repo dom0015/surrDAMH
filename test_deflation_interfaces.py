@@ -6,14 +6,6 @@ Created on Mon May 17 16:23:44 2021
 @author: domesova
 """
 
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Created on Sun Feb 14 12:02:19 2021
-
-@author: simona
-"""
-
 import numpy as np
 import matplotlib.pyplot as plt
 import importlib.util as iu
@@ -42,6 +34,8 @@ sys.path.append(path)
 
 no_parameters = 10
 spec = iu.spec_from_file_location("MyFEM_wrapper", "examples/solvers/MyFEM_wrapper_grf.py")
+
+problem_name = "deflation_grf_sigma1_0"
 
 solver_module = iu.module_from_spec(spec)
 spec.loader.exec_module(solver_module)
@@ -129,7 +123,7 @@ def create_PETSc_Vec(v):
 ## TEST 2
 N = 150
 np.random.seed(seed)
-all_parameters = np.random.randn(N,no_parameters)
+all_parameters = np.random.randn(N,no_parameters) #*0.5
 data_without = np.zeros((N,4))
 solutions = np.zeros((3721,N))
 solver_parameters["use_deflation"] = False
@@ -169,7 +163,7 @@ for i in range(N-1): # precomputation without DCG
 # filename = "saved_tests/deflation_interfaces/data_without" + str(seed) + ".csv"
 # np.savetxt(filename, data_without, delimiter=",")
 
-filename = "saved_tests/deflation_grf/data_without" + str(seed) + ".csv"
+filename = "saved_tests/" + problem_name + "/data_without" + str(seed) + ".csv"
 os.makedirs(os.path.dirname(filename), exist_ok=True)
 labels = ["W","iter","time","error"]
 file = open(filename, 'w')
@@ -178,7 +172,7 @@ writer.writerow(labels)
 writer.writerows(data_without)#.tolist())
 file.close()
 
-filename = "saved_tests/deflation_grf/data_with" + str(seed) + ".csv"
+filename = "saved_tests/" + problem_name + "/data_with" + str(seed) + ".csv"
 os.makedirs(os.path.dirname(filename), exist_ok=True)
 labels = ["W","iter","time","error"]
 file = open(filename, 'w')

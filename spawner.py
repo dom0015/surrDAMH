@@ -5,7 +5,7 @@ import sys
 
 comms = []
 
-for seed in range(50):
+for seed in range(60):
     comm = MPI.COMM_SELF.Spawn(sys.executable, args=['test_deflation_interfaces.py',str(seed)], maxprocs=1)
     comms.append(comm)
     

@@ -38,14 +38,21 @@ fontsize = 20
 markersize = 12
 linewidth = 3
 
-PROC = 50
+PROC = 60
+problem_name = "deflation_interfaces"
+problem_name = "deflation_interfaces_sigma0_5"
+problem_name = "deflation_interfaces_sigma1_0"
+#problem_name = "deflation_interfaces_sigma2_0"
+problem_name = "deflation_grf_sigma0_5deflation_grf"
+#problem_name = "deflation_grf_sigma1_0"
+#problem_name = "deflation_grf_sigma2_0"
 
 W0 = []
 iterations0 = []
 times0 = []
 errors0 = []
 for seed in range(PROC):
-    filename = "saved_tests/deflation_grf/data_without" + str(seed) + ".csv"
+    filename = "saved_tests/" + problem_name + "/data_without" + str(seed) + ".csv"
     data = pd.read_csv(filename)#, header=None)
     W0.append(np.array(data["W"]))
     tmp_iter = np.array(data["iter"])
@@ -59,7 +66,7 @@ iterations = []
 times = []
 errors = []
 for seed in range(PROC):
-    filename = "saved_tests/deflation_grf/data_with" + str(seed) + ".csv"
+    filename = "saved_tests/" + problem_name + "/data_with" + str(seed) + ".csv"
     data = pd.read_csv(filename)#, header=None)
     tmp_W = np.array(data["W"])
     W.append(tmp_W)
@@ -93,25 +100,27 @@ plt.plot(iterations[0],color=colors[1])
 plt.legend(["deflation basis size","number of iterations"])
 plt.xlabel("number of available solution vectors")
 plt.tight_layout()
-plt.ylim([-5,145])
+plt.xlim([0,150])
+plt.ylim([0,150])
 plt.show()
 plt.grid()
-#plt.savefig('examples/visualization/img/deflation_grf.pdf')  
+plt.savefig('examples/visualization/img/' + problem_name + '_1.pdf')  
 
 plt.figure()
 plt.plot(np.mean(W,axis=0),color=colors[0])
 plt.plot(np.mean(iterations,axis=0),color=colors[1])
 plt.legend(["deflation basis size","number of iterations"])
-plt.plot(np.quantile(W,0.9,axis=0),'--',color=colors[0])
-plt.plot(np.quantile(iterations,0.9,axis=0),'--',color=colors[1])
-plt.plot(np.quantile(W,0.1,axis=0),'--',color=colors[0])
-plt.plot(np.quantile(iterations,0.1,axis=0),'--',color=colors[1],)
+plt.plot(np.quantile(W,0.95,axis=0),'--',color=colors[0])
+plt.plot(np.quantile(iterations,0.95,axis=0),'--',color=colors[1])
+plt.plot(np.quantile(W,0.05,axis=0),'--',color=colors[0])
+plt.plot(np.quantile(iterations,0.05,axis=0),'--',color=colors[1],)
 plt.xlabel("number of available solution vectors")
 plt.tight_layout()
-plt.ylim([-5,145])
+plt.xlim([0,150])
+plt.ylim([0,150])
 plt.show()
 plt.grid()
-#plt.savefig('examples/visualization/img/deflation_grf50.pdf')  
+plt.savefig('examples/visualization/img/' + problem_name + '_60.pdf')  
 
 # def show_data(data):
 #     print("residual_norm:")
