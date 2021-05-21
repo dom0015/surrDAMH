@@ -44,6 +44,7 @@ solver_init = getattr(solver_module, conf["solver_init_name"])
 solver_parameters = conf["solver_parameters"]
 solver_parameters["no_observations"] = 20
 solver_parameters["no_configurations"] = 4
+solver_parameters["n"] = 200
 solver_instance = solver_init(**solver_parameters)
 reference_parameters = np.array([-1, -0.5, 0.5, 1])
 solver_instance.set_parameters(reference_parameters)
@@ -53,28 +54,31 @@ print('ref. obs.:',reference_observations)
 from surrDAMH.modules import visualization_and_analysis as va
 G = va.grf_eigenfunctions.GRF("surrDAMH/modules/unit30.pckl", truncate=100)
 n = conf["solver_parameters"]['n']
-G.plot_realization_interfaces(quantiles=[0.25, 0.5, 0.75, 1.0], nx_new=n, ny_new=n)
-solver_instance.all_solvers[0].plot_solution_image()
+#G.plot_realization_interfaces(quantiles=[0.25, 0.5, 0.75, 1.0], nx_new=n, ny_new=n)
+#solver_instance.all_solvers[0].plot_solution_image(flow=True)
 n = 200
 G.plot_realization_interfaces(quantiles=[0.25, 0.5, 0.75, 1.0], nx_new=n, ny_new=n)
 plt.savefig('examples/visualization/img/' + savefig_name + '_subdomains.pdf')  
-solver_instance.all_solvers[0].plot_solution_image()
+#solver_instance.all_solvers[0].plot_solution_image(flow=True)
+
+solver_instance.plot_problem_left(flow=True)
 
 """ VISUALIZATION OF WINDOWS """
 no_windows = 5
+color1 = "orange"
+color2 = "red"
 for i in range(no_windows - 1):
-    color = "yellow"
+    color = color1
     if np.mod(i,2)==0:
-        color = "red"
+        color = color2
     length = 1.0/(no_windows-1)
     plt.plot([1,1],[i*length,(i+1)*length],linewidth=4,color=color)
     label = "$S_{"+ str(i+1) +"}$"
     plt.text(1-0.1,(i+0.4)*length,label,color=color)
-plt.plot([0,0],[0,1],linewidth=6,color='red')
+plt.plot([0,0],[0,1],linewidth=6,color=color2)
 label = "$S_{"+ str(no_windows) +"}$"
-plt.text(0.03,0.48,label,color='red')
+plt.text(0.03,0.48,label,color=color2)
 plt.show()
-plt.savefig('examples/visualization/img/' + savefig_name + '_p.pdf')  
 
 """
 

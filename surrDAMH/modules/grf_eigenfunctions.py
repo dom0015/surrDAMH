@@ -316,7 +316,7 @@ class GRF:
         if ny_new == None:
             ny_new = self.ny
         z = self.realization_grid_new(eta,np.linspace(0,self.lx,nx_new),np.linspace(0,self.ly,ny_new))
-        fig, axes = plt.subplots(1, 1, figsize=(4, 3), sharey=True)
+        fig, axes = plt.subplots(1, 1)#, figsize=(4, 3), sharey=True)
         data = axes.imshow(z,origin="lower",extent=[0, self.lx, 0, self.ly],cmap=cmap)
         fig.colorbar(data, ax=axes)
         plt.show()

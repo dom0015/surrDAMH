@@ -9,6 +9,7 @@ Created on Wed Jul 15 15:12:30 2020
 import petsc4py
 import numpy as np
 import time
+import matplotlib.pyplot as plt
 from MyFEM import Mesh, ProblemSetting, Assemble, Solvers
 import surrDAMH.modules.grf_eigenfunctions as grf
 from examples.solvers.pcdeflation import pcdeflation
@@ -293,6 +294,49 @@ class FEM:
         if self.quiet == False:
             print("iterations:",self.no_iter,"W size:",self.ncols,"normres:",self.residual_norm)
 ## ---------
+
+    def plot_problem_left(self, flow = False):
+        n = int(np.sqrt(self.nrows))
+        fig = plt.figure()
+        ax = fig.add_subplot(111)
+        mat = self.my_problem_left.material["permeability"]
+        mat = 0.5*(mat[::2] + mat[1::2])
+        mat = mat.reshape((n-1,n-1),order="F")
+        im = ax.imshow(mat, extent=[0, 1, 1, 0])
+        plt.gca().invert_yaxis()
+        plt.colorbar(im)
+        plt.show()
+        
+        print(np.unique(mat))
+        
+        fig = plt.figure()
+        ax = fig.add_subplot(111)
+        tmp = self.all_solvers[0].solution[:]
+        tmp = tmp.reshape((n,-1), order='F')
+        im = ax.imshow(tmp, extent=[0, 1, 1, 0])
+        plt.gca().invert_yaxis()
+        plt.colorbar(im)
+        plt.show()
+        
+        if flow:
+            flow_y = tmp[:-1,:] - tmp[1:,:]
+            flow_y = 0.5*(flow_y[:,:-1] + flow_y[:,1:])
+            fig = plt.figure()
+            ax = fig.add_subplot(111)
+            im = ax.imshow(mat*flow_y, extent=[0, 1, 1, 0])
+            plt.gca().invert_yaxis()
+            plt.colorbar(im)
+            plt.show()
+        
+            flow_x = tmp[:,:-1] - tmp[:,1:]
+            flow_x = 0.5*(flow_x[:-1,:] + flow_x[1:,:])
+            fig = plt.figure()
+            ax = fig.add_subplot(111)
+            im = ax.imshow(mat*flow_x, extent=[0, 1, 1, 0])
+            plt.gca().invert_yaxis()
+            plt.colorbar(im)
+            plt.show()
+        return
 
 def demo_prepare_and_solve():
     no_parameters = 10
