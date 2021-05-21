@@ -59,7 +59,24 @@ n = 200
 G.plot_realization_interfaces(quantiles=[0.25, 0.5, 0.75, 1.0], nx_new=n, ny_new=n)
 plt.savefig('examples/visualization/img/' + savefig_name + '_subdomains.pdf')  
 solver_instance.all_solvers[0].plot_solution_image()
+
+""" VISUALIZATION OF WINDOWS """
+no_windows = 5
+for i in range(no_windows - 1):
+    color = "yellow"
+    if np.mod(i,2)==0:
+        color = "red"
+    length = 1.0/(no_windows-1)
+    plt.plot([1,1],[i*length,(i+1)*length],linewidth=4,color=color)
+    label = "$S_{"+ str(i+1) +"}$"
+    plt.text(1-0.1,(i+0.4)*length,label,color=color)
+plt.plot([0,0],[0,1],linewidth=6,color='red')
+label = "$S_{"+ str(no_windows) +"}$"
+plt.text(0.03,0.48,label,color='red')
+plt.show()
 plt.savefig('examples/visualization/img/' + savefig_name + '_p.pdf')  
+
+"""
 
 ### SAMPLES VISUALIZATION:
 S = va.Samples()
@@ -87,3 +104,5 @@ S.plot_hist_grid(chains_disp = chains_disp, bins1d=40, bins2d=40, show_title=Fal
 S.plot_average(chains_disp = chains_disp, show_legend = False, show_title = False, sharey=True)
 plt.tight_layout()
 plt.show()
+
+"""

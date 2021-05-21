@@ -283,7 +283,9 @@ class GRF:
         bounds = np.arange(no_parameters+1)-0.5
         norm = mpl.colors.BoundaryNorm(bounds, cm.N)
         cbar = plt.colorbar(mpl.cm.ScalarMappable(norm=norm, cmap=cm), ticks=np.arange(no_parameters))
-        cbar.ax.set_yticklabels(np.arange(no_parameters)+1)
+        label_numbers = np.arange(no_parameters)+1
+        labels = ["$D_{" + str(x) + "}$" for x in label_numbers]
+        cbar.ax.set_yticklabels(labels)
         plt.show()
     
     def realization_grid_new(self, eta, x_new, y_new):
@@ -308,8 +310,12 @@ class GRF:
             M_std = f_std(x_new,y_new)
         return M_mean, M_std
     
-    def plot_grf(self, eta, cmap = "viridis"):
-        z = self.realization_grid_new(eta,np.linspace(0,self.lx,self.nx),np.linspace(0,self.ly,self.ny))
+    def plot_grf(self, eta, cmap = "viridis", nx_new = None, ny_new = None):
+        if nx_new == None:
+            nx_new = self.nx
+        if ny_new == None:
+            ny_new = self.ny
+        z = self.realization_grid_new(eta,np.linspace(0,self.lx,nx_new),np.linspace(0,self.ly,ny_new))
         fig, axes = plt.subplots(1, 1, figsize=(4, 3), sharey=True)
         data = axes.imshow(z,origin="lower",extent=[0, self.lx, 0, self.ly],cmap=cmap)
         fig.colorbar(data, ax=axes)

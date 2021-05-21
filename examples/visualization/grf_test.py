@@ -44,7 +44,7 @@ print('ref. obs.:',reference_observations)
 from surrDAMH.modules import visualization_and_analysis as va
 G = va.grf_eigenfunctions.GRF("surrDAMH/modules/unit30.pckl", truncate=no_ref_parameters)
 
-G.plot_grf(reference_parameters)
+G.plot_grf(reference_parameters,nx_new=120,ny_new=120)
 #G.plot_realization_interfaces(quantiles=[0.25, 0.5, 0.75, 1.0], nx_new=n, ny_new=n)
 solver_instance.all_solvers[0].plot_solution_image()
 solver_instance.all_solvers[1].plot_solution_image()
