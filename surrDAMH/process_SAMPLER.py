@@ -11,6 +11,7 @@ from modules import classes_SAMPLER as cS
 from modules import classes_communication
 from modules import lhs_normal as LHS
 from configuration import Configuration
+import sys
 import time
 
 comm_world = MPI.COMM_WORLD
@@ -25,7 +26,14 @@ no_samplers, problem_name = comm_world.recv(source=MPI.ANY_SOURCE)
 # no_samplers, problem_name = data
 # print(rank_world,size_world,no_samplers,problem_name)
 C = Configuration(no_samplers, problem_name)
-seed0 = max(1000,size_world)*rank_world # TO DO seeds
+
+if len(sys.argv)>1:
+    seed0 = sys.argv[1]
+    optional_seed = "_" + seed0
+    seed0 = int(seed0)
+else:
+    seed0 = max(1000,size_world)*rank_world # TO DO seeds
+    optional_seed = ""
 
 my_Sol = classes_communication.Solver_MPI_collector_MPI(no_parameters=C.no_parameters, 
                               no_observations=C.no_observations, 
@@ -73,7 +81,7 @@ for i,d in enumerate(C.list_alg):
                          max_samples=d['max_samples'],
                          time_limit=d['time_limit'],
                          save_raw_data=True,
-                         name='alg' + "{:03d}".format(i) + 'MH_rank' + str(rank_world),
+                         name='alg' + "{:03d}".format(i) + 'MH_rank' + str(rank_world) + optional_seed,
                          seed=seed)
     else:
         my_Alg = cS.Algorithm_DAMH(my_Prob, my_Prop, my_Sol,
@@ -83,7 +91,7 @@ for i,d in enumerate(C.list_alg):
                         max_samples=d['max_samples'],
                         time_limit=d['time_limit'],
                         save_raw_data=True,
-                        name='alg' + "{:03d}".format(i) + 'DAMH_rank' + str(rank_world),
+                        name='alg' + "{:03d}".format(i) + 'DAMH_rank' + str(rank_world) + optional_seed,
                         seed=seed)
     print('--- SAMPLER ' + my_Alg.name + ' starts ---')
     my_Alg.run()

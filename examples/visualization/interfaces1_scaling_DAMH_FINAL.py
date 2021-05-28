@@ -20,9 +20,9 @@ sys.path.append(wdir)
 from surrDAMH.modules import visualization_and_analysis as va
 
 ### DEFAULT PARAMETERS:
-conf_name = "interfaces1_scaling_DAMH_long2"
+conf_name =  "grf1_scaling_DAMH" #"interfaces1_scaling_DAMH_long2"
 no_samplers = 30 # number of sampling processes
-savefig_name = "interfaces1_scaling_DAMH"
+savefig_name = "TEST"#"interfaces1_scaling_DAMH"
 
 ### PARSE COMMAND LINE ARGUMENTS: 
 len_argv = len(sys.argv)

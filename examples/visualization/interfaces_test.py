@@ -14,7 +14,11 @@ import sys
 import json
 sys.path.append(os.getcwd())
 
-problem_name = "interfaces_test1"
+# problem_name = "interfaces_test1"
+# problem_name = "interfaces_test2"
+# problem_name = "interfaces_test3"
+problem_name = "interfaces_test4"
+
 saved_samples_name = problem_name
 conf_path = "examples/" + problem_name +".json" 
 savefig_name = problem_name
@@ -80,8 +84,6 @@ label = "$S_{"+ str(no_windows) +"}$"
 plt.text(0.03,0.48,label,color=color2)
 plt.show()
 
-"""
-
 ### SAMPLES VISUALIZATION:
 S = va.Samples()
 no_parameters = conf["no_parameters"]
@@ -104,9 +106,47 @@ setnumber = 2;
 S.calculate_properties()
 S.print_properties()
 chains_disp = range(setnumber*no_samplers,(setnumber+1)*no_samplers)
-S.plot_hist_grid(chains_disp = chains_disp, bins1d=40, bins2d=40, show_title=False, sharex = False, sharey = False)
-S.plot_average(chains_disp = chains_disp, show_legend = False, show_title = False, sharey=True)
+S.plot_hist_grid(chains_disp = chains_disp, bins1d=29, bins2d=29, show_title=False, sharex = False, sharey = False)
 plt.tight_layout()
+# for i in [1,5,9,13]:
+#     plt.subplot(4,4,i)
+#     plt.xlim(-1.2, -0.8)
+# for i in [2,3,4]:
+#     plt.subplot(4,4,i)
+#     plt.ylim(-1.2, -0.8)
+# for i in [2,6,10,14]:
+#     plt.subplot(4,4,i)
+#     plt.xlim([-1.0,-0.24])
+# for i in [5,7,8]:
+#     plt.subplot(4,4,i)
+#     plt.ylim([-1.0,-0.24])
+# for i in [3,7,11,15]:
+#     plt.subplot(4,4,i)
+#     plt.xlim([-0.7,2.2])
+# for i in [9,10,12]:
+#     plt.subplot(4,4,i)
+#     plt.ylim([-0.7,2.2])
+# for i in [4,8,12,16]:
+#     plt.subplot(4,4,i)
+#     plt.xlim([-0.7,2.9])
+# for i in [13,14,15]:
+#     plt.subplot(4,4,i)
+#     plt.ylim([-0.7,2.9])
+fig = plt.gcf()
+fig.set_size_inches(12.8, 9.5, forward=True)
+plt.subplots_adjust(wspace=0.4, hspace=0.3, left=0.06)
+
+S.plot_hist_1d_multi(chains_disp = chains_disp, bins=29, show_title=False, sharex = False, sharey = False)
+fig = plt.gcf()
+fig.set_size_inches(12.8, 2.35, forward=True)
+plt.tight_layout()
+plt.subplots_adjust(wspace=0.4, left=0.06, bottom=0.15, top=0.8)
+
+S.plot_average(chains_disp = chains_disp, show_legend = False, show_title = False, sharey=False)
+plt.tight_layout()
+fig = plt.gcf()
+fig.set_size_inches(12.8, 4.5, forward=True)
+plt.subplots_adjust(wspace=0.4,left=0.07)
 plt.show()
 
-"""
+[S.notes[i].sum() for i in range(3)]

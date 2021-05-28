@@ -10,6 +10,7 @@ import numpy as np
 import emcee
 import matplotlib.pyplot as plt
 import pandas as pd
+import seaborn as sns
 from os import listdir
 from os.path import isfile, join, getsize
 import surrDAMH.modules.grf_eigenfunctions as grf_eigenfunctions
@@ -143,8 +144,8 @@ class Samples:
             begin_disp = [0] * len(parameters_disp)
         if end_disp is None:
             end_disp = [max(self.length[chains_disp])] * len(parameters_disp)
-        w = 2.0 + 2.2*len(parameters_disp)
-        w = min(w,12.8)
+        w = 2.0 + 3*len(parameters_disp)
+        w = min(w,14.0)
         fig, axes = plt.subplots(1, len(parameters_disp), sharey=sharey, figsize = [w, 4.8])
         for idj,j in enumerate(parameters_disp):
             for idi,i in enumerate(chains_disp):
@@ -154,9 +155,10 @@ class Samples:
                 axes[idj].plot(xx[begin_disp[idj]:], yy[begin_disp[idj]:], label=i)
             if show_legend:
                 axes[idj].legend(loc=1)
-            axes[idj].set_title("$par.  {0}$".format(j))
+            axes[idj].set_title("par. ${0}$".format(j))
             axes[idj].grid(True)
-        axes[0].set_ylabel("convergence of averages")
+            axes[idj].set_xlim(begin_disp[idj],end_disp[idj]+1)
+        #axes[0].set_ylabel("convergence of averages")
         if show_title:
             title = "Based on samples from chains in " + str(chains_disp)
             if self.known_tau:
@@ -209,14 +211,14 @@ class Samples:
                 yy = self.x[i][burn_in[idi]:,j]
                 axes[idj].hist(yy, label=i)
             axes[idj].legend(loc=1)
-            axes[idj].set_xlabel("$parameter:  {0}$".format(j))
+            axes[idj].set_xlabel("par. ${0}$".format(j))
             axes[idj].grid(True)
         if self.known_tau:
             fig.suptitle("$\\tau = {0:.3f}$".format(self.tau[chains_disp[0]]));
         axes[0].set_ylabel("samples")
         plt.show()
 
-    def plot_hist_1d(self, burn_in = None, dimension = 0, chains_disp = None, bins = 20, show = True):
+    def plot_hist_1d(self, burn_in = None, dimension = 0, chains_disp = None, bins = 20, hist=True, density=False, show = True):
         if chains_disp == None:
             chains_disp = range(self.no_chains)
         if burn_in == None:
@@ -225,7 +227,10 @@ class Samples:
         for i, chain in enumerate(chains_disp):
             xx = self.x[chain][burn_in[i]:,dimension]
             XX = np.concatenate((XX,xx))
-        plt.hist(XX, bins = bins, density = True)
+        if hist:
+            plt.hist(XX, bins = bins, density = True)
+        if density:
+            sns.kdeplot(XX)
         plt.grid(True)
         if show:
             plt.show()
@@ -268,12 +273,30 @@ class Samples:
                     self.plot_hist_2d(dimensions = [j,i],  burn_in = burn_in, chains_disp=chains_disp, bins=bins2d, show = False)
                     #axes[idi,idj].set_aspect('equal', 'box')
                 if idx<=n:
-                    plt.title("$par. {0}$".format(j))
+                    plt.title("par. ${0}$".format(j))
                 idx = idx + 1
-        plt.subplots_adjust(wspace=1)
         if show_title:
             fig.suptitle("Based on samples from chains in " + str(chains_disp))
         plt.show()
+        
+    def plot_hist_1d_multi(self, burn_in = None, parameters_disp = None, chains_disp = None, bins = 20, show_title = True, sharex = True, hist=True, density=False, sharey=True, figure=True, show=False):
+        if parameters_disp == None:
+            parameters_disp = range(self.no_parameters)
+        if chains_disp == None:
+            chains_disp = range(self.no_chains)
+        if burn_in == None:
+            burn_in = [0] * len(chains_disp)
+        n = len(parameters_disp)
+        if figure:
+            fig, axes = plt.subplots(1, n, sharex=sharex, sharey=sharey, figsize = [6.4*2, 2.35])
+        for idi,i in enumerate(parameters_disp):
+            plt.subplot(1, n, idi+1)
+            self.plot_hist_1d(dimension = i, burn_in = burn_in, chains_disp=chains_disp, bins=bins, hist=hist, density=density, show = False)
+            plt.title("par. ${0}$".format(i))
+        if show_title:
+            fig.suptitle("Based on samples from chains in " + str(chains_disp))
+        if show:
+            plt.show()
 
 ### DAMH ANALYSIS:
     
