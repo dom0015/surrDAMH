@@ -21,7 +21,7 @@ from surrDAMH.modules import visualization_and_analysis as va
 
 ### DEFAULT PARAMETERS:
 conf_name = "illustrative_scaling_DAMH" # requires configuration file "conf/" + conf_name + ".json"
-conf_name = "interfaces_scaling"
+#conf_name = "interfaces_scaling"
 no_samplers = 4 # number of sampling processes
 
 ### PARSE COMMAND LINE ARGUMENTS: 

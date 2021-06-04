@@ -1,0 +1,66 @@
+{
+    "no_parameters": 10,
+    "no_observations": 20,
+    "problem_parameters": {
+        "prior_mean": 0.0,
+        "prior_std": 1.0,
+        "observations": [ 7.8782626,  -3.44240225, -1.1202207,  -1.10257666, -2.213063,
+                          7.83974695, -1.89032129, -1.9024214,  -2.60792731, -1.43907697,
+                          7.8782626,  -3.09670476, -2.55301146, -0.75891548, -1.46963089,
+                          7.83974695, -2.02817871, -0.93006154, -2.72367573, -2.15783097 ],
+        "noise_std": [0.4, 0.1, 0.1, 0.1, 0.1, 
+                      0.4, 0.1, 0.1, 0.1, 0.1,
+                      0.4, 0.1, 0.1, 0.1, 0.1,
+                      0.4, 0.1, 0.1, 0.1, 0.1]
+    },
+    "paths_to_append": [
+        "/home/simona/GIT/Simple_Python_PETSc_FEM"
+    ],
+    "solver_module_path": "examples/solvers/MyFEM_wrapper_grf.py",
+    "solver_module_name": "MyFEM_wrapper_grf",
+    "solver_init_name": "FEM",
+    "solver_parameters": {
+        "no_parameters": 10,
+        "no_observations": 20,
+        "no_configurations": 4,
+        "n": 60,
+        "quiet": true,
+        "tolerance": 1e-8,
+        "PC": "icc",
+        "use_deflation": false,
+        "deflation_imp": 1e-2
+    },
+    "no_solvers": 30,
+    "samplers_list": [
+        {
+            "type": "MH",
+            "max_samples": 200,
+            "time_limit": 60,
+            "proposal_std": 0.2,
+            "surrogate_is_updated": true
+        },
+        {
+            "type": "DAMH",
+            "max_samples": 10000,
+            "time_limit": 120,
+            "proposal_std": 0.3,
+            "surrogate_is_updated": true
+        },
+        {
+            "type": "DAMH",
+            "max_samples": 1000000,
+            "time_limit": 3600,
+            "proposal_std": 0.3,
+            "surrogate_is_updated": false
+        }
+    ],
+    "surrogate_type": "rbf",
+    "surr_solver_parameters": {
+        "kernel_type": 1
+    },
+    "surr_updater_parameters": {
+        "kernel_type": 1,
+        "no_keep": 500,
+        "expensive": false
+    }
+}

@@ -65,10 +65,10 @@ fontsize = 20
 markersize = 12
 linewidth = 3
 
-plt.rcParams['font.size'] = '14'
-fontsize = 16
-markersize = 9
-linewidth = 2
+# plt.rcParams['font.size'] = '14'
+# fontsize = 16
+# markersize = 9
+# linewidth = 2
 
 """ surrogate time ratio """
 time_G_all = [None] * (no_alg+1)
@@ -78,35 +78,49 @@ for i in range(no_alg+1):
     [time_G, time_GS] = S.plot_evaluation_time(folder_samples, no_parameters, chains_range=chains, plot=False) 
     time_G_all[i] = np.mean(time_G)
     time_GS_all[i] = np.mean(time_GS)
+    
+colors = ["tab:blue","tab:orange","tab:green","tab:red","tab:purple","tab:brown","tab:pink"]
+    
+# plt.figure()
+# plt.plot(acceptance_rate,time_G_all[1:],'.-')
+# plt.xlabel("acceptace rate")
+# plt.ylabel("average $G$ evaluation time")
+# plt.tight_layout()
+
 plt.figure()
-plt.plot(acceptance_rate,time_G_all[1:],'.-')
-plt.xlabel("acceptace rate")
-plt.ylabel("average $G$ evaluation time")
-plt.tight_layout()
-plt.figure()
-plt.plot(proposal_scale,time_G_all[1:],'.-')
+plt.plot([0.0,0.6],[0.0436212429960939,0.0436212429960939],'--',color=colors[1])
+plt.plot(proposal_scale,time_G_all[1:],'.',color=colors[0])
 plt.xlabel("proposal SD $\sigma$")
 plt.ylabel("average $G$ evaluation time")
+plt.grid()
 plt.tight_layout()
+
 plt.figure()
-plt.plot(proposal_scale,time_GS_all[1:],'.-')
+plt.plot([0.0,0.6],[0.00025502621378675386,0.00025502621378675386],'--',color=colors[1])
+plt.plot(proposal_scale,time_GS_all[1:],'.-',color=colors[0])
 plt.xlabel("proposal SD $\sigma$")
 plt.ylabel("average $\widetilde{G}$ evaluation time")
+plt.grid()
 plt.tight_layout()
+
+# plt.figure()
+# plt.plot(proposal_scale,np.array(time_GS_all[1:])/np.array(time_G_all[1:]),'.-')
+# plt.xlabel("proposal SD $\sigma$")
+# plt.ylabel("$\widetilde{G}$ evaluation cost")
+# plt.tight_layout()
+
+# # surrogate time taken as constant (average)
 plt.figure()
-plt.plot(proposal_scale,np.array(time_GS_all[1:])/np.array(time_G_all[1:]),'.-')
+plt.plot([0.0,0.6],[0.005846307298925748,0.005846307298925748],'--',color=colors[1])
+plt.plot(proposal_scale,np.mean(time_GS_all[1:])/np.array(time_G_all[1:]),'.',color=colors[0])
 plt.xlabel("proposal SD $\sigma$")
 plt.ylabel("$\widetilde{G}$ evaluation cost")
+plt.grid()
 plt.tight_layout()
-# surrogate time taken as constant (average)
-plt.figure()
-plt.plot(proposal_scale,np.mean(time_GS_all[1:])/np.array(time_G_all[1:]),'.-')
-plt.xlabel("proposal SD $\sigma$")
-plt.ylabel("$\widetilde{G}$ evaluation cost")
-plt.tight_layout()
-plt.figure()
-plt.plot(proposal_scale,acceptance_rate,'.-')
-plt.xlabel("proposal SD $\sigma$")
-plt.ylabel("acceptance rate")
-plt.tight_layout()
-plt.show()
+
+# plt.figure()
+# plt.plot(proposal_scale,acceptance_rate,'.-')
+# plt.xlabel("proposal SD $\sigma$")
+# plt.ylabel("acceptance rate")
+# plt.tight_layout()
+# plt.show()

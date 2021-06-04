@@ -7,17 +7,31 @@ python3 run.py problem_name N (oversubscribe) (visualize)
 example: python3 run.py simple 4 oversubscribe
 """
 
-command = "python3 run.py grf1_scaling_MH 30"
-print("-")
-print("----------------------------------------------")
-print(command)
-os.system(command)
+for i in range(4):
+    command = "python3 run.py interfaces_test" + str(i+1) + " 30"
+    print("-")
+    print("----------------------------------------------")
+    print(command)
+    os.system(command)
 
-command = "python3 run.py grf1_scaling_DAMH 30"
-print("-")
-print("----------------------------------------------")
-print(command)
-os.system(command)
+# for i in [1,2,3]:
+#     command = "python3 run.py grf_test" + str(i+1) + " 30"
+#     print("-")
+#     print("----------------------------------------------")
+#     print(command)
+#     os.system(command)
+
+# command = "python3 run.py grf1_scaling_MH 30"
+# print("-")
+# print("----------------------------------------------")
+# print(command)
+# os.system(command)
+
+# command = "python3 run.py grf1_scaling_DAMH 30"
+# print("-")
+# print("----------------------------------------------")
+# print(command)
+# os.system(command)
 
 # for i in range(5):
 #     command = "python3 run.py grf1_updates_poly8_stopped0_test" + str(i+1) + " 30"

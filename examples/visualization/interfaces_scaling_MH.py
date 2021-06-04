@@ -20,8 +20,10 @@ from surrDAMH.modules import visualization_and_analysis as va
 ### DEFAULT PARAMETERS:
 conf_name = "illustrative_scaling2" # requires configuration file "conf/" + conf_name + ".json"
 conf_name = "interfaces1_scaling_MH_long"
+conf_name = "grf1_scaling_MH"
 no_samplers = 30 # number of sampling processes
 savefig_name = "interfaces1_scaling_MH"
+savefig_name = "TEMP"#"grf1_scaling_MH"
 
 ### PARSE COMMAND LINE ARGUMENTS: 
 len_argv = len(sys.argv)
@@ -94,8 +96,8 @@ F = va.fit(proposal_scale,S.tau_aggregate,deg=deg)
 yy = F(xx)
 idx = np.argmin(yy)
 print("OPTIMAL:",xx[idx],yy[idx])
-plt.plot(xx, yy, linewidth=linewidth)
-plt.plot(proposal_scale, S.tau_aggregate, '.', markersize=markersize)
+plt.plot(xx, yy, linewidth=linewidth, color="tab:orange")
+plt.plot(proposal_scale, S.tau_aggregate, '.', markersize=markersize, color="tab:blue")
 plt.ylabel("estimation of $\\tau$", fontsize=fontsize)
 plt.xlabel("proposal SD", fontsize=fontsize)
 plt.grid()
@@ -129,7 +131,7 @@ plt.figure()
 # F = va.fit(proposal_scale,acceptance_rate,deg=deg)
 # yy = F(xx)
 # plt.plot(xx, yy, linewidth=linewidth)
-plt.plot(proposal_scale,acceptance_rate,'.', markersize=markersize)
+plt.plot(proposal_scale,acceptance_rate,'.', markersize=markersize, color="tab:blue")
 plt.ylabel("average acceptance rate", fontsize=fontsize)
 plt.xlabel("proposal SD", fontsize=fontsize)
 plt.grid()
@@ -142,8 +144,8 @@ plt.figure()
 F = va.fit(acceptance_rate,S.tau_aggregate,deg=deg)
 xxinv = np.linspace(min(acceptance_rate),max(acceptance_rate),100)
 yy = F(xxinv)
-plt.plot(xxinv, yy, linewidth=linewidth)
-plt.plot(acceptance_rate,S.tau_aggregate,'.', markersize=markersize)
+plt.plot(xxinv, yy, linewidth=linewidth, color="tab:orange")
+plt.plot(acceptance_rate,S.tau_aggregate,'.', markersize=markersize, color="tab:blue")
 plt.xlabel("average acceptance rate", fontsize=fontsize)
 plt.ylabel("estimation of $\\tau$", fontsize=fontsize)
 plt.grid()

@@ -86,10 +86,10 @@ class Samples:
         self.no_parameters = self.x[0].shape[1]
         self.length = list(self.x[i].shape[0] for i in all_chains)
         self.length = np.array(self.length)
-        self.var = list(np.var(self.x[i],axis=0) for i in all_chains)
-        self.std = list(np.std(self.x[i],axis=0) for i in all_chains)
-        self.mean = list(np.mean(self.x[i],axis=0) for i in all_chains)
-        self.xp = list(self.x[i] - self.mean[i] for i in all_chains)
+        # self.var = list(np.var(self.x[i],axis=0) for i in all_chains)
+        # self.std = list(np.std(self.x[i],axis=0) for i in all_chains)
+        # self.mean = list(np.mean(self.x[i],axis=0) for i in all_chains)
+        # self.xp = list(self.x[i] - self.mean[i] for i in all_chains)
 
     def print_properties(self):
         print('number of chains:', self.no_chains)
@@ -232,6 +232,24 @@ class Samples:
         if density:
             sns.kdeplot(XX)
         plt.grid(True)
+        if show:
+            plt.show()
+            
+    def plot_boxplot(self, burn_in = None, chains_disp = None, show = True):
+        if chains_disp == None:
+            chains_disp = range(self.no_chains)
+        if burn_in == None:
+            burn_in = [0] * len(chains_disp)
+        XX = np.zeros((0,self.no_parameters))
+        for i, chain in enumerate(chains_disp):
+            xx = self.x[chain][burn_in[i]:,:]
+            XX = np.concatenate((XX,xx))
+        plt.figure()
+        whiskerprops = {'linestyle': 'solid', 'linewidth': 2.0, 'color': "tab:red"}
+        boxprops =  {'linestyle': 'solid', 'linewidth': 3.0, 'color': "tab:green"}
+        medianprops =  {'linestyle': 'solid', 'linewidth': 3.0, 'color': "tab:orange"}
+        plt.boxplot(XX, notch=False, sym="b+", vert=None, whis=(0,100), positions=None, widths=0.2, patch_artist=None, bootstrap=None, usermedians=None, conf_intervals=None, meanline=False, showmeans=False, showcaps=False, showbox=True, showfliers=None, boxprops=boxprops, labels=None, flierprops=None, medianprops=medianprops, meanprops=None, capprops=None, whiskerprops=whiskerprops, manage_ticks=False, autorange=False, zorder=None)
+        plt.grid()
         if show:
             plt.show()
 
@@ -384,7 +402,21 @@ class Samples:
         plt.title("evaluations in sliding window - mean")
         plt.show()
         return result
-    
+
+    def get_raw_data(self, folder_samples, no_parameters, chains_range = None):
+        folder_samples = folder_samples + '/raw_data'
+        file_samples = [f for f in listdir(folder_samples) if isfile(join(folder_samples, f))]
+        file_samples.sort()
+        if chains_range == None:
+            chains_range = range(self.no_chains)
+        N = len(chains_range)
+        raw_data = [None] * N
+        for idx,i in enumerate(chains_range):
+            path_samples = folder_samples + "/" + file_samples[i]
+            df_samples = pd.read_csv(path_samples, header=None)
+            raw_data[idx] = np.array(df_samples.iloc[:,1:1+no_parameters])
+        return raw_data
+
     def plot_raw_data(self, folder_samples, no_parameters, par0 = 0, par1 = 1, chains_range = None, begin_disp = 0, end_disp = None):
         folder_samples = folder_samples + '/raw_data'
         file_samples = [f for f in listdir(folder_samples) if isfile(join(folder_samples, f))]
@@ -435,6 +467,7 @@ class Samples:
         plt.xlabel("$u_1$")
         plt.ylabel("$u_2$")
         plt.grid()
+        self.raw_data = raw_data
         # plt.show()
         
     def get_length_order(self, folder_samples, no_parameters, chains_range = None):
@@ -831,18 +864,18 @@ class Samples:
             axes[1].set_title("$i={0}: {1}$".format(idx,self.posteriors[i][idx]))
             plt.show()
             
-    def plot_mean_as_grf(self,chains_disp = None, grf_path = None):
-        if chains_disp == None:
-            chains_disp = range(self.no_chains)
-        if grf_path == None:
-            grf_path = 'modules/unit50.pckl'
-        grf_instance = grf_eigenfunctions.GRF(grf_path, truncate=self.no_parameters)
-        for i in chains_disp:
-            eta = self.mean[i]
-            z = grf_instance.realization_grid_new(eta,np.linspace(0,1,50),np.linspace(0,1,50))
-            fig, axes = plt.subplots(1, 2, figsize=(12, 3), sharey=True)
-            axes[0].imshow(z)
-            plt.show()
+    # def plot_mean_as_grf(self,chains_disp = None, grf_path = None):
+    #     if chains_disp == None:
+    #         chains_disp = range(self.no_chains)
+    #     if grf_path == None:
+    #         grf_path = 'modules/unit50.pckl'
+    #     grf_instance = grf_eigenfunctions.GRF(grf_path, truncate=self.no_parameters)
+    #     for i in chains_disp:
+    #         eta = self.mean[i]
+    #         z = grf_instance.realization_grid_new(eta,np.linspace(0,1,50),np.linspace(0,1,50))
+    #         fig, axes = plt.subplots(1, 2, figsize=(12, 3), sharey=True)
+    #         axes[0].imshow(z)
+    #         plt.show()
             
     def plot_mean_and_std_grf(self, burn_in = None, chains_disp = None, grf_path = None, grid_x = 50, grid_y = 50):
         if chains_disp == None:
@@ -855,14 +888,14 @@ class Samples:
             burn_in = [0] * no_chains_disp
         for idi,i in enumerate(chains_disp):
             samples = self.x[i][burn_in[idi]:,:]
-            samples_mean, samples_std = grf_instance.samples_mean_and_std(samples)
+            samples_mean, samples_std = grf_instance.samples_mean_and_std(samples, x_new = grid_x, y_new = grid_y)
             fig, axes = plt.subplots(1, 2, figsize=(12, 4), sharey=False)
             m0 = axes[0].imshow(samples_mean, origin="lower", extent = [0,1,0,1])
             fig.colorbar(m0, ax=axes[0])
-            axes[0].set_title('mean')
+            axes[0].set_title('sample mean')
             m1 = axes[1].imshow(samples_std, origin="lower", extent = [0,1,0,1])
             fig.colorbar(m1, ax=axes[1])
-            axes[1].set_title('std')
+            axes[1].set_title('sample SD')
             plt.show()
             
     def plot_mean_and_std_grf_merged(self, burn_in = None, chains_disp = None, grf_path = None, grid_x = 50, grid_y = 50):
@@ -872,14 +905,14 @@ class Samples:
         if burn_in == None:
             burn_in = [0] * self.no_chains
         samples = np.concatenate((self.x))
-        samples_mean, samples_std = grf_instance.samples_mean_and_std(samples)
+        samples_mean, samples_std = grf_instance.samples_mean_and_std(samples, x_new = grid_x, y_new = grid_y)
         fig, axes = plt.subplots(1, 2, figsize=(12, 4), sharey=False)
         m0 = axes[0].imshow(samples_mean, origin="lower", extent = [0,1,0,1])
         fig.colorbar(m0, ax=axes[0])
-        axes[0].set_title('mean')
+        axes[0].set_title('sample mean')
         m1 = axes[1].imshow(samples_std, origin="lower", extent = [0,1,0,1])
         fig.colorbar(m1, ax=axes[1])
-        axes[1].set_title('std')
+        axes[1].set_title('sample SD')
         plt.show()
       
     def generate_samples_rand(self,no_parameters,length):

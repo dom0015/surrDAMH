@@ -300,10 +300,11 @@ class GRF:
         M = np.matmul(self.V,temp)
         M_mean = np.mean(M,axis=1)
         M_std = np.std(M,axis=1)
-        if x_new == None:
-            M_mean = M_mean.reshape((self.ny,self.nx))
-            M_std = M_std.reshape((self.ny,self.nx))
-        else:
+        #if x_new is None:
+        M_mean = M_mean.reshape((self.ny,self.nx))
+        M_std = M_std.reshape((self.ny,self.nx))
+        #else:
+        if x_new is not None: 
             f_mean = scipy.interpolate.RectBivariateSpline(self.x,self.y,M_mean)
             f_std = scipy.interpolate.RectBivariateSpline(self.x,self.y,M_std)
             M_mean = f_mean(x_new,y_new)

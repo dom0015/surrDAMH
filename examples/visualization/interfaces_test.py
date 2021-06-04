@@ -14,14 +14,14 @@ import sys
 import json
 sys.path.append(os.getcwd())
 
-# problem_name = "interfaces_test1"
-# problem_name = "interfaces_test2"
-# problem_name = "interfaces_test3"
+problem_name = "interfaces_test1"
+problem_name = "interfaces_test2"
+problem_name = "interfaces_test3"
 problem_name = "interfaces_test4"
 
 saved_samples_name = problem_name
 conf_path = "examples/" + problem_name +".json" 
-savefig_name = problem_name
+savefig_name = problem_name + "TEST"
 
 with open(conf_path) as f:
     conf = json.load(f)
@@ -62,7 +62,7 @@ n = conf["solver_parameters"]['n']
 #solver_instance.all_solvers[0].plot_solution_image(flow=True)
 n = 200
 G.plot_realization_interfaces(quantiles=[0.25, 0.5, 0.75, 1.0], nx_new=n, ny_new=n)
-plt.savefig('examples/visualization/img/' + savefig_name + '_subdomains.pdf')  
+#plt.savefig('examples/visualization/img/' + savefig_name + '_subdomains.pdf')  
 #solver_instance.all_solvers[0].plot_solution_image(flow=True)
 
 solver_instance.plot_problem_left(flow=True)
@@ -106,41 +106,72 @@ setnumber = 2;
 S.calculate_properties()
 S.print_properties()
 chains_disp = range(setnumber*no_samplers,(setnumber+1)*no_samplers)
-S.plot_hist_grid(chains_disp = chains_disp, bins1d=29, bins2d=29, show_title=False, sharex = False, sharey = False)
+S.plot_hist_grid(chains_disp = chains_disp, bins1d=31, bins2d=31, show_title=False, sharex = False, sharey = False)
 plt.tight_layout()
-# for i in [1,5,9,13]:
-#     plt.subplot(4,4,i)
-#     plt.xlim(-1.2, -0.8)
-# for i in [2,3,4]:
-#     plt.subplot(4,4,i)
-#     plt.ylim(-1.2, -0.8)
-# for i in [2,6,10,14]:
-#     plt.subplot(4,4,i)
-#     plt.xlim([-1.0,-0.24])
-# for i in [5,7,8]:
-#     plt.subplot(4,4,i)
-#     plt.ylim([-1.0,-0.24])
-# for i in [3,7,11,15]:
-#     plt.subplot(4,4,i)
-#     plt.xlim([-0.7,2.2])
-# for i in [9,10,12]:
-#     plt.subplot(4,4,i)
-#     plt.ylim([-0.7,2.2])
-# for i in [4,8,12,16]:
-#     plt.subplot(4,4,i)
-#     plt.xlim([-0.7,2.9])
-# for i in [13,14,15]:
-#     plt.subplot(4,4,i)
-#     plt.ylim([-0.7,2.9])
+
+lim1=[-1-0.3, -1+0.3] #[-1.2, -0.8]
+lim2=[-0.8, -0.2] #[-0.7, -0.3] #[-0.85,-0.3]
+lim3=[0,1] #][0.3, 0.7] #[-0.6,2.2]
+lim4=[0.7, 1.3] #[0.8,1.2] #[-0.6,2.8]
+
+# lim1=[-1-0.3, -1+0.3]
+# lim2=[-0.9, -0.5+0.35]
+# lim3=[-0.7,0.5+2]
+# lim4=[1.0-2,1.0+2]
+
+for i in [1,5,9,13]:
+    plt.subplot(4,4,i)
+    plt.xlim(lim1)
+for i in [2,3,4]:
+    plt.subplot(4,4,i)
+    plt.ylim(lim1)
+for i in [2,6,10,14]:
+    plt.subplot(4,4,i)
+    plt.xlim(lim2)
+for i in [5,7,8]:
+    plt.subplot(4,4,i)
+    plt.ylim(lim2)
+for i in [3,7,11,15]:
+    plt.subplot(4,4,i)
+    plt.xlim(lim3)
+for i in [9,10,12]:
+    plt.subplot(4,4,i)
+    plt.ylim(lim3)
+for i in [4,8,12,16]:
+    plt.subplot(4,4,i)
+    plt.xlim(lim4)
+for i in [13,14,15]:
+    plt.subplot(4,4,i)
+    plt.ylim(lim4)
+    
 fig = plt.gcf()
 fig.set_size_inches(12.8, 9.5, forward=True)
 plt.subplots_adjust(wspace=0.4, hspace=0.3, left=0.06)
+plt.savefig('examples/visualization/img/' + savefig_name + '_hist2d.pdf')  
 
-S.plot_hist_1d_multi(chains_disp = chains_disp, bins=29, show_title=False, sharex = False, sharey = False)
+# lim1=[-1.2, -0.8]
+# lim2=[-0.85,-0.3]
+# lim3=[-0.6,2.2]
+# lim4=[-0.6,2.8]
+lim1=[-1-0.3, -1+0.3]
+lim2=[-0.9, -0.5+0.35]
+lim3=[-0.7,0.5+2]
+lim4=[1.0-2,1.0+2]
+
+S.plot_hist_1d_multi(chains_disp = chains_disp, bins=31, show_title=False, sharex = False, sharey = False)
 fig = plt.gcf()
 fig.set_size_inches(12.8, 2.35, forward=True)
 plt.tight_layout()
 plt.subplots_adjust(wspace=0.4, left=0.06, bottom=0.15, top=0.8)
+plt.subplot(1,4,1)
+plt.xlim(lim1)
+plt.subplot(1,4,2)
+plt.xlim(lim2)
+plt.subplot(1,4,3)
+plt.xlim(lim3)
+plt.subplot(1,4,4)
+plt.xlim(lim4)
+plt.savefig('examples/visualization/img/' + savefig_name + '_hist1d.pdf')  
 
 S.plot_average(chains_disp = chains_disp, show_legend = False, show_title = False, sharey=False)
 plt.tight_layout()

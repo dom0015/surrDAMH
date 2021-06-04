@@ -30,6 +30,11 @@ if len(sys.argv)>1:
     no_samplers = int(sys.argv[1]) # number of MH/DAMH chains
 else:
     no_samplers = 4
+    
+plt.rcParams['font.size'] = '16'
+fontsize = 20
+markersize = 12
+linewidth = 3
 
 ### OBSERVATION OPERATOR
 spec = iu.spec_from_file_location(conf["solver_module_name"], wdir + "/" + conf["solver_module_path"])
@@ -64,9 +69,9 @@ for idi,i in enumerate(x1):
         likelihood[idj,idi] = f_eta.pdf(y-Gij)
         prior[idj,idi] = f_prior.pdf([i,j])
 posterior = prior*likelihood/292.70
-fontsize = 14
-plt.rcParams['font.size'] = '11'
-plt.figure()
+#fontsize = 14
+#plt.rcParams['font.size'] = '11'
+plt.figure(figsize=(4.3, 3.2))
 plt.imshow(res, origin="lower", extent = [prior_mean[0]-offset,prior_mean[0]+offset,prior_mean[1]-offset,prior_mean[1]+offset],cmap="inferno")
 x1 = np.concatenate((x1,[3.625]))
 x1.sort()
@@ -80,6 +85,7 @@ plt.xlabel("$u_1$", fontsize=fontsize)
 plt.ylabel("$u_2$", fontsize=fontsize)
 plt.legend()
 plt.grid()
+plt.tight_layout()
 plt.show()
 for matrix in [likelihood, prior, posterior]:
     plt.figure()
@@ -88,6 +94,7 @@ for matrix in [likelihood, prior, posterior]:
     plt.xlabel("$u_1$", fontsize=fontsize)
     plt.ylabel("$u_2$", fontsize=fontsize)
     plt.grid()
+    plt.tight_layout()
     plt.show()
 
 ### SAMPLES VISUALIZATION:
