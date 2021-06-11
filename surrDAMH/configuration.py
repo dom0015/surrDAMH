@@ -84,7 +84,10 @@ class Configuration:
                }
         if "solver_parent_parameters" in conf.keys():
             tmp.update(conf["solver_parent_parameters"])
-        self.solver_parent_parameters = [tmp] * self.no_full_solvers
+        self.solver_parent_parameters = []
+        for idx in range(self.no_full_solvers): # deflation test
+            self.solver_parent_parameters.append(tmp.copy())
+            self.solver_parent_parameters[idx]["solver_id"] = idx 
         self.max_buffer_size = 1<<30
         self.solver_parent_rank = self.no_samplers
         self.debug = False

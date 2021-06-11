@@ -1,5 +1,5 @@
-try: range = xrange
-except: pass
+# try: range = xrange
+# except: pass
 
 import sys, petsc4py
 petsc4py.init(sys.argv)
@@ -51,17 +51,34 @@ pc.setType('deflation')
 ksp.setFromOptions()
 
 nrows = b.getSize()
+
+dense = True
+transpose = True
+
 W = PETSc.Mat()
 W.create(PETSc.COMM_WORLD)
-W.setSizes([nrows,1])
-W.setType('dense')
-#W.setPreallocationNNZ(1)
+
+if transpose:
+    W.setSizes([1,nrows])
+else:
+    W.setSizes([nrows,1])
+
+if dense:
+    W.setType('dense')
+else:
+    W.setType('aij')
+    W.setPreallocationNNZ(1)
+
 W.setUp()
-W[nrows//2,0] = 1.0; # std basis deflation using a single vector somewhere in the middle
+    
+if transpose:
+    W[0,nrows//2] = 1.0
+else:
+    W[nrows//2,0] = 1.0 # std basis deflation using a single vector somewhere in the middle
+
 W.assemblyBegin()
 W.assemblyEnd()
-
-pcdeflation.setDeflationMat(pc,W,False);
+pcdeflation.setDeflationMat(pc,W,transpose);
 
 ksp.solve(b, x)
 

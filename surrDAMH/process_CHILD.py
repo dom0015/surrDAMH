@@ -13,8 +13,11 @@ from configuration import Configuration
 
 no_samplers = int(sys.argv[1])
 problem_name = None
+solver_id = 0
 if len(sys.argv)>1:
     problem_name = sys.argv[2]
+if len(sys.argv)>2:
+    solver_id = int(sys.argv[3])
 C = Configuration(no_samplers,problem_name)
 no_parameters = C.no_parameters
 
@@ -23,6 +26,9 @@ rank = parent_comm.Get_rank()
 
 """ INITIALIZATION OF THE SOLVER """
 solver_instance = C.child_solver_init(**C.child_solver_parameters)
+
+## DEFLATION TEST ONLY:
+solver_instance.init_file(C.saved_samples_name,solver_id)
 
 """ SOLVING INCOMING REQUESTS USING LINKED SOLVER """
 # tag is broadcasted by parent
@@ -48,4 +54,6 @@ while solver_is_active:
         sent_data = solver_instance.get_observations()
         if rank==0:
             parent_comm.Send(sent_data, dest=0, tag=tag)
-            
+
+## DEFLATION TEST ONLY:
+solver_instance.save_file()

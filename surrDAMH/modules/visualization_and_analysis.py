@@ -242,8 +242,18 @@ class Samples:
             burn_in = [0] * len(chains_disp)
         XX = np.zeros((0,self.no_parameters))
         for i, chain in enumerate(chains_disp):
-            xx = self.x[chain][burn_in[i]:,:]
-            XX = np.concatenate((XX,xx))
+            try:
+                xx = self.x[chain][burn_in[i]:,:]
+                print(i, xx.shape)
+            except ValueError:  #raised if `y` is empty.
+                pass
+            tmp = np.isnan(xx)
+            if True in tmp:
+                idx = np.min(np.argwhere(tmp)[:,0])
+                print(idx)
+                XX = np.concatenate((XX,xx[:idx,:]))
+            else:
+                XX = np.concatenate((XX,xx))
         plt.figure()
         whiskerprops = {'linestyle': 'solid', 'linewidth': 2.0, 'color': "tab:red"}
         boxprops =  {'linestyle': 'solid', 'linewidth': 3.0, 'color': "tab:green"}

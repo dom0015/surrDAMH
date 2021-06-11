@@ -19,9 +19,10 @@ os.chdir('/home/domesova/GIT/MCMC-Bayes-python')
 #problem_name = "grf_test1"
 #problem_name = "grf_test2"
 #problem_name = "grf_test3"
-problem_name = "grf_test4"
+#problem_name = "grf_test4"
 #problem_name = "grf_test4_20"
 #problem_name = "grf_test4_40"
+problem_name = "grf_test4_40_rbf2000"
 #problem_name = "grf_test4_80_rbf2000"
 
 saved_samples_name = problem_name
@@ -91,7 +92,7 @@ from surrDAMH.modules import visualization_and_analysis as va
 ### SAMPLES VISUALIZATION:
 S = va.Samples()
 no_parameters = conf["no_parameters"]
-S.load_notes('saved_samples/' + saved_samples_name,no_samplers)
+#S.load_notes('saved_samples/' + saved_samples_name,no_samplers)
 S.load_MH('saved_samples/' + saved_samples_name,no_parameters)
 S.print_properties()
 

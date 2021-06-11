@@ -11,11 +11,12 @@ import numpy as np
 import sys
 
 class Solver_MPI_parent: # initiated by full SOLVER
-    def __init__(self, no_parameters, no_observations, no_samplers, problem_name, maxprocs=1):
+    def __init__(self, no_parameters, no_observations, no_samplers, problem_name, maxprocs=1, solver_id=0):
         self.no_parameters = no_parameters
         self.no_observations = no_observations
         self.max_requests = 1
-        self.comm = MPI.COMM_SELF.Spawn(sys.executable, args=['surrDAMH/process_CHILD.py',str(no_samplers),problem_name], maxprocs=maxprocs)
+        self.rank = MPI.COMM_WORLD.Get_rank()
+        self.comm = MPI.COMM_SELF.Spawn(sys.executable, args=['surrDAMH/process_CHILD.py',str(no_samplers),problem_name,str(solver_id)], maxprocs=maxprocs)
         self.tag = 0
         self.received_data = np.zeros(self.no_observations)
     
@@ -44,7 +45,7 @@ class Solver_MPI_parent: # initiated by full SOLVER
         self.comm.Bcast([np.array(0,'i'), MPI.INT], root=MPI.ROOT)
         self.comm.Barrier()
         self.comm.Disconnect()
-        print("Solver spawned by rank", MPI.COMM_WORLD.Get_rank(), "disconnected.")
+        print("Solver spawned by rank", self.rank, "disconnected.")
     
 class Solver_MPI_collector_MPI: # initiated by SAMPLERs
     def __init__(self, no_parameters, no_observations, rank_solver, is_updated=False, rank_collector=None):

@@ -65,17 +65,17 @@ for i in range(K):
     snapshots.append(Snapshot(data[i,:],G_data[i]))
     
 ## POLY:
-# rbf = False
-# from surrDAMH.modules import surrogate_poly as surr
-# Update = surr.Surrogate_update(no_parameters=2, no_observations=1, max_degree=6)
-# Apply = surr.Surrogate_apply(no_parameters=2, no_observations=1)
+rbf = False
+from surrDAMH.modules import surrogate_poly as surr
+Update = surr.Surrogate_update(no_parameters=2, no_observations=1, max_degree=8)
+Apply = surr.Surrogate_apply(no_parameters=2, no_observations=1)
 
 ## RBF:
-rbf = True
-from surrDAMH.modules import surrogate_rbf as surr
-kernel_type = 1
-Update = surr.Surrogate_update(no_parameters=2, no_observations=1, no_keep=500, expensive=False, kernel_type=kernel_type)
-Apply = surr.Surrogate_apply(no_parameters=2, no_observations=1, kernel_type=kernel_type)
+# rbf = True
+# from surrDAMH.modules import surrogate_rbf as surr
+# kernel_type = 1
+# Update = surr.Surrogate_update(no_parameters=2, no_observations=1, no_keep=500, expensive=False, kernel_type=kernel_type)
+# Apply = surr.Surrogate_apply(no_parameters=2, no_observations=1, kernel_type=kernel_type)
 
 Update.add_data(snapshots)
 SOL,x = Update.update()

@@ -54,24 +54,24 @@ for problem_name in ["deflation_interfaces_sigma0_5",
                      "deflation_grf_sigma1_0",
                      "deflation_grf_sigma2_0"]:
 
-    W0 = []
-    iterations0 = []
-    times0 = []
-    errors0 = []
-    for seed in range(PROC):
-        filename = "saved_tests/" + problem_name + "/data_without" + str(seed) + ".csv"
-        data = pd.read_csv(filename)#, header=None)
-        W0.append(np.array(data["W"]))
-        tmp_iter = np.array(data["iter"])
-        iterations0.append(tmp_iter)
-        times0.append(np.array(data["time"])/tmp_iter)
-        errors0.append(np.array(data["error"]))
-        #tmp = np.array(df_samples.iloc[:,1:1+no_parameters])
+    # W0 = []
+    # iterations0 = []
+    # # times0 = []
+    # # errors0 = []
+    # for seed in range(PROC):
+    #     filename = "saved_tests/" + problem_name + "/data_without" + str(seed) + ".csv"
+    #     data = pd.read_csv(filename)#, header=None)
+    #     W0.append(np.array(data["W"]))
+    #     tmp_iter = np.array(data["iter"])
+    #     iterations0.append(tmp_iter)
+    #     # times0.append(np.array(data["time"])/tmp_iter)
+    #     # errors0.append(np.array(data["error"]))
+    #     #tmp = np.array(df_samples.iloc[:,1:1+no_parameters])
     
     W = []
     iterations = []
-    times = []
-    errors = []
+    # times = []
+    # errors = []
     for seed in range(PROC):
         filename = "saved_tests/" + problem_name + "/data_with" + str(seed) + ".csv"
         data = pd.read_csv(filename)#, header=None)
@@ -79,8 +79,8 @@ for problem_name in ["deflation_interfaces_sigma0_5",
         W.append(tmp_W)
         tmp_iter = np.array(data["iter"])
         iterations.append(tmp_iter)
-        times.append(np.array(data["time"])/tmp_iter)
-        errors.append(np.array(data["error"]))
+        # times.append(np.array(data["time"])/tmp_iter)
+        # errors.append(np.array(data["error"]))
         #tmp = np.array(df_samples.iloc[:,1:1+no_parameters])
     
     # plt.figure(); plt.title("W")
@@ -155,3 +155,42 @@ for problem_name in ["deflation_interfaces_sigma0_5",
     # writer.writerow(labels)
     # writer.writerows(data_without)#.tolist())
     # file.close()
+    
+colors = ["tab:blue","tab:orange","tab:green","tab:red","tab:purple","tab:brown","tab:pink"]
+PROC = 30
+max_len = 300
+for problem_name in ["interfaces_test1_deflation_1e-4",
+                     "interfaces_test1_deflation_1e-6",
+                     "grf_test1_deflation_1e-4"]:
+
+    W = []
+    iterations = []
+    errors = []
+    plt.figure()
+    for seed in range(PROC):
+        filename = "saved_test/" + problem_name + "/deflation" + str(seed) + ".csv"
+        data = pd.read_csv(filename)#, header=None)
+        tmp_W = np.array(data["W"])
+        W.append(tmp_W[:max_len])
+        tmp_iter = np.array(data["iter"])
+        iterations.append(tmp_iter[:max_len])
+        tmp_error = np.array(data["error"])
+        errors.append(tmp_error[:max_len])
+        plt.plot(tmp_W,color=colors[0])
+        plt.plot(tmp_iter,color=colors[1])
+
+    plt.figure()
+    plt.plot(np.mean(W,axis=0),color=colors[0])
+    plt.plot(np.mean(iterations,axis=0),color=colors[1])
+    plt.legend(["deflation basis size","number of iterations"])
+    plt.plot(np.quantile(W,0.90,axis=0),'--',color=colors[0])
+    plt.plot(np.quantile(iterations,0.90,axis=0),'--',color=colors[1])
+    plt.plot(np.quantile(W,0.10,axis=0),'--',color=colors[0])
+    plt.plot(np.quantile(iterations,0.10,axis=0),'--',color=colors[1],)
+    plt.xlabel("number of available solution vectors")
+    plt.tight_layout()
+    plt.xlim([0,max_len])
+    plt.ylim([0,110])
+    plt.show()
+    plt.grid()
+    #plt.savefig('examples/visualization/img/' + problem_name + '_60.pdf')  

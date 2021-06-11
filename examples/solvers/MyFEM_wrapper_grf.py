@@ -9,6 +9,8 @@ Created on Wed Jul 15 15:12:30 2020
 import petsc4py
 import numpy as np
 import time
+import os
+import csv
 import matplotlib.pyplot as plt
 from MyFEM import Mesh, ProblemSetting, Assemble, Solvers
 import surrDAMH.modules.grf_eigenfunctions as grf
@@ -113,6 +115,17 @@ class FEM:
         
         self.grf_instance = grf.GRF(grf_filename, truncate=no_parameters)
         
+    def init_file(self, folder, solver_id):
+        filename = "saved_test/" + folder + "/deflation" + str(solver_id) + ".csv"
+        os.makedirs(os.path.dirname(filename), exist_ok=True)
+        self.__file = open(filename, 'w')
+        self.__writer = csv.writer(self.__file)
+        row = ["W", "iter", "error"]
+        self.__writer.writerow(row)
+
+    def close_file(self):
+        self.__file.close()
+        
     def set_parameters(self, data_par):
         self.data_par = data_par
 
@@ -122,22 +135,25 @@ class FEM:
         t = time.time()
         result = [None] * self.no_configurations
         for i,solver in enumerate(self.all_solvers):
-            if self.use_deflation:
+            if self.use_deflation and self.ncols > 0:
                 self.get_solution_DCG(solver)
-                self.solution = solver.solution # TEMP (just for testing)
-                #self.deflation_extend_optional(solver.solution)
             else:
                 solver.ksp_cg_with_pc(self.PC,self.tolerance)
-                self.solution = solver.solution # TEMP (just for testing)
+                #self.solution = solver.solution # TEMP (just for testing)
                 self.no_iter = solver.ksp.getIterationNumber()
                 self.residual_norm = solver.ksp.getResidualNorm()
-                if self.quiet == False:
-                    print("SOLVER iterations:",self.no_iter,"normres:",self.residual_norm)
+            if self.quiet == False:
+                row = [self.ncols, self.no_iter, self.residual_norm]
+                self.__writer.writerow(row)
+                #print("iterations:",self.no_iter,"W size:",self.ncols,"normres:",self.residual_norm)
+            if self.use_deflation:
+                #self.solution = solver.solution # TEMP (just for testing)
+                self.deflation_extend_optional(solver.solution)
             solver.calculate_window_flow()
             result[i]=solver.window_flow
         self.comp_time = time.time()-t
-        if self.quiet == False:
-            print("SOLVER time:", self.comp_time)
+        # if self.quiet == False:
+        #     print("SOLVER time:", self.comp_time)
         return np.concatenate(result)
 
     def assemble(self):
@@ -285,14 +301,16 @@ class FEM:
         opts.setValue("deflation_pc_pc_type",self.PC)
         ksp.setFromOptions()
         if self.ncols > 0:
-            pcdeflation.setDeflationMat(ksp_pc,self.W,False);
+            pcdeflation.setDeflationMat(ksp_pc,self.W,False)
         ksp.setNormType(petsc4py.PETSc.KSP.NormType.NORM_UNPRECONDITIONED) # optional
         ksp.setUp()
         ksp.solve(solver.assembled_matrices.rhss["final"], solver.solution)
         self.no_iter = ksp.getIterationNumber()
         self.residual_norm = ksp.getResidualNorm()
-        if self.quiet == False:
-            print("iterations:",self.no_iter,"W size:",self.ncols,"normres:",self.residual_norm)
+        # if self.quiet == False:
+        #     row = [self.ncols, self.no_iter, self.comp_time, self.residual_norm]
+        #     self.__writer.writerow(row)
+            #print("iterations:",self.no_iter,"W size:",self.ncols,"normres:",self.residual_norm)
 ## ---------
 
     def plot_problem_left(self, flow = False):
