@@ -187,10 +187,10 @@ file.close()
 print("SEED", seed, "DONE")
 
 
-
-viewer = petsc4py.PETSc.Viewer().createBinary('A.dat', 'w')
-viewer(A)
-viewer = petsc4py.PETSc.Viewer().createBinary('b.dat', 'w')
-viewer(b)
+# viewer = petsc4py.PETSc.Viewer().createBinary('A.dat', 'w')
+# viewer(A)
+# viewer = petsc4py.PETSc.Viewer().createBinary('b.dat', 'w')
+# viewer(b)
 np.savetxt("b.csv", b, delimiter=",")
 np.savetxt("solutions.csv", solutions, delimiter=",")
+ai, aj, av = A.getValuesCSR()
