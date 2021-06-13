@@ -132,16 +132,18 @@ class FEM:
     def get_observations(self):
         """ assemble and solve """
         self.assemble()
-        t = time.time()
+        self.comp_time = 0
         result = [None] * self.no_configurations
         for i,solver in enumerate(self.all_solvers):
+            t = time.time()
             if self.use_deflation and self.ncols > 0:
                 self.get_solution_DCG(solver)
             else:
                 solver.ksp_cg_with_pc(self.PC,self.tolerance)
-                #self.solution = solver.solution # TEMP (just for testing)
+                self.solution = solver.solution # TEMP (just for testing)
                 self.no_iter = solver.ksp.getIterationNumber()
                 self.residual_norm = solver.ksp.getResidualNorm()
+            self.comp_time += time.time()-t
             if self.quiet == False:
                 row = [self.ncols, self.no_iter, self.residual_norm]
                 self.__writer.writerow(row)
@@ -151,7 +153,6 @@ class FEM:
                 self.deflation_extend_optional(solver.solution)
             solver.calculate_window_flow()
             result[i]=solver.window_flow
-        self.comp_time = time.time()-t
         # if self.quiet == False:
         #     print("SOLVER time:", self.comp_time)
         return np.concatenate(result)
@@ -221,11 +222,11 @@ class FEM:
             self.solver_bottom = Solvers.LaplaceSteady(FEM_assembly_bottom)  # init
             self.all_solvers.append(self.solver_bottom)
     
-    def get_linear_system(self):
+    def get_linear_system(self, conf = 0):
         """ assemble but do not solve"""
         self.assemble()
-        A = self.solver.assembled_matrices.matrices["A_dirichlet"]
-        b = self.solver.assembled_matrices.rhss["final"]       
+        A = self.all_solvers[conf].assembled_matrices.matrices["A_dirichlet"]
+        b = self.all_solvers[conf].assembled_matrices.rhss["final"]       
         return A, b
     
     def get_observations_from_solution(self,solution):
@@ -235,13 +236,23 @@ class FEM:
         return np.array(self.solver.window_flow)
     
     def deflation_init(self):
-        self.W = petsc4py.PETSc.Mat()
-        self.W.create(petsc4py.PETSc.COMM_WORLD)
-        self.W.setSizes((self.nrows,0))
-        self.W.setType("aij")
-        self.W.setPreallocationNNZ(0)
-        self.W.assemblyBegin()
-        self.W.assemblyEnd()
+        # self.W = petsc4py.PETSc.Mat()
+        # self.W.create(petsc4py.PETSc.COMM_WORLD)
+        # self.W.setSizes((self.nrows,0))
+        # self.W.setType("aij")
+        # self.W.setPreallocationNNZ(0)
+        # self.W.assemblyBegin()
+        # self.W.assemblyEnd()
+        
+        self.Wt = petsc4py.PETSc.Mat()
+        #self.Wt.createDense((0,self.nrows))
+        self.Wt.create(petsc4py.PETSc.COMM_WORLD)
+        self.Wt.setSizes((0,self.nrows))
+        self.Wt.setType("dense")
+        self.Wt.setUp()
+        self.Wt.assemblyBegin()
+        self.Wt.assemblyEnd()
+        
         self.ncols = 0
 
     def deflation_extend_optional(self, v):
@@ -253,7 +264,8 @@ class FEM:
         if self.no_iter>self.threshold_iter:
             vnp = v[:]/v.norm()
             for i in range(self.ncols):
-                w = self.W[:,i]
+                #w = self.W[:,i]
+                w = self.Wt[i,:]
                 dotprod = vnp.dot(w)
                 vnp = vnp - dotprod * w
             imp = np.linalg.norm(vnp)
@@ -261,28 +273,41 @@ class FEM:
                 self.deflation_extend(vnp/imp)
 
     def deflation_extend(self, v):
-        W_old = self.W.copy()
-        self.W = petsc4py.PETSc.Mat()
-        self.W.create(petsc4py.PETSc.COMM_WORLD)
-        self.W.setSizes((self.nrows,self.ncols+1))
-        self.W.setType("aij")
-        self.W.setPreallocationNNZ(self.nrows*(self.ncols+1))
-        self.W.setValues(range(self.nrows),range(self.ncols),W_old[:,:])
-        self.W.setValues(range(self.nrows),range(self.ncols,self.ncols+1),v[:])
+        # W_old = self.W.copy()
+        # self.W = petsc4py.PETSc.Mat()
+        # self.W.create(petsc4py.PETSc.COMM_WORLD)
+        # self.W.setSizes((self.nrows,self.ncols+1))
+        # self.W.setType("aij")
+        # self.W.setPreallocationNNZ(self.nrows*(self.ncols+1))
+        # self.W.setValues(range(self.nrows),range(self.ncols),W_old[:,:])
+        # self.W.setValues(range(self.nrows),range(self.ncols,self.ncols+1),v[:])
+        # self.W.assemblyBegin()
+        # self.W.assemblyEnd()
+        
+        Wt_old = self.Wt.copy()
+        self.Wt = petsc4py.PETSc.Mat()
+        #self.Wt.createDense((self.ncols+1,self.nrows),(self.ncols+1,self.nrows))
+        self.Wt.create(petsc4py.PETSc.COMM_WORLD)
+        self.Wt.setSizes((self.ncols+1,self.nrows))
+        self.Wt.setType("dense")
+        self.Wt.setUp()
+        self.Wt.setValues(range(self.ncols),range(self.nrows),Wt_old[:,:])
+        self.Wt.setValues(range(self.ncols,self.ncols+1),range(self.nrows),v[:])
+        self.Wt.assemblyBegin()
+        self.Wt.assemblyEnd()
+        
         self.ncols += 1
-        self.W.assemblyBegin()
-        self.W.assemblyEnd()
 
-    def set_deflation_basis(self, W):
-        self.ncols = W.shape[1]
-        self.W = petsc4py.PETSc.Mat()
-        self.W.create(petsc4py.PETSc.COMM_WORLD)
-        self.W.setSizes((self.nrows,self.ncols))
-        self.W.setType("aij")
-        self.W.setPreallocationNNZ(self.nrows*(self.ncols))
-        self.W.setValues(range(self.nrows),range(self.ncols),W[:,:])
-        self.W.assemblyBegin()
-        self.W.assemblyEnd()
+    # def set_deflation_basis(self, W):
+    #     self.ncols = W.shape[1]
+    #     self.W = petsc4py.PETSc.Mat()
+    #     self.W.create(petsc4py.PETSc.COMM_WORLD)
+    #     self.W.setSizes((self.nrows,self.ncols))
+    #     self.W.setType("aij")
+    #     self.W.setPreallocationNNZ(self.nrows*(self.ncols))
+    #     self.W.setValues(range(self.nrows),range(self.ncols),W[:,:])
+    #     self.W.assemblyBegin()
+    #     self.W.assemblyEnd()
 
 ## PC deflation - deflacni matice je nastavovana pres wrapper od Kuby,
 ## mozna, ze uz je to primo soucasti petsc4py. 
@@ -301,7 +326,8 @@ class FEM:
         opts.setValue("deflation_pc_pc_type",self.PC)
         ksp.setFromOptions()
         if self.ncols > 0:
-            pcdeflation.setDeflationMat(ksp_pc,self.W,False)
+            #pcdeflation.setDeflationMat(ksp_pc,self.W,False)
+            pcdeflation.setDeflationMat(ksp_pc,self.Wt,True)
         ksp.setNormType(petsc4py.PETSc.KSP.NormType.NORM_UNPRECONDITIONED) # optional
         ksp.setUp()
         ksp.solve(solver.assembled_matrices.rhss["final"], solver.solution)

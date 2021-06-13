@@ -56,4 +56,4 @@ while solver_is_active:
             parent_comm.Send(sent_data, dest=0, tag=tag)
 
 ## DEFLATION TEST ONLY:
-solver_instance.save_file()
+solver_instance.close_file()

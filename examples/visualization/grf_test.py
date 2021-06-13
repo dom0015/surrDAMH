@@ -21,8 +21,9 @@ os.chdir('/home/domesova/GIT/MCMC-Bayes-python')
 #problem_name = "grf_test3"
 #problem_name = "grf_test4"
 #problem_name = "grf_test4_20"
+problem_name = "grf_test4_20_44obs"
 #problem_name = "grf_test4_40"
-problem_name = "grf_test4_40_rbf2000"
+#problem_name = "grf_test4_40_rbf2000"
 #problem_name = "grf_test4_80_rbf2000"
 
 saved_samples_name = problem_name

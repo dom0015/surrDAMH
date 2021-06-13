@@ -47,12 +47,13 @@ problem_name = "deflation_grf_sigma0_5deflation_grf"
 #problem_name = "deflation_grf_sigma1_0"
 #problem_name = "deflation_grf_sigma2_0"
 
-for problem_name in ["deflation_interfaces_sigma0_5",
-                     "deflation_interfaces_sigma1_0",
-                     "deflation_interfaces_sigma2_0",
-                     "deflation_grf_sigma0_5deflation_grf",
+for problem_name in [#"deflation_interfaces_sigma0_5",
+                     #"deflation_interfaces_sigma1_0",
+                     #"deflation_interfaces_sigma2_0",
+                     #"deflation_grf_sigma0_5deflation_grf",
                      "deflation_grf_sigma1_0",
-                     "deflation_grf_sigma2_0"]:
+                     #"deflation_grf_sigma2_0",
+                     "deflation_grf_sigma1_0new"]:
 
     # W0 = []
     # iterations0 = []
@@ -70,8 +71,8 @@ for problem_name in ["deflation_interfaces_sigma0_5",
     
     W = []
     iterations = []
-    # times = []
-    # errors = []
+    times = []
+    errors = []
     for seed in range(PROC):
         filename = "saved_tests/" + problem_name + "/data_with" + str(seed) + ".csv"
         data = pd.read_csv(filename)#, header=None)
@@ -79,8 +80,8 @@ for problem_name in ["deflation_interfaces_sigma0_5",
         W.append(tmp_W)
         tmp_iter = np.array(data["iter"])
         iterations.append(tmp_iter)
-        # times.append(np.array(data["time"])/tmp_iter)
-        # errors.append(np.array(data["error"]))
+        times.append(np.array(data["time"])/tmp_iter)
+        errors.append(np.array(data["error"]))
         #tmp = np.array(df_samples.iloc[:,1:1+no_parameters])
     
     # plt.figure(); plt.title("W")
@@ -91,13 +92,13 @@ for problem_name in ["deflation_interfaces_sigma0_5",
     # plt.plot(operation(np.array(iterations0)).transpose(),'b')
     # plt.plot(operation(np.array(iterations)).transpose(),'r')
     
-    # plt.figure(); plt.title("time")
-    # plt.plot(operation(np.array(times0)).transpose(),'b')
-    # plt.plot(operation(np.array(times)).transpose(),'r')
+    plt.figure(); plt.title("time")
+    #plt.plot(operation(np.array(times0)).transpose(),'b')
+    plt.plot(operation(np.array(times)).transpose(),'r')
     
-    # plt.figure(); plt.title("error")
-    # plt.plot(operation(np.array(errors0)).transpose(),'b')
-    # plt.plot(operation(np.array(errors)).transpose(),'r')
+    plt.figure(); plt.title("error")
+    #plt.plot(operation(np.array(errors0)).transpose(),'b')
+    plt.plot(operation(np.array(errors)).transpose(),'r')
     
     ## FINAL IMAGES:
     colors = ["tab:blue","tab:orange","tab:green","tab:red","tab:purple","tab:brown","tab:pink"]

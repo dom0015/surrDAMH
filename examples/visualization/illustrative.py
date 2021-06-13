@@ -71,7 +71,7 @@ for idi,i in enumerate(x1):
 posterior = prior*likelihood/292.70
 #fontsize = 14
 #plt.rcParams['font.size'] = '11'
-plt.figure(figsize=(4.3, 3.2))
+#plt.figure(figsize=(4.3, 3.2))
 plt.imshow(res, origin="lower", extent = [prior_mean[0]-offset,prior_mean[0]+offset,prior_mean[1]-offset,prior_mean[1]+offset],cmap="inferno")
 x1 = np.concatenate((x1,[3.625]))
 x1.sort()

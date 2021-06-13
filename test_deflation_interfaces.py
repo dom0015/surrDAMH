@@ -35,15 +35,16 @@ sys.path.append(path)
 no_parameters = 10
 spec = iu.spec_from_file_location("MyFEM_wrapper", "examples/solvers/MyFEM_wrapper_grf.py")
 
-problem_name = "deflation_grf_sigma1_0"
+problem_name = "deflation_grf_sigma1_0new"
 
 solver_module = iu.module_from_spec(spec)
 spec.loader.exec_module(solver_module)
 solver_init = getattr(solver_module, "FEM")
+n=120
 solver_parameters = {"no_parameters": no_parameters,
         "no_observations": 5,
         "no_configurations": 1,
-        "n": 60,
+        "n": n,#60,
         "quiet": True,
         "tolerance": 1e-6,
         "PC": "icc",
@@ -121,11 +122,11 @@ def create_PETSc_Vec(v):
 # show_data(data)
 
 ## TEST 2
-N = 150
+N = 100
 np.random.seed(seed)
 all_parameters = np.random.randn(N,no_parameters) #*0.5
 data_without = np.zeros((N,4))
-solutions = np.zeros((3721,N))
+solutions = np.zeros(((n+1)*(n+1),N))
 solver_parameters["use_deflation"] = False
 solver_instance = solver_init(**solver_parameters)
 for i in range(N): # precomputation without DCG
@@ -139,6 +140,8 @@ for i in range(N): # precomputation without DCG
     data_without[i,:] = np.array([size_W,no_iter,comp_time,residual_norm])
     solutions[:,i] = np.array(solver_instance.solution)
 #show_data(data_without)
+
+A,b = solver_instance.get_linear_system()
 
 data_with = np.zeros((N,4))
 data_with[0,:] = data_without[-1,:]
@@ -182,3 +185,12 @@ writer.writerows(data_with)#.tolist())
 file.close()
 
 print("SEED", seed, "DONE")
+
+
+
+viewer = petsc4py.PETSc.Viewer().createBinary('A.dat', 'w')
+viewer(A)
+viewer = petsc4py.PETSc.Viewer().createBinary('b.dat', 'w')
+viewer(b)
+np.savetxt("b.csv", b, delimiter=",")
+np.savetxt("solutions.csv", solutions, delimiter=",")
