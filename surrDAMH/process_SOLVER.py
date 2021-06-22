@@ -17,13 +17,13 @@ rank_world = comm_world.Get_rank()
 size_world = comm_world.Get_size()
 
 no_samplers = rank_world
-problem_name = None
+problem_path = None
 if len(sys.argv)>1:
-    problem_name = sys.argv[1]
+    problem_path = sys.argv[1]
 for i in range(size_world):
     if i != rank_world:
-        comm_world.send([no_samplers,problem_name],dest=i)
-C = Configuration(no_samplers,problem_name)
+        comm_world.send([no_samplers,problem_path],dest=i)
+C = Configuration(no_samplers, problem_path)
 
 solver_init = C.solver_parent_init
 solver_parameters = C.solver_parent_parameters
