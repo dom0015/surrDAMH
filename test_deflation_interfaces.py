@@ -13,6 +13,7 @@ import os
 import sys
 import petsc4py
 import csv
+import time
 sys.path.append(os.getcwd())
 
 if len(sys.argv)>1:
@@ -143,6 +144,8 @@ for i in range(N): # precomputation without DCG
 
 A,b = solver_instance.get_linear_system()
 
+petsc4py.PETSc.Log.begin()
+
 data_with = np.zeros((N,4))
 data_with[0,:] = data_without[-1,:]
 solver_parameters["use_deflation"] = True
@@ -162,6 +165,8 @@ for i in range(N-1): # precomputation without DCG
     size_W = solver_instance.ncols
     data_with[i+1,:] = np.array([size_W,no_iter,comp_time,residual_norm])
 #show_data(data_with)
+
+petsc4py.PETSc.Log.view()
 
 # filename = "saved_tests/deflation_interfaces/data_without" + str(seed) + ".csv"
 # np.savetxt(filename, data_without, delimiter=",")
@@ -191,6 +196,6 @@ print("SEED", seed, "DONE")
 # viewer(A)
 # viewer = petsc4py.PETSc.Viewer().createBinary('b.dat', 'w')
 # viewer(b)
-np.savetxt("b.csv", b, delimiter=",")
-np.savetxt("solutions.csv", solutions, delimiter=",")
-ai, aj, av = A.getValuesCSR()
+# np.savetxt("b.csv", b, delimiter=",")
+# np.savetxt("solutions.csv", solutions, delimiter=",")
+# ai, aj, av = A.getValuesCSR()

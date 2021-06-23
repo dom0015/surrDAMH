@@ -135,15 +135,21 @@ class FEM:
         self.comp_time = 0
         result = [None] * self.no_configurations
         for i,solver in enumerate(self.all_solvers):
-            t = time.time()
+            #t = time.time()
             if self.use_deflation and self.ncols > 0:
+                # t = time.time()
                 self.get_solution_DCG(solver)
+                # print(self.no_iter, time.time()-t)
+                # self.comp_time = time.time()-t
             else:
+                t = time.time()
                 solver.ksp_cg_with_pc(self.PC,self.tolerance)
                 self.solution = solver.solution # TEMP (just for testing)
                 self.no_iter = solver.ksp.getIterationNumber()
                 self.residual_norm = solver.ksp.getResidualNorm()
-            self.comp_time += time.time()-t
+                print(self.no_iter)
+                self.comp_time = time.time()-t
+            #self.comp_time += time.time()-t
             if self.quiet == False:
                 row = [self.ncols, self.no_iter, self.residual_norm]
                 self.__writer.writerow(row)
@@ -330,9 +336,16 @@ class FEM:
             pcdeflation.setDeflationMat(ksp_pc,self.Wt,True)
         ksp.setNormType(petsc4py.PETSc.KSP.NormType.NORM_UNPRECONDITIONED) # optional
         ksp.setUp()
+        t = time.time()
         ksp.solve(solver.assembled_matrices.rhss["final"], solver.solution)
+        #self.comp_time = time.time()-t
         self.no_iter = ksp.getIterationNumber()
+
+        print(self.no_iter, time.time()-t)
+        self.comp_time = time.time()-t
+
         self.residual_norm = ksp.getResidualNorm()
+        
         # if self.quiet == False:
         #     row = [self.ncols, self.no_iter, self.comp_time, self.residual_norm]
         #     self.__writer.writerow(row)

@@ -171,3 +171,10 @@ def kernel(arr,kernel_type):
     if kernel_type==7:
         np.power(arr,9,out=arr)
         return
+    if kernel_type==8:
+        temp = np.power(arr,2)
+        arr=temp*np.log(arr)
+        return
+    if kernel_type==9:
+        arr = np.power(arr,2)
+        return

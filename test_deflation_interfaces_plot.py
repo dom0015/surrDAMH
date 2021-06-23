@@ -51,36 +51,36 @@ for problem_name in [#"deflation_interfaces_sigma0_5",
                      #"deflation_interfaces_sigma1_0",
                      #"deflation_interfaces_sigma2_0",
                      #"deflation_grf_sigma0_5deflation_grf",
-                     "deflation_grf_sigma1_0",
+                     #"deflation_grf_sigma1_0",
                      #"deflation_grf_sigma2_0",
                      "deflation_grf_sigma1_0new"]:
 
-    # W0 = []
-    # iterations0 = []
-    # # times0 = []
-    # # errors0 = []
-    # for seed in range(PROC):
-    #     filename = "saved_tests/" + problem_name + "/data_without" + str(seed) + ".csv"
-    #     data = pd.read_csv(filename)#, header=None)
-    #     W0.append(np.array(data["W"]))
-    #     tmp_iter = np.array(data["iter"])
-    #     iterations0.append(tmp_iter)
-    #     # times0.append(np.array(data["time"])/tmp_iter)
-    #     # errors0.append(np.array(data["error"]))
-    #     #tmp = np.array(df_samples.iloc[:,1:1+no_parameters])
+    W0 = []
+    iterations0 = []
+    times0 = []
+    errors0 = []
+    for seed in range(PROC):
+        filename = "saved_tests/" + problem_name + "/data_without" + str(seed) + ".csv"
+        data = pd.read_csv(filename)#, header=None)
+        W0.append(np.array(data["W"]))
+        tmp_iter = np.array(data["iter"])
+        iterations0.append(tmp_iter)
+        times0.append(np.array(data["time"]))
+        errors0.append(np.array(data["error"]))
+        #tmp = np.array(df_samples.iloc[:,1:1+no_parameters])
     
     W = []
     iterations = []
     times = []
     errors = []
-    for seed in range(PROC):
+    for seed in range(PROC): #[99]:
         filename = "saved_tests/" + problem_name + "/data_with" + str(seed) + ".csv"
         data = pd.read_csv(filename)#, header=None)
         tmp_W = np.array(data["W"])
         W.append(tmp_W)
         tmp_iter = np.array(data["iter"])
         iterations.append(tmp_iter)
-        times.append(np.array(data["time"])/tmp_iter)
+        times.append(np.array(data["time"]))
         errors.append(np.array(data["error"]))
         #tmp = np.array(df_samples.iloc[:,1:1+no_parameters])
     
@@ -93,11 +93,11 @@ for problem_name in [#"deflation_interfaces_sigma0_5",
     # plt.plot(operation(np.array(iterations)).transpose(),'r')
     
     plt.figure(); plt.title("time")
-    #plt.plot(operation(np.array(times0)).transpose(),'b')
+    plt.plot(operation(np.array(times0)).transpose(),'b')
     plt.plot(operation(np.array(times)).transpose(),'r')
     
     plt.figure(); plt.title("error")
-    #plt.plot(operation(np.array(errors0)).transpose(),'b')
+    plt.plot(operation(np.array(errors0)).transpose(),'b')
     plt.plot(operation(np.array(errors)).transpose(),'r')
     
     ## FINAL IMAGES:
@@ -128,7 +128,7 @@ for problem_name in [#"deflation_interfaces_sigma0_5",
     plt.ylim([0,150])
     plt.show()
     plt.grid()
-    plt.savefig('examples/visualization/img/' + problem_name + '_60.pdf')  
+    #plt.savefig('examples/visualization/img/' + problem_name + '_60.pdf')  
     
     # def show_data(data):
     #     print("residual_norm:")
@@ -156,7 +156,8 @@ for problem_name in [#"deflation_interfaces_sigma0_5",
     # writer.writerow(labels)
     # writer.writerows(data_without)#.tolist())
     # file.close()
-    
+
+""" ANOTHER TEST 
 colors = ["tab:blue","tab:orange","tab:green","tab:red","tab:purple","tab:brown","tab:pink"]
 PROC = 30
 max_len = 300
@@ -195,3 +196,4 @@ for problem_name in ["interfaces_test1_deflation_1e-4",
     plt.show()
     plt.grid()
     #plt.savefig('examples/visualization/img/' + problem_name + '_60.pdf')  
+"""

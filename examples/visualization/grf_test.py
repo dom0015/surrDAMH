@@ -21,8 +21,9 @@ os.chdir('/home/domesova/GIT/MCMC-Bayes-python')
 #problem_name = "grf_test3"
 #problem_name = "grf_test4"
 #problem_name = "grf_test4_20"
-problem_name = "grf_test4_20_44obs"
+#problem_name = "grf_test4_20_44obs"
 #problem_name = "grf_test4_40"
+problem_name = "grf_test4_40_44obs"
 #problem_name = "grf_test4_40_rbf2000"
 #problem_name = "grf_test4_80_rbf2000"
 
@@ -114,5 +115,5 @@ chains_disp = range(setnumber*no_samplers,(setnumber+1)*no_samplers)
 #S.plot_hist_grid(chains_disp = chains_disp, bins1d=20, bins2d=20)
 S.plot_boxplot(chains_disp = chains_disp, show = False)
 S.plot_average(chains_disp = chains_disp, parameters_disp=range(10), show_legend = False)
-#S.plot_mean_and_std_grf_merged(chains_disp = chains_disp, grid_x = np.linspace(0,1,200), grid_y = np.linspace(0,1,200), grf_path = '/home/domesova/GIT/MCMC-Bayes-python/surrDAMH/modules/unit30.pckl')
+S.plot_mean_and_std_grf_merged(chains_disp = chains_disp, grid_x = np.linspace(0,1,200), grid_y = np.linspace(0,1,200), grf_path = '/home/domesova/GIT/MCMC-Bayes-python/surrDAMH/modules/unit30.pckl')
 #S.plot_mean_and_std_grf(chains_disp = chains_disp, grid_x = np.linspace(0,1,200), grid_y = np.linspace(0,1,200), grf_path = '/home/domesova/GIT/MCMC-Bayes-python/surrDAMH/modules/unit30.pckl')

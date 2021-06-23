@@ -14,8 +14,10 @@ def G(x,y):
     return -1/80*(3/np.exp(x)+1/np.exp(y))
 
 extent = [0,10,-2,8]
-NX = 200
-NY = 200
+offset = 10
+extent = [5-offset, 5+offset, 3-offset, 3+offset]
+NX = 600
+NY = 600
 xx = np.linspace(extent[0],extent[1],NX)
 yy = np.linspace(extent[2],extent[3],NY)
 zz = np.zeros((NY,NX))
@@ -65,17 +67,17 @@ for i in range(K):
     snapshots.append(Snapshot(data[i,:],G_data[i]))
     
 ## POLY:
-rbf = False
-from surrDAMH.modules import surrogate_poly as surr
-Update = surr.Surrogate_update(no_parameters=2, no_observations=1, max_degree=8)
-Apply = surr.Surrogate_apply(no_parameters=2, no_observations=1)
+# rbf = False
+# from surrDAMH.modules import surrogate_poly as surr
+# Update = surr.Surrogate_update(no_parameters=2, no_observations=1, max_degree=8)
+# Apply = surr.Surrogate_apply(no_parameters=2, no_observations=1)
 
 ## RBF:
-# rbf = True
-# from surrDAMH.modules import surrogate_rbf as surr
-# kernel_type = 1
-# Update = surr.Surrogate_update(no_parameters=2, no_observations=1, no_keep=500, expensive=False, kernel_type=kernel_type)
-# Apply = surr.Surrogate_apply(no_parameters=2, no_observations=1, kernel_type=kernel_type)
+rbf = True
+from surrDAMH.modules import surrogate_rbf as surr
+kernel_type = 1
+Update = surr.Surrogate_update(no_parameters=2, no_observations=1, no_keep=100, expensive=False, kernel_type=kernel_type)
+Apply = surr.Surrogate_apply(no_parameters=2, no_observations=1, kernel_type=kernel_type)
 
 Update.add_data(snapshots)
 SOL,x = Update.update()
@@ -126,3 +128,80 @@ fig.set_size_inches(4.4, 3.4, forward=True)
 plt.tight_layout()
 
 print("K =",K)
+
+
+
+
+### QUANTIFICATION OF THE SURROGATE MODEL ERROR:
+import importlib.util as iu
+import os
+import sys
+import json
+import numpy as np
+import scipy
+import matplotlib.pyplot as plt
+
+# wdir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))) 
+wdir = os.getcwd() 
+sys.path.append(wdir)
+from surrDAMH.modules import visualization_and_analysis as va
+
+saved_samples_name = "illustrative"
+conf_name = "illustrative"
+conf_path = wdir + "/examples/" + conf_name + ".json"
+
+with open(conf_path) as f:
+    conf = json.load(f)
+
+if len(sys.argv)>1:
+    no_samplers = int(sys.argv[1]) # number of MH/DAMH chains
+else:
+    no_samplers = 4
+    
+plt.rcParams['font.size'] = '16'
+fontsize = 20
+markersize = 12
+linewidth = 3
+
+### OBSERVATION OPERATOR
+spec = iu.spec_from_file_location(conf["solver_module_name"], wdir + "/" + conf["solver_module_path"])
+solver_module = iu.module_from_spec(spec)
+spec.loader.exec_module(solver_module)
+solver_init = getattr(solver_module, conf["solver_init_name"])     
+solver_instance = solver_init(**conf["solver_parameters"])
+
+
+prior_mean = conf["problem_parameters"]["prior_mean"]
+prior_cov = conf["problem_parameters"]["prior_std"]
+
+N = NX
+res = np.zeros((N,N))
+likelihood = np.zeros((N,N))
+prior = np.zeros((N,N))
+y = conf["problem_parameters"]["observations"][0]
+f_eta = scipy.stats.norm(loc = 0, scale = conf["problem_parameters"]["noise_std"])
+f_prior = scipy.stats.multivariate_normal(mean = prior_mean, cov = prior_cov)
+x1 = np.linspace(prior_mean[0]-offset,prior_mean[0]+offset,N)
+x2 = np.linspace(prior_mean[1]-offset,prior_mean[1]+offset,N)
+for idi,i in enumerate(x1):
+    for idj,j in enumerate(x2):
+        Gij = G(i,j)
+        res[idj,idi] = Gij
+        likelihood[idj,idi] = f_eta.pdf(y-Gij)
+        prior[idj,idi] = f_prior.pdf([i,j])
+posterior = prior*likelihood/292.70
+plt.figure()
+plt.imshow(posterior, origin="lower", extent = extent, cmap="jet")
+plt.colorbar()
+plt.figure()
+plt.imshow(posterior*abs_error, origin="lower", extent = extent, cmap="jet")
+plt.colorbar()
+print("RESULT POSTERIOR:",np.sum(posterior*abs_error)*(4*offset*offset/NY/NX))
+plt.figure()
+plt.imshow(prior, origin="lower", extent = extent, cmap="jet")
+plt.colorbar()
+plt.figure()
+plt.imshow(prior*abs_error, origin="lower", extent = extent, cmap="jet")
+plt.colorbar()
+plt.show()
+print("RESULT PRIOR:",np.sum(prior*abs_error)*(4*offset*offset/NY/NX))
