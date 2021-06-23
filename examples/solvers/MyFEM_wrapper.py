@@ -14,7 +14,7 @@ import surrDAMH.modules.grf_eigenfunctions as grf
 from examples.solvers.pcdeflation import pcdeflation
 class FEM:
     # FEM solver preparation
-    def __init__(self, no_parameters = 5, no_observations = 5, no_configurations = 1, n = 100, quiet = True, tolerance = None, PC = "none", use_deflation = False, deflation_imp = None):    
+    def __init__(self, solver_id = 0, no_parameters = 5, no_observations = 5, no_configurations = 1, n = 100, quiet = True, tolerance = None, PC = "none", use_deflation = False, deflation_imp = None):    
         petsc4py.init()
         self.nrows = (n+1)*(n+1)
         # TRIANGULAR MESH SETTING -----------------------------------------------------

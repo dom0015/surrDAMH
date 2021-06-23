@@ -8,7 +8,7 @@ import ruamel.yaml as yaml
 from flow123d_simulation import endorse_2Dtest
 
 class Wrapper:
-    def __init__(self):
+    def __init__(self, solver_id = 0):
         work_dir = "/home/simona/GIT/Endorse-2Dtest-Bayes/flow123d_sim"
         # Create working directory if necessary
         os.makedirs(work_dir, mode=0o775, exist_ok=True)
