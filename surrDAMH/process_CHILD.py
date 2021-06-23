@@ -13,15 +13,20 @@ from configuration import Configuration
 
 no_samplers = int(sys.argv[1])
 problem_path = None
+solver_id = 0
 if len(sys.argv)>1:
     problem_path = sys.argv[2]
+if len(sys.argv)>2:
+    solver_id = int(sys.argv[3])
 C = Configuration(no_samplers,problem_path)
 
 parent_comm = MPI.Comm.Get_parent()
 rank = parent_comm.Get_rank()
 
 """ INITIALIZATION OF THE SOLVER """
-solver_instance = C.child_solver_init(**C.child_solver_parameters)
+constructor_parameters = C.child_solver_parameters.copy()
+constructor_parameters["solver_id"] = solver_id
+solver_instance = C.child_solver_init(**constructor_parameters)
 
 """ SOLVING INCOMING REQUESTS USING LINKED SOLVER """
 # tag is broadcasted by parent

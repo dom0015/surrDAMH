@@ -10,7 +10,7 @@ import numpy as np
 from mpi4py import MPI
 
 class Solver_linela2exp_local:
-    def __init__(self, f=-0.1, L=1.0, M=0.5):
+    def __init__(self, solver_id=0, f=-0.1, L=1.0, M=0.5):
         self.f = f
         self.L = L
         self.M = M
@@ -29,7 +29,7 @@ class Solver_linela2exp_local:
         return uL
 
 class Solver_linela2exp_MPI:
-    def __init__(self, f=-0.1, L=1.0, M=0.5):
+    def __init__(self, solver_id=0, f=-0.1, L=1.0, M=0.5):
         self.f = f
         self.L = L
         self.M = M
