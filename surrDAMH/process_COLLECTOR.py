@@ -16,12 +16,12 @@ rank_world = comm_world.Get_rank()
 size_world = comm_world.Get_size()
 
 # print(rank_world,size_world)
-no_samplers, problem_name = comm_world.recv(source=MPI.ANY_SOURCE)
+no_samplers, problem_path = comm_world.recv(source=MPI.ANY_SOURCE)
 # data = None
 # data = comm_world.bcast(data,root=1)
 # no_samplers, problem_name = data
 # print(rank_world,size_world,no_samplers,problem_name)
-C = Configuration(no_samplers, problem_name)
+C = Configuration(no_samplers, problem_path)
 updater_init = C.surr_updater_init
 updater_parameters = C.surr_updater_parameters
 max_buffer_size = C.max_buffer_size

@@ -14,12 +14,11 @@ import importlib.util as iu
 from modules import classes_communication
 
 class Configuration:
-    def __init__(self, no_samplers, conf_name = None):
+    def __init__(self, no_samplers, conf_path):
         
 ### MODEL PROBLEM CHOICE:
-        if conf_name is None:
-            conf_name = "simple_MPI"
-        conf_path = "examples/" + conf_name + ".json"
+        basename = os.path.basename(conf_path)
+        conf_name, fext = os.path.splitext(basename)
         with open(conf_path) as f:
             conf = json.load(f)
     
@@ -75,7 +74,7 @@ class Configuration:
         self.solver_parent_init = classes_communication.Solver_MPI_parent
         tmp = {"no_parameters": self.no_parameters,
                "no_observations": self.no_observations,
-               "problem_name": conf_name,
+               "problem_path": conf_path,
                "no_samplers": no_samplers
                }
         if "solver_parent_parameters" in conf.keys():

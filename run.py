@@ -32,7 +32,18 @@ if len_argv>3:
     else:
         visualize = False
 
-with open("examples/" + problem_name + ".json") as f:
+problem_path = None
+basename = os.path.basename(problem_name)
+fname, fext = os.path.splitext(basename)
+if fext == ".json":
+    problem_path = os.path.abspath(problem_name)
+    problem_name = fname
+elif fext == "":
+    problem_path = os.path.abspath(os.path.join("examples", problem_name + ".json"))
+else:
+    os.error("Specify configuration json file or example testcase name.")
+
+with open(problem_path) as f:
     conf = json.load(f)
 
 if visualize:
@@ -48,7 +59,7 @@ else:
     # opt = opt + "--mca opal_warn_on_missing_libcuda 0 "
     # opt = opt + "--mca orte_base_help_aggregate 0 "
     sampler = " -n " + str(N) + opt + "python3 -m mpi4py surrDAMH/process_SAMPLER.py "
-    solver = " -n 1" + opt + "python3 -m mpi4py surrDAMH/process_SOLVER.py " + problem_name + " "
+    solver = " -n 1" + opt + "python3 -m mpi4py surrDAMH/process_SOLVER.py " + problem_path + " "
     collector = " -n 1" + opt + "python3 -m mpi4py surrDAMH/process_COLLECTOR.py "
     if "surrogate_type" in conf.keys():
         command = "mpirun" + sampler + ":" + solver + ":" + collector

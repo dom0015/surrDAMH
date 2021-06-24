@@ -12,13 +12,13 @@ import sys
 from configuration import Configuration
 
 no_samplers = int(sys.argv[1])
-problem_name = None
+problem_path = None
 solver_id = 0
 if len(sys.argv)>1:
-    problem_name = sys.argv[2]
+    problem_path = sys.argv[2]
 if len(sys.argv)>2:
     solver_id = int(sys.argv[3])
-C = Configuration(no_samplers,problem_name)
+C = Configuration(no_samplers,problem_path)
 
 parent_comm = MPI.Comm.Get_parent()
 rank = parent_comm.Get_rank()
