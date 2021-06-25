@@ -23,7 +23,7 @@ if len(sys.argv)>1:
 for i in range(size_world):
     if i != rank_world:
         comm_world.send([no_samplers,problem_path],dest=i)
-C = Configuration(no_samplers, problem_path)
+C = Configuration(no_samplers,problem_path)
 
 solver_init = C.solver_parent_init
 solver_parameters = C.solver_parent_parameters

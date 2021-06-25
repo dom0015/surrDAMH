@@ -19,7 +19,6 @@ class Configuration:
 ### MODEL PROBLEM CHOICE:
         basename = os.path.basename(conf_path)
         conf_name, fext = os.path.splitext(basename)
-
         with open(conf_path) as f:
             conf = json.load(f)
     
