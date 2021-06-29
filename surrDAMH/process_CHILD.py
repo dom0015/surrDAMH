@@ -49,7 +49,16 @@ while solver_is_active:
     else:
         parent_comm.Bcast([received_data, MPI.DOUBLE], root=0)
         solver_instance.set_parameters(received_data.reshape((solver_instance.no_parameters,)))
-        sent_data = solver_instance.get_observations()
+        if C.solver_returns_tag:
+            [convergence_tag,sent_data] = solver_instance.get_observations()
+            if convergence_tag<0:
+                sent_data=np.zeros((C.no_observations,))
+        else:
+            sent_data = solver_instance.get_observations()
+            convergence_tag = 0
         if rank==0:
-            parent_comm.Send(sent_data, dest=0, tag=tag)
+            if C.pickled_observations:
+                parent_comm.send([convergence_tag,sent_data], dest=0, tag=tag)
+            else:
+                parent_comm.Send(sent_data, dest=0, tag=convergence_tag)
             

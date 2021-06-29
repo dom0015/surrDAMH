@@ -26,7 +26,8 @@ seed0 = max(1000,size_world)*rank_world # TO DO seeds
 
 my_Sol = classes_communication.Solver_MPI_collector_MPI(no_parameters=C.no_parameters, 
                               no_observations=C.no_observations, 
-                              rank_solver=C.solver_parent_rank) # only knows the MPI rank to communicate with
+                              rank_solver=C.solver_parent_rank,
+                              pickled_observations=C.pickled_observations) # only knows the MPI rank to communicate with
 if C.use_surrogate:
     my_Surr_Solver = C.surr_solver_init(**C.surr_solver_parameters)
     my_Surr = classes_communication.Solver_local_collector_MPI(no_parameters=C.no_parameters, 
@@ -58,7 +59,7 @@ for i,d in enumerate(C.list_alg):
                          initial_sample=initial_sample,
                          max_samples=d['max_samples'],
                          time_limit=d['time_limit'],
-                         save_raw_data=True,
+                         save_raw_data=C.save_raw_data,
                          name='alg' + str(i) + 'MH_rank' + str(rank_world),
                          seed=seed)
     else:
@@ -68,7 +69,7 @@ for i,d in enumerate(C.list_alg):
                         initial_sample=initial_sample,
                         max_samples=d['max_samples'],
                         time_limit=d['time_limit'],
-                        save_raw_data=True,
+                        save_raw_data=C.save_raw_data,
                         name='alg' + str(i) + 'DAMH_rank' + str(rank_world),
                         seed=seed)
     print('--- SAMPLER ' + my_Alg.name + ' starts ---')

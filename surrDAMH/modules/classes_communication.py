@@ -11,13 +11,15 @@ import numpy as np
 import sys
 
 class Solver_MPI_parent: # initiated by SOLVERS POOL
-    def __init__(self, no_parameters, no_observations, no_samplers, problem_path, maxprocs=1, solver_id=0):
+    def __init__(self, no_parameters, no_observations, no_samplers, problem_path, maxprocs=1, solver_id=0, pickled_observations=True):
         self.no_parameters = no_parameters
         self.no_observations = no_observations
         self.max_requests = 1
         self.comm = MPI.COMM_SELF.Spawn(sys.executable, args=['surrDAMH/process_CHILD.py',str(no_samplers),problem_path,str(solver_id)], maxprocs=maxprocs)
         self.tag = 0
         self.received_data = np.zeros(self.no_observations)
+        self.status = MPI.Status()
+        self.pickled_observations = pickled_observations
     
     def send_parameters(self, data_par):
         self.tag += 1
@@ -28,12 +30,19 @@ class Solver_MPI_parent: # initiated by SOLVERS POOL
         self.comm.Bcast([self.data_par, MPI.DOUBLE], root=MPI.ROOT)
         
     def recv_observations(self):
-        self.comm.Recv(self.received_data, source=0, tag=self.tag)
-        return self.received_data.reshape((1,-1)).copy()
+        if self.pickled_observations:
+            convergence_tag, self.received_data = self.comm.recv(source=0, tag=self.tag)
+        else:
+            self.comm.Recv(self.received_data, source=0, tag=MPI.ANY_TAG, status=self.status)
+            convergence_tag = self.status.Get_tag()
+        return convergence_tag, self.received_data.reshape((1,-1)).copy()
     
     def is_solved(self):
         # check the parent-child communicator if there is an incoming message
-        tmp = self.comm.Iprobe(source=0, tag=self.tag)
+        if self.pickled_observations:
+            tmp = self.comm.Iprobe(source=0, tag=self.tag)
+        else:
+            tmp = self.comm.Iprobe(source=0, tag=MPI.ANY_TAG) # tag=self.tag)
         if tmp:
             return True
         else:
@@ -47,7 +56,7 @@ class Solver_MPI_parent: # initiated by SOLVERS POOL
         print("Solver spawned by rank", MPI.COMM_WORLD.Get_rank(), "disconnected.")
     
 class Solver_MPI_collector_MPI: # initiated by SAMPLERs
-    def __init__(self, no_parameters, no_observations, rank_solver, is_updated=False, rank_collector=None):
+    def __init__(self, no_parameters, no_observations, rank_solver, is_updated=False, rank_collector=None, pickled_observations=True):
         self.no_parameters = no_parameters
         self.no_observations = no_observations
         self.max_requests = 1
@@ -63,14 +72,20 @@ class Solver_MPI_collector_MPI: # initiated by SAMPLERs
         if not rank_collector is None:
             self.terminated_collector = False
         self.empty_buffer = np.zeros(1)
+        self.status = MPI.Status()
+        self.pickled_observations = pickled_observations
         
     def send_parameters(self, sent_data):
         self.tag_solver += 1
         self.comm.Send(sent_data, dest=self.rank_solver, tag=self.tag_solver)
 
     def recv_observations(self, ):
-        self.comm.Recv(self.received_data, source=self.rank_solver, tag=self.tag_solver)
-        return self.received_data.copy()
+        if self.pickled_observations:
+            [convergence_tag, self.received_data] = self.comm.recv(source=self.rank_solver, tag=self.tag_solver)
+        else:
+            self.comm.Recv(self.received_data, source=self.rank_solver, tag=MPI.ANY_TAG, status = self.status) # tag=self.tag_solver)
+            convergence_tag = self.status.Get_tag()
+        return convergence_tag, self.received_data.copy()
         
     def terminate(self, ):
         if not self.terminated_solver:

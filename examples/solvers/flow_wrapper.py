@@ -20,6 +20,7 @@ class Wrapper:
         config_dict["script_dir"] = "/home/domesova/GIT/Endorse-2Dtest-Bayes"
         config_dict["_aux_flow_path"] = config_dict["local"]["flow_executable"].copy()
         config_dict["_aux_gmsh_path"] = config_dict["local"]["gmsh_executable"].copy()
+        config_dict["common_files_dir"] = "/home/domesova/GIT/Endorse-2Dtest-Bayes"
         self.sim = endorse_2Dtest(config_dict, clean=True)
         self.no_parameters = 2
         

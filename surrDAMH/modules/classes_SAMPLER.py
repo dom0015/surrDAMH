@@ -67,15 +67,15 @@ class Algorithm_PARENT:
             self.writer_raw = csv.writer(self.__file_raw)
         if self.G_current_sample is None:
             self.Solver.send_parameters(self.current_sample)
-            self.G_current_sample = self.Solver.recv_observations()
-        self.posterior_current_sample = self.compute_posterior(self.current_sample, self.G_current_sample)
+            self.convergence_tag, self.G_current_sample = self.Solver.recv_observations()
+        self.posterior_current_sample = self.compute_posterior(self.current_sample, self.G_current_sample, self.convergence_tag)
         self.no_rejected_current = 0
         self.pre_posterior_current_sample = 0
         
     def request_observations(self):
         self.Solver.send_parameters(self.proposed_sample)
-        self.G_proposed_sample = self.Solver.recv_observations()
-        self.posterior_proposed_sample = self.compute_posterior(self.proposed_sample, self.G_proposed_sample)
+        self.convergence_tag, self.G_proposed_sample = self.Solver.recv_observations()
+        self.posterior_proposed_sample = self.compute_posterior(self.proposed_sample, self.G_proposed_sample, self.convergence_tag)
         self.log_ratio = self.posterior_proposed_sample - self.posterior_current_sample
         
     def if_accepted(self):
@@ -87,15 +87,16 @@ class Algorithm_PARENT:
         self.G_current_sample = self.G_proposed_sample
         self.posterior_current_sample = self.posterior_proposed_sample
         if self.save_raw_data:
-            row = ['accepted'] + list(self.proposed_sample)
+            row = ['accepted'] + list(self.proposed_sample) + [self.convergence_tag] + list(self.G_current_sample)
             self.writer_raw.writerow(row)
         
     def if_rejected(self):
         self.no_rejected += 1
         self.no_rejected_current += 1
-        self.__send_to_surrogate(sample=self.proposed_sample.copy(), G_sample=self.G_proposed_sample.copy(), weight=0)
+        if self.convergence_tag>0:
+            self.__send_to_surrogate(sample=self.proposed_sample.copy(), G_sample=self.G_proposed_sample.copy(), weight=0)
         if self.save_raw_data:
-            row = ['rejected'] + list(self.proposed_sample)
+            row = ['rejected'] + list(self.proposed_sample) + [self.convergence_tag] + list(self.G_proposed_sample)
             self.writer_raw.writerow(row)
         
     def close_files(self):
@@ -308,7 +309,9 @@ class Problem_Gauss: # initiated by SAMPLERs
         invCv = np.linalg.solve(self.prior_std,v)
         return -0.5*np.dot(v,invCv)
     
-    def get_log_posterior(self, sample, G_sample):
+    def get_log_posterior(self, sample, G_sample, convergence_tag=0):
+        if convergence_tag<0:
+            return -np.inf
         return self.get_log_likelihood(G_sample) + self.get_log_prior(sample)
     
 class Snapshot:

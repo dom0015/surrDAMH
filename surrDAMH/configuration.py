@@ -40,6 +40,18 @@ class Configuration:
         spec.loader.exec_module(module)
         self.child_solver_init = getattr(module, conf["solver_init_name"]) 
         self.child_solver_parameters = conf["solver_parameters"]
+        if "solver_returns_tag" in conf.keys():
+            self.solver_returns_tag = conf["solver_returns_tag"]
+        else:
+            self.solver_returns_tag = False
+        if "pickled_observations" in conf.keys():
+            self.pickled_observations = conf["pickled_observations"]
+        else:
+            self.pickled_observations = True
+        if "save_raw_data" in conf.keys():
+            self.save_raw_data = conf["save_raw_data"]
+        else:
+            self.save_raw_data = False
                 
 ### SAMPLING PARAMETERS:
         self.no_full_solvers = conf["no_solvers"]
@@ -75,7 +87,8 @@ class Configuration:
         tmp = {"no_parameters": self.no_parameters,
                "no_observations": self.no_observations,
                "problem_path": conf_path,
-               "no_samplers": no_samplers
+               "no_samplers": no_samplers,
+               "pickled_observations": self.pickled_observations
                }
         if "solver_parent_parameters" in conf.keys():
             tmp.update(conf["solver_parent_parameters"])

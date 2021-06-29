@@ -48,11 +48,14 @@ status = MPI.Status()
 request_queue = deque()
 
 def receive_observations_from_child(i):
-    sent_data = Solvers[i].recv_observations()
+    convergence_tag, sent_data = Solvers[i].recv_observations()
     child_can_solve[i] = True # mark the solver as free
     for j in range(len(occupied_by_source[i])):
         rank_dest = occupied_by_source[i][j]
-        comm_world.Send(sent_data[j,:].copy(), dest=rank_dest, tag=occupied_by_tag[i][j])
+        if C.pickled_observations:
+            comm_world.send([convergence_tag, sent_data[j,:].copy()], dest=rank_dest, tag=occupied_by_tag[i][j])
+        else:
+            comm_world.Send(sent_data[j,:].copy(), dest=rank_dest, tag=convergence_tag) #occupied_by_tag[i][j])
         # if C.debug:
         #     print("debug - RANK", rank_world, "POOL Send", rank_dest, occupied_by_tag[i][j])
         sampler_can_send[samplers_rank == rank_dest] = True
