@@ -3,8 +3,8 @@
     "no_parameters": 2,
     "no_observations": 64,
     "problem_parameters": {
-        "prior_mean": [6e-15, 0.17],
-        "prior_std": [1e-15,0.1],
+        "prior_mean": [-35, 0],
+        "prior_std": [5,1],
         "observations": [300.0,         341.34553975, 382.75151478, 424.21594379, 465.73968269,
  507.32209564, 548.96110416, 590.65339194, 632.39455056, 653.27673246,
  674.1698432,  674.49131253, 674.80378951, 675.10466339, 675.42407289,
@@ -21,7 +21,8 @@
         "noise_std": 10.0
     },
     "paths_to_append": [
-        "/home/domesova/GIT/Endorse-2Dtest-Bayes"
+        "/home/domesova/GIT/Endorse-2Dtest-Bayes",
+        "/home/domesova/GIT/MCMC-Bayes-python/surrDAMH"
     ],
     "solver_module_path": "examples/solvers/flow_wrapper.py",
     "solver_module_name": "flow_wrapper",
@@ -32,9 +33,9 @@
     "samplers_list": [
         {
             "type": "MH",
-            "max_samples": 20,
-            "time_limit": 1200,
-            "proposal_std": 1.0,
+            "max_samples": 5,
+            "time_limit": 600,
+            "proposal_std": 0.5,
             "surrogate_is_updated": false
         }
     ]

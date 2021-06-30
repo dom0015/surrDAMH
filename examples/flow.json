@@ -20,7 +20,8 @@
         "noise_std": 10.0
     },
     "paths_to_append": [
-        "/home/domesova/GIT/Endorse-2Dtest-Bayes"
+        "/home/domesova/GIT/Endorse-2Dtest-Bayes",
+        "/home/domesova/GIT/MCMC-Bayes-python/surrDAMH"
     ],
     "solver_module_path": "examples/solvers/flow_wrapper.py",
     "solver_module_name": "flow_wrapper",

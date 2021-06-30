@@ -4,6 +4,8 @@
 
 import os
 import ruamel.yaml as yaml
+import modules.transformations as trans
+import numpy as np
 
 from flow123d_simulation import endorse_2Dtest
 
@@ -25,7 +27,9 @@ class Wrapper:
         self.no_parameters = 2
         
     def set_parameters(self,data_par):
-        self.sim.set_parameters(data_par)
+        conductivity = trans.normal_to_lognormal(data_par[0])
+        biot = trans.normal_to_beta(data_par[1],alfa=5,beta=5)
+        self.sim.set_parameters(np.array([conductivity,biot]))
         
     def get_observations(self):
         res = self.sim.get_observations()
