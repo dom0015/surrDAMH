@@ -20,9 +20,9 @@ sys.path.append(wdir)
 from surrDAMH.modules import visualization_and_analysis as va
 
 ### DEFAULT PARAMETERS:
-#conf_name =  "grf1_scaling_DAMH" 
-conf_name = "interfaces1_scaling_DAMH_long2"
-conf_name = "interfaces1_scaling_DAMH_poly"
+conf_name =  "grf1_scaling_DAMH" 
+#conf_name = "interfaces1_scaling_DAMH_long2"
+#conf_name = "interfaces1_scaling_DAMH_poly"
 no_samplers = 30 # number of sampling processes
 savefig_name = "TEST"#"interfaces1_scaling_DAMH"
 
@@ -101,7 +101,7 @@ plt.xlabel("proposal SD $\sigma$", fontsize=fontsize)
 plt.grid()
 plt.tight_layout()
 plt.show()
-plt.savefig('img/' + savefig_name + '_proposal_tau.pdf')  
+#plt.savefig('img/' + savefig_name + '_proposal_tau.pdf')  
 
 plt.figure()
 # F = va.fit(proposal_scale,acceptance_rate,deg=deg)
@@ -113,7 +113,7 @@ plt.xlabel("proposal SD $\sigma$", fontsize=fontsize)
 plt.grid()
 plt.tight_layout()
 plt.show()
-plt.savefig('img/' + savefig_name + '_proposal_rate.pdf')  
+#plt.savefig('img/' + savefig_name + '_proposal_rate.pdf')  
 
 """ Autocorelation depending on acceptance rate """
 plt.figure()
@@ -143,7 +143,7 @@ plt.xlabel("proposal SD $\sigma$", fontsize=fontsize)
 plt.grid()
 plt.tight_layout()
 plt.show()
-plt.savefig('img/' + savefig_name + '_proposal_CpUS.pdf')  
+#plt.savefig('img/' + savefig_name + '_proposal_CpUS.pdf')  
 
 plt.figure()
 plt.plot(proposal_scale,acceptance[alg_range],'.-')

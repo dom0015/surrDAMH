@@ -157,13 +157,14 @@ for problem_name in [#"deflation_interfaces_sigma0_5",
     # writer.writerows(data_without)#.tolist())
     # file.close()
 
-""" ANOTHER TEST 
+""" ANOTHER TEST """
 colors = ["tab:blue","tab:orange","tab:green","tab:red","tab:purple","tab:brown","tab:pink"]
 PROC = 30
 max_len = 300
 for problem_name in ["interfaces_test1_deflation_1e-4",
                      "interfaces_test1_deflation_1e-6",
-                     "grf_test1_deflation_1e-4"]:
+                     "grf_test1_deflation_1e-4",
+                     "grf_test1_deflation_1e-6probably"]:
 
     W = []
     iterations = []
@@ -195,5 +196,4 @@ for problem_name in ["interfaces_test1_deflation_1e-4",
     plt.ylim([0,110])
     plt.show()
     plt.grid()
-    #plt.savefig('examples/visualization/img/' + problem_name + '_60.pdf')  
-"""
+    plt.savefig('examples/visualization/img/' + problem_name + '_DAMH.pdf')  

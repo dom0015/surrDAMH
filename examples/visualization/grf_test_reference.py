@@ -55,7 +55,7 @@ n = conf["solver_parameters"]['n'] # (60)
 n = 200
 no_ref_parameters = 900
 #solver_instance = solver_init(no_ref_parameters, 20, 4, n, grf_filename = None, quiet = True, tolerance = 1e-8, PC = "icc", use_deflation = False, deflation_imp = 1e-2) 
-solver_instance = solver_init(no_parameters=no_ref_parameters,no_observations=44,no_configurations=4, n=n, grf_filename = None, quiet = True, tolerance = 1e-8, PC = "icc", use_deflation = False, deflation_imp = 1e-2) 
+solver_instance = solver_init(no_parameters=no_ref_parameters,no_observations=20,no_configurations=4, n=n, grf_filename = None, quiet = True, tolerance = 1e-8, PC = "icc", use_deflation = False, deflation_imp = 1e-2) 
 reference_parameters = np.ones((no_ref_parameters,))
 solver_instance.set_parameters(reference_parameters)
 reference_observations = solver_instance.get_observations()

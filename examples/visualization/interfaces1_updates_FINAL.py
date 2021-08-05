@@ -32,6 +32,13 @@ savefig_name = "interfaces1_updates"
 #conf_names = ["interfaces1_updates_poly8_stopped0_test1", "interfaces1_updates_poly8_stopped0_test2", "interfaces1_updates_poly8_stopped0_test3", "interfaces1_updates_poly8_stopped0_test4", "interfaces1_updates_poly8_stopped0_test5", "grf1_updates_poly8_stopped0_test1", "grf1_updates_poly8_stopped0_test2", "grf1_updates_poly8_stopped0_test3", "grf1_updates_poly8_stopped0_test4", "grf1_updates_poly8_stopped0_test5"]
 #conf_names = ["interfaces1_updates_rbf500_test1"]#,"grf1_updates_rbf500_test1"]
 
+# INTERFACES poly8 surrogate non-interrupted, interrupted at 1e4, interrupted at 5e4
+#conf_names = ["interfaces1_updates_poly8_test1", "interfaces1_updates_poly8_test2", "interfaces1_updates_poly8_test3", "interfaces1_updates_poly8_test4", "interfaces1_updates_poly8_test5"]
+#conf_names = ["interfaces1_updates_poly8_stopped_test1", "interfaces1_updates_poly8_stopped_test2", "interfaces1_updates_poly8_stopped_test3", "interfaces1_updates_poly8_stopped_test4", "interfaces1_updates_poly8_stopped_test5"]
+#conf_names = ["interfaces1_updates_poly8_stopped0_test1", "interfaces1_updates_poly8_stopped0_test2", "interfaces1_updates_poly8_stopped0_test3", "interfaces1_updates_poly8_stopped0_test4", "interfaces1_updates_poly8_stopped0_test5"]
+# GRF rbf500:
+#conf_names = ["interfaces1_updates_rbf500_test1", "interfaces1_updates_rbf500_test2", "interfaces1_updates_rbf500_test3", "interfaces1_updates_rbf500_test4", "interfaces1_updates_rbf500_test5"]
+
 # GRF poly8 surrogate non-interrupted, interrupted at 1e4, interrupted at 5e4
 #conf_names = ["grf1_updates_poly8_test1", "grf1_updates_poly8_test2", "grf1_updates_poly8_test3", "grf1_updates_poly8_test4", "grf1_updates_poly8_test5"]
 #conf_names = ["grf1_updates_poly8_stopped_test1", "grf1_updates_poly8_stopped_test2", "grf1_updates_poly8_stopped_test3", "grf1_updates_poly8_stopped_test4", "grf1_updates_poly8_stopped_test5"]
@@ -39,12 +46,12 @@ conf_names = ["grf1_updates_poly8_stopped0_test1", "grf1_updates_poly8_stopped0_
 # GRF rbf500:
 #conf_names = ["grf1_updates_rbf500_test1", "grf1_updates_rbf500_test2", "grf1_updates_rbf500_test3", "grf1_updates_rbf500_test4", "grf1_updates_rbf500_test5"]
 
-# INTERFACES poly8 surrogate non-interrupted, interrupted at 1e4, interrupted at 5e4
+
+# INTERFACES INTERRUPTED
 #conf_names = ["interfaces1_updates_poly8_test1", "interfaces1_updates_poly8_test2", "interfaces1_updates_poly8_test3", "interfaces1_updates_poly8_test4", "interfaces1_updates_poly8_test5"]
 #conf_names = ["interfaces1_updates_poly8_stopped_test1", "interfaces1_updates_poly8_stopped_test2", "interfaces1_updates_poly8_stopped_test3", "interfaces1_updates_poly8_stopped_test4", "interfaces1_updates_poly8_stopped_test5"]
 #conf_names = ["interfaces1_updates_poly8_stopped0_test1", "interfaces1_updates_poly8_stopped0_test2", "interfaces1_updates_poly8_stopped0_test3", "interfaces1_updates_poly8_stopped0_test4", "interfaces1_updates_poly8_stopped0_test5"]
-# GRF rbf500:
-#conf_names = ["interfaces1_updates_rbf500_test1", "interfaces1_updates_rbf500_test2", "interfaces1_updates_rbf500_test3", "interfaces1_updates_rbf500_test4", "interfaces1_updates_rbf500_test5"]
+
 
 
 colors = ["tab:blue","tab:orange","tab:green","tab:red","tab:purple","tab:brown","tab:pink"]
@@ -77,7 +84,7 @@ for conf_name in conf_names:
     rejected_sum = 0
     accepted_sum = 0
     begin = 1
-    end_disp = 125000 # 100000 # None
+    end_disp = 125000-10000 # 200000 #125000 # 100000 # None
     for i in [1,2]:
         chains_range=range(i*no_samplers,(i+1)*no_samplers)
         #S.plot_average(parameters_disp = parameters_disp, chains_disp = range(i*no_samplers,(i+1)*no_samplers), show_legend = False, sharey=False)
@@ -107,8 +114,8 @@ for conf_name in conf_names:
 #legend = ['rbf(500)','_nolegend_','_nolegend_','_nolegend_','poly(8)','_nolegend_','_nolegend_','_nolegend_']
 #legend = ['rbf(500)','_nolegend_','_nolegend_','_nolegend_','_nolegend_','rbf(250)','_nolegend_','_nolegend_','_nolegend_','_nolegend_','poly(8)','_nolegend_','_nolegend_','_nolegend_','_nolegend_']
 #legend = ['rbf(500)','_nolegend_','_nolegend_','_nolegend_','_nolegend_','poly(8)','_nolegend_','_nolegend_','_nolegend_','_nolegend_']
-legend = ['model problem 1'] + 9*['_nolegend_'] + ['model problem 2'] + 9*['_nolegend_']
-#legend = ['with updates'] + 4*['_nolegend_'] + ['stopped after 5e5 samples'] + 9*['_nolegend_']+ ['stopped after 1e5 samples'] + 9*['_nolegend_']
+#legend = ['model problem 1'] + 9*['_nolegend_'] + ['model problem 2'] + 9*['_nolegend_']
+legend = ['with updates'] + 4*['_nolegend_'] + ['stopped after 5e4 samples'] + 9*['_nolegend_']+ ['stopped after 1e4 samples'] + 9*['_nolegend_']
 #legend = ["interfaces"]#, "grf"]
 plt.figure(11)
 plt.xlabel("number of samples")
@@ -126,9 +133,9 @@ plt.tight_layout()
 #plt.savefig('img/' + savefig_name + '_accepted.pdf')  
 plt.show()
 
-# plt.figure(11)
-# plt.plot([50000,50000],[0,120],'--',color=colors[2])
-# plt.plot([10000,10000],[0,120],'--',color=colors[3])
-# plt.figure(12)
-# plt.plot([50000,50000],[0,120],'--',color=colors[2])
-# plt.plot([10000,10000],[0,120],'--',color=colors[3])
+plt.figure(11)
+plt.plot([50000,50000],[0,250],'--',color=colors[2])
+plt.plot([10000,10000],[0,250],'--',color=colors[3])
+plt.figure(12)
+plt.plot([50000,50000],[0,12000],'--',color=colors[2])
+plt.plot([10000,10000],[0,12000],'--',color=colors[3])
