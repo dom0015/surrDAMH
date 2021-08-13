@@ -12,6 +12,7 @@ sys.path.append(os.getcwd())
 import json
 import importlib.util as iu
 from modules import classes_communication
+from modules import Gaussian_process
 
 class Configuration:
     def __init__(self, no_samplers, conf_path):
@@ -30,6 +31,18 @@ class Configuration:
         self.no_parameters = conf["no_parameters"]
         self.no_observations = conf["no_observations"] # length of the vector of observations, not repeated observations
         self.problem_parameters = conf["problem_parameters"]
+        noise_type = None
+        if "noise_type" in conf.keys():
+            noise_type = conf["noise_type"]
+        if noise_type == "Gaussian_process":
+            grid = conf["noise_grid"]
+            parameters = conf["noise_parameters"]
+            cov_type = None
+            if "noise_cov_type" in conf.keys():
+                cov_type = conf["noise_cov_type"]
+            noise_cov = Gaussian_process.assemble_covariance_matrix(grid, parameters, cov_type)
+            self.problem_parameters["noise_std"] = noise_cov
+
             
 ### SOLVER SPECIFICATION:
         if "paths_to_append" in conf.keys():
