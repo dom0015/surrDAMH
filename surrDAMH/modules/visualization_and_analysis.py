@@ -341,6 +341,82 @@ class Samples:
         plt.title("evaluations in sliding window - mean")
         plt.show()
         return result
+    
+    def get_raw_data(self, folder_samples, no_parameters, no_observations, chains_range = None):
+        folder_samples = folder_samples + '/raw_data'
+        file_samples = [f for f in listdir(folder_samples) if isfile(join(folder_samples, f))]
+        file_samples.sort()
+        if chains_range == None:
+            chains_range = range(self.no_chains)
+        N = len(chains_range)
+        parameters = [None] * N
+        observations = [None] * N
+        tag = [None] * N
+        sample_type = [None] * N
+        for idx,i in enumerate(chains_range):
+            path_samples = folder_samples + "/" + file_samples[i]
+            df_samples = pd.read_csv(path_samples, header=None, names=list(range(2+no_parameters+no_observations)))
+            # print(df_samples.iloc[:6,:6])
+            sample_type[idx] = np.array(df_samples.iloc[:,0])
+            parameters[idx] = np.array(df_samples.iloc[:,1:1+no_parameters])
+            tag[idx] = np.array(df_samples.iloc[:,1+no_parameters])
+            # if np.sum(df_samples.iloc[:,1+no_parameters]) == np.nan:
+            #     print(df_samples)
+            observations[idx] = np.array(df_samples.iloc[:,2+no_parameters:])
+        return sample_type, parameters, tag, observations
+
+    def analyze_raw_data(self, folder_samples, no_parameters, no_observations, par0 = 0, par1 = 1, chains_range = None, begin_disp = 0, end_disp = None):
+        folder_samples = folder_samples + '/raw_data'
+        file_samples = [f for f in listdir(folder_samples) if isfile(join(folder_samples, f))]
+        file_samples.sort()
+        if chains_range == None:
+            chains_range = range(self.no_chains)
+        N = len(chains_range)
+        raw_data = [None] * N
+        sample_type = [None] * N
+        # plt.figure()
+        for idx,i in enumerate(chains_range):
+            path_samples = folder_samples + "/" + file_samples[i]
+            #print("PATH:", path_samples)
+            df_samples = pd.read_csv(path_samples, header=None, names=list(range(2+no_parameters+no_observations)))
+            raw_data[idx] = np.array(df_samples.iloc[:,1:1+no_parameters])
+            sample_type[idx] = np.array(df_samples.iloc[:,0])
+            sample0 = self.x[i][begin_disp,:]
+            if end_disp == None:
+                end_disp_max = raw_data[idx].shape[0]
+            for j in range(begin_disp, end_disp_max):
+                #print(raw_data[idx].shape)
+                sample1 = raw_data[idx][j,:]
+                if sample_type[idx][j] == "accepted":
+                    sample0=sample1
+                elif sample_type[idx][j] == "prerejected":
+                    plt.plot([sample0[par0],sample1[par0]],[sample0[par1],sample1[par1]], linewidth=1, color="silver")
+                    #plt.plot(sample1[par0],sample1[par1],'.', color="silver")
+            sample0 = self.x[i][begin_disp,:]
+            if end_disp == None:
+                end_disp_max = raw_data[idx].shape[0]
+            for j in range(begin_disp, end_disp_max):
+                sample1 = raw_data[idx][j,:]
+                if sample_type[idx][j] == "accepted":
+                    sample0=sample1
+                elif sample_type[idx][j] == "rejected":
+                    plt.plot([sample0[par0],sample1[par0]],[sample0[par1],sample1[par1]], linewidth=1, color="tab:orange")
+                    #plt.plot(sample1[par0],sample1[par1],'.', color="tab:orange")
+            sample0 = self.x[i][begin_disp,:]
+            if end_disp == None:
+                end_disp_max = raw_data[idx].shape[0]
+            for j in range(begin_disp, end_disp_max):
+                sample1 = raw_data[idx][j,:]
+                if sample_type[idx][j] == "accepted":
+                    plt.plot([sample0[par0],sample1[par0]],[sample0[par1],sample1[par1]], color="tab:blue", linewidth=1)
+                    #plt.plot(sample1[par0],sample1[par1],'.', color="tab:blue")
+                    sample0=sample1
+            sample0 = self.x[i][begin_disp,:]
+            plt.plot(sample0[par0], sample0[par1], '.', color="tab:red", markersize=10)
+        plt.xlabel("$u_1$")
+        plt.ylabel("$u_2$")
+        plt.grid()
+        self.raw_data = raw_data
 
 ### AUTOCORRELATION:
 # Autocorrelation analysis using emcee, Foreman-Mackey,

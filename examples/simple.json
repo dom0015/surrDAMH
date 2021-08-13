@@ -20,7 +20,8 @@
             "max_samples": 100,
             "time_limit": 60,
             "proposal_std": 1.0,
-            "surrogate_is_updated": true
+            "surrogate_is_updated": true,
+            
         },
         {
             "type": "DAMH",

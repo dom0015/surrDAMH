@@ -47,10 +47,12 @@ with open(problem_path) as f:
     conf = json.load(f)
 
 if visualize:
-    if os.path.exists("examples/visualization/" + problem_name + ".py"):
-        command = "python3 examples/visualization/" + problem_name + ".py " + str(N)
+    visualization_path = os.path.abspath(os.path.join("examples/visualization/", problem_name + ".py"))
+    if os.path.exists(visualization_path):
+        command = "python3 " + visualization_path + " " + str(N)
     else:
-        command = "python3 examples/visualization/general_visualization.py " + str(N) + " " + problem_name
+        visualization_path = os.path.abspath(os.path.join("examples/visualization/general_visualization.py"))
+        command = "python3 " + visualization_path + " " + str(N) + " " + problem_name
 else:
     if oversubscribe:
         opt = " --oversubscribe " 
