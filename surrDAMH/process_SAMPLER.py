@@ -46,8 +46,11 @@ my_Prob = cS.Problem_Gauss(no_parameters=C.no_parameters,
                            name=C.problem_name)
 my_Prop = cS.Proposal_GaussRandomWalk(no_parameters=C.no_parameters, seed=seed0+1)
 
-initial_samples = LHS.lhs_normal(C.no_parameters,C.problem_parameters['prior_mean'],C.problem_parameters['prior_std'],C.no_samplers,0)
-initial_sample = initial_samples[rank_world]
+if C.initial_sample_type == "lhs":
+    initial_samples = LHS.lhs_normal(C.no_parameters,C.problem_parameters['prior_mean'],C.problem_parameters['prior_std'],C.no_samplers,0)
+    initial_sample = initial_samples[rank_world]
+else:
+    initial_sample = None # will be set to prior mean
 for i,d in enumerate(C.list_alg):
     # TO DO: adaptive proposal if needed
     my_Prop.set_covariance(proposal_std = d['proposal_std'])
