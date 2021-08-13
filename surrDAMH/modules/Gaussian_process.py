@@ -21,7 +21,7 @@ def autocorr_function_sqexp(distance, corr_length):
     return np.exp(-(distance**2)/(2*corr_length**2))
 
 def assemble_covariance_matrix(grid, parameters, cov_type):
-    grid = np.array(grid)
+    grid = np.array(grid).reshape((1,-1))
     distances = np.abs(grid - grid.transpose())
     nP = len(parameters)
     blocks = [None]*nP
