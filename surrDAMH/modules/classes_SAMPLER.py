@@ -207,7 +207,7 @@ class Algorithm_DAMH(Algorithm_PARENT): # initiated by SAMPLERs
                 self.no_prerejected += 1
                 self.no_rejected_current += 1
                 if self.save_raw_data:
-                    row = ['prerejected'] + list(self.proposed_sample)
+                    row = ['prerejected'] + list(self.proposed_sample) + list(GS_proposed_sample)
                     self.writer_raw.writerow(row)
             if time.time() - self.time_start > self.time_limit:
                 print("SAMPLER at RANK", MPI.COMM_WORLD.Get_rank(), "time limit reached - loop",i)
@@ -295,7 +295,7 @@ class Problem_Gauss: # initiated by SAMPLERs
         return -0.5*np.sum(v*invCv)
     
     def __get_log_likelihood_multivariate(self, G_sample):
-        v = self.observations - G_sample
+        v = self.observations - G_sample.ravel()
         invCv = np.linalg.solve(self.noise_std,v)
         return -0.5*np.dot(v,invCv)
 

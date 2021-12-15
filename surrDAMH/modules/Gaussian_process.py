@@ -39,7 +39,7 @@ if __name__ == "__main__":
     import matplotlib.pyplot as plt
     N = 100
     grid = np.linspace(0,365,N).reshape((N,1))
-    parameters = [[30,166],[50,166],[50,500]]
+    parameters = [[30,50],[30,166],[50,166]]
     cov_type = "default"
     # cov_type = "squared_exponential"
     

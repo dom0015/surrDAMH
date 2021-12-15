@@ -84,3 +84,19 @@ class Solver_linela2exp_local_tag:
         else:
             convergence_tag = -1
         return convergence_tag, uL
+    
+class Generic:
+    def __init__(self, solver_id=0, no_parameters=3, no_observations=3):
+        self.no_parameters = no_parameters
+        self.no_observations = no_observations
+        
+    def set_parameters(self,data_par):
+        self.x = np.mean(data_par)
+        
+    def get_observations(self):
+        res = self.x*np.ones((self.no_observations,))
+        if int(np.random.rand()<0.75):
+            convergence_tag = 1
+        else:
+            convergence_tag = -1
+        return convergence_tag, res
