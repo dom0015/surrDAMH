@@ -97,7 +97,7 @@ class Samples:
         
 ### BASIC VISUALIZATION OF GENERATED CHAINS:
         
-    def plot_segment(self, begin_disp = None, end_disp = None, parameters_disp = None, chains_disp = None, show_legend = False):
+    def plot_segment(self, begin_disp = None, end_disp = None, parameters_disp = None, chains_disp = None, show_legend = False, scale=None):
         if parameters_disp == None:
             parameters_disp = range(self.no_parameters)
         if chains_disp == None:
@@ -121,10 +121,12 @@ class Samples:
             axes[idj].grid(True)
             if self.known_autocorr_time:
                 axes[idj].set_title("$\\tau_\mathrm{{true}} = {0:.0f}$".format(self.autocorr_time_true[j]));
+            if scale is not None:
+                axes[idj].set_yscale(scale[idj])
         axes[0].set_ylabel("samples")
         plt.show()
         
-    def plot_average(self, burn_in = None, begin_disp = None, end_disp = None, parameters_disp = None, chains_disp = None, show_legend = False):
+    def plot_average(self, burn_in = None, begin_disp = None, end_disp = None, parameters_disp = None, chains_disp = None, show_legend = False, scale=None):
         if parameters_disp == None:
             parameters_disp = range(self.no_parameters)
         if chains_disp == None:
@@ -148,10 +150,12 @@ class Samples:
             axes[idj].grid(True)
             if self.known_autocorr_time:
                 axes[idj].set_title("$\\tau_\mathrm{{true}} = {0:.0f}$".format(self.autocorr_time_true[j]));
+            if scale is not None:
+                axes[idj].set_yscale(scale[idj])
         axes[0].set_ylabel("convergence of averages")
         plt.show()
         
-    def plot_average_reverse(self, burn_in = None, begin_disp = None, end_disp = None, parameters_disp = None, chains_disp = None, show_legend = False):
+    def plot_average_reverse(self, burn_in = None, begin_disp = None, end_disp = None, parameters_disp = None, chains_disp = None, show_legend = False, scale=None):
         if parameters_disp == None:
             parameters_disp = range(self.no_parameters)
         if chains_disp == None:
@@ -175,6 +179,8 @@ class Samples:
             axes[idj].grid(True)
             if self.known_autocorr_time:
                 axes[idj].set_title("$\\tau_\mathrm{{true}} = {0:.0f}$".format(self.autocorr_time_true[j]));
+            if scale is not None:
+                axes[idj].set_yscale(scale[idj])
         axes[0].set_ylabel("convergence of averages")
         plt.show()
     
@@ -200,7 +206,7 @@ class Samples:
         axes[0].set_ylabel("samples")
         plt.show()
 
-    def plot_hist_1d(self, burn_in = None, dimension = 0, chains_disp = None, bins = 20, show = True):
+    def plot_hist_1d(self, burn_in = None, dimension = 0, chains_disp = None, bins = 20, show = True, log = False):
         if chains_disp == None:
             chains_disp = range(self.no_chains)
         if burn_in == None:
@@ -208,13 +214,16 @@ class Samples:
         XX = np.zeros((0,))
         for i, chain in enumerate(chains_disp):
             xx = self.x[chain][burn_in[i]:,dimension]
+        if log:
+            XX = np.concatenate((XX,np.log10(xx)))
+        else:
             XX = np.concatenate((XX,xx))
         plt.hist(XX, bins = bins, density = True)
         plt.grid(True)
         if show:
             plt.show()
 
-    def plot_hist_2d(self, burn_in = None, dimensions = [0,1], chains_disp = None, bins = 20, show = True, colorbar = False):
+    def plot_hist_2d(self, burn_in = None, dimensions = [0,1], chains_disp = None, bins = 20, show = True, colorbar = False, log = [False,False]):
         if chains_disp == None:
             chains_disp = range(self.no_chains)
         if burn_in == None:
@@ -224,8 +233,14 @@ class Samples:
         for i, chain in enumerate(chains_disp):
             xx = self.x[chain][burn_in[i]:,dimensions[0]]
             yy = self.x[chain][burn_in[i]:,dimensions[1]]
-            XX = np.concatenate((XX,xx))
-            YY = np.concatenate((YY,yy))
+            if log[0]:
+                XX = np.concatenate((XX,np.log10(xx)))
+            else:
+                XX = np.concatenate((XX,xx))
+            if log[1]:
+                YY = np.concatenate((YY,np.log10(yy)))
+            else:
+                YY = np.concatenate((YY,yy))
         plt.hist2d(XX, YY, bins = bins, cmap = "binary", density = True)
         plt.grid(True)
         if colorbar:
@@ -233,13 +248,15 @@ class Samples:
         if show:
             plt.show()
     
-    def plot_hist_grid(self, burn_in = None, parameters_disp = None, chains_disp = None, bins1d = 20, bins2d = 20):
+    def plot_hist_grid(self, burn_in = None, parameters_disp = None, chains_disp = None, bins1d = 20, bins2d = 20, scale=None):
         if parameters_disp == None:
             parameters_disp = range(self.no_parameters)
         if chains_disp == None:
             chains_disp = range(self.no_chains)
         if burn_in == None:
             burn_in = [0] * len(chains_disp)
+        if scale is None:
+            scale = [None] * len(parameters_disp)
         n = len(parameters_disp)
         idx = 1
         fig, axes = plt.subplots(n, n, sharex=False, sharey=False) # figsize=(12,12)
@@ -247,11 +264,19 @@ class Samples:
             for idj,j in enumerate(parameters_disp):
                 plt.subplot(n, n, idx)
                 if idi==idj:
-                    self.plot_hist_1d(dimension = i, burn_in = burn_in, chains_disp=chains_disp, bins=bins1d, show = False)
+                    if scale[i] == 'log':
+                        log = True
+                    else:
+                        log = False
+                    self.plot_hist_1d(dimension = i, burn_in = burn_in, chains_disp=chains_disp, bins=bins1d, show = False, log=log)
                 else:
-                    self.plot_hist_2d(dimensions = [j,i],  burn_in = burn_in, chains_disp=chains_disp, bins=bins2d, show = False)
+                    log = [scale[j]=="log", scale[i]=="log"]
+                    self.plot_hist_2d(dimensions = [j,i],  burn_in = burn_in, chains_disp=chains_disp, bins=bins2d, show = False, log=log)
                 if idx<=n:
-                    plt.title("$par. {0}$".format(j))
+                    label = "$par. {0}$".format(j)
+                    if scale[idj] == "log":
+                        label += " (log scale)"
+                    plt.title(label)
                 idx = idx + 1
         plt.show()
 

@@ -25,15 +25,27 @@ if len(sys.argv)>1:
 else:
     no_samplers = 1
 
-### SAMPLES VISUALIZATION:
+### PREPARATION:
 S = va.Samples()
 no_parameters = conf["no_parameters"]
+scale = ["linear"]*no_parameters
+if "transformations" in conf.keys():
+    transformations = conf["transformations"]
+    for i in range(no_parameters):
+        if transformations[i][0] == "normal_to_lognormal":
+            scale[i] = "log"
 S.load_notes('saved_samples/' + problem_name,no_samplers)
 S.load_MH('saved_samples/' + problem_name,no_parameters)
-
 S.calculate_properties()
 S.print_properties()
-S.plot_hist_grid(bins1d=30, bins2d=30)
-plt.savefig('saved_samples/' + problem_name + "/histograms.pdf",bbox_inches="tight")
-S.plot_segment()
-plt.savefig('saved_samples/' + problem_name + "/chains.pdf",bbox_inches="tight")
+
+### SAMPLES VISUALIZATION:
+no_stages = int(S.no_chains/no_samplers)
+for i in range(no_stages):
+    chains_disp=range(i*no_samplers,(i+1)*no_samplers)
+    S.plot_hist_grid(chains_disp=chains_disp,bins1d=30, bins2d=30, scale=scale)
+    plt.savefig('saved_samples/' + problem_name + "/histograms" +str(i)+ ".pdf",bbox_inches="tight")
+    S.plot_segment(chains_disp=chains_disp,scale=scale)
+    plt.savefig('saved_samples/' + problem_name + "/chains" +str(i)+ ".pdf",bbox_inches="tight")
+    S.plot_average(chains_disp=chains_disp,scale=scale)
+    plt.savefig('saved_samples/' + problem_name + "/average" +str(i)+ ".pdf",bbox_inches="tight")
