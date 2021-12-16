@@ -17,15 +17,6 @@ Provides samples from the posterior distribution π(u|y) ∝ f<sub>η</sub>(y - 
     - `make -C examples/solvers/pcdeflation build`
 - cython (for pcdeflation build)
 
-<<<<<<< Updated upstream
-## Run
-- **problem_name**
-    - prepared toy examples: "simple", "simple_MPI", "Darcy"
-    - loads configuration file "conf/" + **problem_name** + ".json"
-- **N** = number of sampling processes
- 
-### run sampling process:
-=======
 ## Instructions for running the sampling process
 - **problem_name**
     - defines the name of the json configuration file that will be loaded: "conf/" + **problem_name** + ".json"
@@ -33,7 +24,6 @@ Provides samples from the posterior distribution π(u|y) ∝ f<sub>η</sub>(y - 
 - **N** = number of sampling processes
  
 ### run the sampling process:
->>>>>>> Stashed changes
 > ### `python3 run.py problem_name N (oversubscribe)`
 
 - toy examples:
@@ -48,11 +38,7 @@ Provides samples from the posterior distribution π(u|y) ∝ f<sub>η</sub>(y - 
 
 Obtained samples are saved into saved_samples/**problem_name**.
 
-<<<<<<< Updated upstream
-### run visualization of obtained samples:
-=======
 ### run the visualization of obtained samples:
->>>>>>> Stashed changes
 > ### `python3 run.py problem_name N visualize`
 
 - toy examples:
