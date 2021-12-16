@@ -13,7 +13,7 @@ import csv
 import time
 
 class Algorithm_PARENT:
-    def __init__(self, Problem, Proposal, Solver, max_samples, name, seed=0, initial_sample=None, G_initial_sample=None, Surrogate=None, is_saved=True, save_raw_data=False, surrogate_is_updated=True, time_limit=float('inf')):
+    def __init__(self, Problem, Proposal, Solver, max_samples, name, seed=0, initial_sample=None, G_initial_sample=None, Surrogate=None, is_saved=True, save_raw_data=False, transform_before_saving=None, surrogate_is_updated=True, time_limit=float('inf')):
         self.Problem = Problem
         self.Proposal = Proposal
         self.Solver = Solver
@@ -33,6 +33,11 @@ class Algorithm_PARENT:
             self.__send_to_surrogate = self._empty_function
         self.is_saved = is_saved
         self.save_raw_data = save_raw_data
+        if transform_before_saving is None:
+            self.save_transformed_data = False
+        else:
+            self.save_transformed_data = True
+            self.transform = transform_before_saving
         self.time_limit = time_limit
         self.__generator = np.random.RandomState(seed)
         self.no_accepted = 0
@@ -87,7 +92,10 @@ class Algorithm_PARENT:
         self.G_current_sample = self.G_proposed_sample
         self.posterior_current_sample = self.posterior_proposed_sample
         if self.save_raw_data:
-            row = ['accepted'] + list(self.proposed_sample) + [self.convergence_tag] + list(self.G_current_sample)
+            if self.save_transformed_data:
+                row = ['accepted'] + list(self.transform(self.proposed_sample)) + [self.convergence_tag] + list(self.G_current_sample)
+            else:
+                row = ['accepted'] + list(self.proposed_sample) + [self.convergence_tag] + list(self.G_current_sample)
             self.writer_raw.writerow(row)
         
     def if_rejected(self):
@@ -96,7 +104,10 @@ class Algorithm_PARENT:
         if self.convergence_tag>0:
             self.__send_to_surrogate(sample=self.proposed_sample.copy(), G_sample=self.G_proposed_sample.copy(), weight=0)
         if self.save_raw_data:
-            row = ['rejected'] + list(self.proposed_sample) + [self.convergence_tag] + list(self.G_proposed_sample)
+            if self.save_transformed_data:
+                row = ['rejected'] + list(self.transform(self.proposed_sample)) + [self.convergence_tag] + list(self.G_proposed_sample)
+            else:
+                row = ['rejected'] + list(self.proposed_sample) + [self.convergence_tag] + list(self.G_proposed_sample)
             self.writer_raw.writerow(row)
         
     def close_files(self):
@@ -125,7 +136,10 @@ class Algorithm_PARENT:
             return False
         
     def __write_to_file__(self):
-        row = [1+self.no_rejected_current] + list(self.current_sample)
+        if self.save_transformed_data:
+            row = [1+self.no_rejected_current] + list(self.transform(self.current_sample))
+        else:
+            row = [1+self.no_rejected_current] + list(self.current_sample)
         row.append(self.posterior_current_sample)
         row.append(self.pre_posterior_current_sample)
         self.__writer_G.writerow(row)
@@ -138,8 +152,8 @@ class Algorithm_PARENT:
         return
     
 class Algorithm_MH(Algorithm_PARENT): # initiated by SAMPLERs
-    def __init__(self, Problem, Proposal, Solver, max_samples, name, seed=0, initial_sample=None, G_initial_sample=None, Surrogate=None, is_saved=True, save_raw_data=False, surrogate_is_updated=True, time_limit=float('inf')):
-        super().__init__(Problem, Proposal, Solver, max_samples, name, seed, initial_sample, G_initial_sample, Surrogate, is_saved, save_raw_data, surrogate_is_updated, time_limit)
+    def __init__(self, Problem, Proposal, Solver, max_samples, name, seed=0, initial_sample=None, G_initial_sample=None, Surrogate=None, is_saved=True, save_raw_data=False, transform_before_saving=None, surrogate_is_updated=True, time_limit=float('inf')):
+        super().__init__(Problem, Proposal, Solver, max_samples, name, seed, initial_sample, G_initial_sample, Surrogate, is_saved, save_raw_data, transform_before_saving, surrogate_is_updated, time_limit)
 
     def run(self):
         self.prepare()
@@ -156,8 +170,8 @@ class Algorithm_MH(Algorithm_PARENT): # initiated by SAMPLERs
         self.close_files()
         
 class Algorithm_DAMH(Algorithm_PARENT): # initiated by SAMPLERs
-    def __init__(self, Problem, Proposal, Solver, max_samples, name, seed=0, initial_sample=None, G_initial_sample=None, Surrogate=None, is_saved=True, save_raw_data=False, surrogate_is_updated=True, time_limit=float('inf')):
-        super().__init__(Problem, Proposal, Solver, max_samples, name, seed, initial_sample, G_initial_sample, Surrogate, is_saved, save_raw_data, surrogate_is_updated, time_limit)
+    def __init__(self, Problem, Proposal, Solver, max_samples, name, seed=0, initial_sample=None, G_initial_sample=None, Surrogate=None, is_saved=True, save_raw_data=False, transform_before_saving=None, surrogate_is_updated=True, time_limit=float('inf')):
+        super().__init__(Problem, Proposal, Solver, max_samples, name, seed, initial_sample, G_initial_sample, Surrogate, is_saved, save_raw_data, transform_before_saving, surrogate_is_updated, time_limit)
 
     def run(self):
         self.prepare()
@@ -207,7 +221,10 @@ class Algorithm_DAMH(Algorithm_PARENT): # initiated by SAMPLERs
                 self.no_prerejected += 1
                 self.no_rejected_current += 1
                 if self.save_raw_data:
-                    row = ['prerejected'] + list(self.proposed_sample) + list(GS_proposed_sample)
+                    if self.save_transformed_data:
+                        row = ['prerejected'] + list(self.transform(self.proposed_sample)) + list(GS_proposed_sample)
+                    else:
+                        row = ['prerejected'] + list(self.proposed_sample) + list(GS_proposed_sample)
                     self.writer_raw.writerow(row)
             if time.time() - self.time_start > self.time_limit:
                 print("SAMPLER at RANK", MPI.COMM_WORLD.Get_rank(), "time limit reached - loop",i)

@@ -63,6 +63,7 @@ for i,d in enumerate(C.list_alg):
                          max_samples=d['max_samples'],
                          time_limit=d['time_limit'],
                          save_raw_data=C.save_raw_data,
+                         transform_before_saving=C.transform_before_saving,
                          name='alg' + str(i) + 'MH_rank' + str(rank_world),
                          seed=seed)
     else:
@@ -73,6 +74,7 @@ for i,d in enumerate(C.list_alg):
                         max_samples=d['max_samples'],
                         time_limit=d['time_limit'],
                         save_raw_data=C.save_raw_data,
+                        transform_before_saving=C.transform_before_saving,
                         name='alg' + str(i) + 'DAMH_rank' + str(rank_world),
                         seed=seed)
     print('--- SAMPLER ' + my_Alg.name + ' starts ---')

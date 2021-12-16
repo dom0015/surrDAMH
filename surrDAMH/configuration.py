@@ -13,6 +13,7 @@ import json
 import importlib.util as iu
 from modules import classes_communication
 from modules import Gaussian_process
+from modules import transformations as trans
 
 class Configuration:
     def __init__(self, no_samplers, conf_path):
@@ -31,6 +32,10 @@ class Configuration:
         self.no_parameters = conf["no_parameters"]
         self.no_observations = conf["no_observations"] # length of the vector of observations, not repeated observations
         self.problem_parameters = conf["problem_parameters"]
+        if "prior_mean" not in self.problem_parameters.keys():
+            self.problem_parameters["prior_mean"] = [0]*self.no_parameters
+        if "prior_std" not in self.problem_parameters.keys():
+            self.problem_parameters["prior_std"] = [1]*self.no_parameters
         noise_type = None
         if "noise_type" in conf.keys():
             noise_type = conf["noise_type"]
@@ -42,6 +47,14 @@ class Configuration:
                 cov_type = conf["noise_cov_type"]
             noise_cov = Gaussian_process.assemble_covariance_matrix(grid, parameters, cov_type)
             self.problem_parameters["noise_std"] = noise_cov
+        if "transformations" in conf.keys():
+            def transform(data):
+                return trans.transform(data,conf["transformations"])
+            self.transform = transform
+        else:
+            def transform(data):
+                return data
+            self.transform = transform
 
             
 ### SOLVER SPECIFICATION:
@@ -61,10 +74,6 @@ class Configuration:
             self.pickled_observations = conf["pickled_observations"]
         else:
             self.pickled_observations = True
-        if "save_raw_data" in conf.keys():
-            self.save_raw_data = conf["save_raw_data"]
-        else:
-            self.save_raw_data = False
                 
 ### SAMPLING PARAMETERS:
         self.no_full_solvers = conf["no_solvers"]
@@ -118,3 +127,15 @@ class Configuration:
         self.debug = False
         if "debug" in conf.keys():
             self.debug = conf["debug"]
+        if "save_raw_data" in conf.keys():
+            self.save_raw_data = conf["save_raw_data"]
+        else:
+            self.save_raw_data = False
+        if "save_transformed_data" in conf.keys():
+            self.save_transformed_data = conf["save_transformed_data"]
+        else:
+            self.save_transformed_data = False
+        if self.save_transformed_data:
+            self.transform_before_saving = self.transform
+        else:
+            self.transform_before_saving = None
