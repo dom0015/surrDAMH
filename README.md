@@ -1,7 +1,7 @@
 # surrDAMH
-Python implementation of surrogate-accelerated Markov chain Monte Carlo methods for Bayesian inversion
+Python implementation of surrogate-accelerated Markov chain Monte Carlo methods for the realization of Bayesian inversion
 
-Provides samples from the posterior distribution π(u|y) ∝ f<sub>η</sub>(y - G(u)) π<sub>0</sub>(u), where y is a given vector of observations, G is an observation operator, f<sub>η</sub> is probability density function (pdf) of Gaussian observational noise, π<sub>0</sub>(u) is Gaussian prior pdf.
+Provides samples from the posterior distribution π(u|y) ∝ f<sub>η</sub>(y - G(u)) π<sub>0</sub>(u), where y is a given vector of observations, G is an observation operator, f<sub>η</sub> is a probability density function (pdf) of Gaussian observational noise, π<sub>0</sub>(u) is Gaussian prior pdf.
 
 ## Requirements
 - numpy
@@ -17,6 +17,7 @@ Provides samples from the posterior distribution π(u|y) ∝ f<sub>η</sub>(y - 
     - `make -C examples/solvers/pcdeflation build`
 - cython (for pcdeflation build)
 
+<<<<<<< Updated upstream
 ## Run
 - **problem_name**
     - prepared toy examples: "simple", "simple_MPI", "Darcy"
@@ -24,6 +25,15 @@ Provides samples from the posterior distribution π(u|y) ∝ f<sub>η</sub>(y - 
 - **N** = number of sampling processes
  
 ### run sampling process:
+=======
+## Instructions for running the sampling process
+- **problem_name**
+    - defines the name of the json configuration file that will be loaded: "conf/" + **problem_name** + ".json"
+    - prepared toy examples: "simple", "simple_MPI", "Darcy" (in the form of json configuration files)
+- **N** = number of sampling processes
+ 
+### run the sampling process:
+>>>>>>> Stashed changes
 > ### `python3 run.py problem_name N (oversubscribe)`
 
 - toy examples:
@@ -38,7 +48,11 @@ Provides samples from the posterior distribution π(u|y) ∝ f<sub>η</sub>(y - 
 
 Obtained samples are saved into saved_samples/**problem_name**.
 
+<<<<<<< Updated upstream
 ### run visualization of obtained samples:
+=======
+### run the visualization of obtained samples:
+>>>>>>> Stashed changes
 > ### `python3 run.py problem_name N visualize`
 
 - toy examples:
