@@ -12,6 +12,7 @@ import json
 sys.path.append(os.getcwd())
 from surrDAMH.modules import visualization_and_analysis as va
 import matplotlib.pyplot as plt
+import numpy as np
 
 conf_path = sys.argv[2]
 basename = os.path.basename(conf_path)
@@ -38,12 +39,16 @@ S.load_notes('saved_samples/' + problem_name,no_samplers)
 S.load_MH('saved_samples/' + problem_name,no_parameters)
 S.calculate_properties()
 S.print_properties()
+S.load_MH_with_posterior('saved_samples/' + problem_name,no_parameters)
+print("modus: ", S.find_modus())
+S.find_max_likelihood('saved_samples/' + problem_name,no_parameters,conf["problem_parameters"]["observations"])
 
 ### SAMPLES VISUALIZATION:
 no_stages = int(S.no_chains/no_samplers)
 for i in range(no_stages):
     chains_disp=range(i*no_samplers,(i+1)*no_samplers)
-    S.plot_hist_grid(chains_disp=chains_disp,bins1d=30, bins2d=30, scale=scale)
+    S.plot_hist_grid(chains_disp=chains_disp, bins1d=30, bins2d=30, scale=scale)
+    S.plot_hist_grid_add(chains_disp=chains_disp, scale=scale)
     plt.savefig('saved_samples/' + problem_name + "/histograms" +str(i)+ ".pdf",bbox_inches="tight")
     S.plot_segment(chains_disp=chains_disp,scale=scale)
     plt.savefig('saved_samples/' + problem_name + "/chains" +str(i)+ ".pdf",bbox_inches="tight")

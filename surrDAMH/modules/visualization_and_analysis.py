@@ -49,7 +49,51 @@ class Samples:
             self.posteriors[i] = np.array(df_samples.iloc[:,1+no_parameters])
             if surrogate_posterior:
                 self.surrogate_posteriors[i] = np.array(df_samples.iloc[:,2+no_parameters])
+
+    def find_modus(self):
+        N = len(self.posteriors)
+        current_i = 0
+        current_val = -np.inf
+        current_idx = 0
+        for i in range(N):
+            idx=np.argmax(self.posteriors[i])
+            val = self.posteriors[i][idx]
+            if val>current_val:
+                current_val = val
+                current_i = i
+                current_idx = idx
+        self.modus = self.x_compress[current_i][current_idx]
+        return self.modus, current_val, current_i, current_idx
             
+    def find_max_likelihood(self, folder_samples, no_parameters, observations):
+        folder_samples = folder_samples + '/raw_data'
+        file_samples = [f for f in listdir(folder_samples) if isfile(join(folder_samples, f))]
+        file_samples.sort()
+        N = len(file_samples)
+        x_all = [None] * N
+        G_all = [None] * N
+        G_norm_min = np.inf
+        for i in range(N):
+            path_samples = folder_samples + "/" + file_samples[i]
+            df_samples = pd.read_csv(path_samples, header=None)
+            types = df_samples.iloc[:,0]
+            idx = np.ones(len(types), dtype=bool)
+            idx[types=="prerejected"] = 0
+            x_ = np.array(df_samples.iloc[:,1:1+no_parameters])
+            x_all[i] = x_[idx]
+            G_ = np.array(df_samples.iloc[:,2+no_parameters:])
+            G_all[i] = G_[idx]
+            G_norm = np.sum(np.abs(G_all[i] - observations), axis=1)
+            argmin = np.argmin(G_norm)
+            if G_norm_min>G_norm[argmin]:
+                G_norm_min = G_norm[argmin]
+                x_all_min = x_all[i][argmin,:]
+                G_all_min = G_all[i][argmin,:]
+        print(G_norm_min)
+        print(list(x_all_min))
+        print(list(G_all_min))
+
+    
     def load_notes(self, folder_samples, no_samplers):
         folder = folder_samples + '/notes'
         file_samples = [f for f in listdir(folder) if isfile(join(folder, f))]
@@ -96,7 +140,6 @@ class Samples:
         print(self.std)
         
 ### BASIC VISUALIZATION OF GENERATED CHAINS:
-        
     def plot_segment(self, begin_disp = None, end_disp = None, parameters_disp = None, chains_disp = None, show_legend = False, scale=None):
         if parameters_disp == None:
             parameters_disp = range(self.no_parameters)
@@ -277,6 +320,41 @@ class Samples:
                     if scale[idj] == "log":
                         label += " (log scale)"
                     plt.title(label)
+                idx = idx + 1
+        plt.show()
+        
+    def plot_hist_grid_add(self, burn_in = None, parameters_disp = None, chains_disp = None, scale=None):
+        if parameters_disp == None:
+            parameters_disp = range(self.no_parameters)
+        if chains_disp == None:
+            chains_disp = range(self.no_chains)
+        if scale is None:
+            scale = [None] * len(parameters_disp)
+        n = len(parameters_disp)
+        idx = 1
+        # fig, axes = plt.subplots(n, n, sharex=False, sharey=False) # figsize=(12,12)
+        import scipy.stats
+        for idi,i in enumerate(parameters_disp):
+            for idj,j in enumerate(parameters_disp):
+                plt.subplot(n, n, idx)
+                if idi==idj:
+                    if idi==0:
+                        mu=-35
+                        sigma=3
+                        x = np.linspace(mu - 3*sigma, mu + 3*sigma, 100)
+                        y = scipy.stats.norm.pdf(x, mu, sigma)
+                        plt.plot(np.log10(np.exp(x)),y*np.log(100)/np.log10(100))
+                        plt.show()
+                    if idi==1:
+                        alfa=5
+                        beta=5
+                        x=np.linspace(0,1,100)
+                        y=scipy.stats.beta.pdf(x,alfa,beta)
+                        plt.plot(x,y)
+                elif idi>idj:
+                    plt.plot(np.log10(self.modus[idj]),self.modus[idi],'.')
+                else:
+                    plt.plot(self.modus[1],np.log10(self.modus[0]),'.')
                 idx = idx + 1
         plt.show()
 

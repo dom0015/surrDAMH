@@ -48,7 +48,8 @@ while solver_is_active:
         solver_is_active = False
     else:
         parent_comm.Bcast([received_data, MPI.DOUBLE], root=0)
-        solver_instance.set_parameters(received_data.reshape((solver_instance.no_parameters,)))
+        transformed_data = C.transform(received_data)
+        solver_instance.set_parameters(transformed_data.reshape((solver_instance.no_parameters,)))
         if C.solver_returns_tag:
             [convergence_tag,sent_data] = solver_instance.get_observations()
             if convergence_tag<0:

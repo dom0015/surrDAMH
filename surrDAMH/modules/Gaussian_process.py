@@ -37,9 +37,12 @@ def assemble_covariance_matrix(grid, parameters, cov_type):
 
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
-    N = 100
-    grid = np.linspace(0,365,N).reshape((N,1))
-    parameters = [[30,50],[30,166],[50,166]]
+    # N = 100
+    # grid = np.linspace(0,365,N).reshape((N,1))
+    # parameters = [[30,50],[30,166],[50,166]]
+    N=141
+    grid=np.linspace(0,140,141).reshape((N,1))
+    parameters = [[30,50]]
     cov_type = "default"
     # cov_type = "squared_exponential"
     
@@ -53,7 +56,19 @@ if __name__ == "__main__":
     plt.figure()
     np.random.seed(1)
     n = C.shape[0]
-    for i in range(10):
+    for i in range(4):
         eta = np.random.randn(n).reshape((n,1))
-        plt.plot(np.matmul(L,eta))
+        plt.plot(grid,np.matmul(L,eta))
     plt.show()
+    plt.grid()
+    
+    grid2=([0, 10, 17, 27, 37, 47, 57, 67, 77, 87, 97, 107, 117, 127, 137, 140])
+    plt.figure()
+    np.random.seed(1)
+    n = C.shape[0]
+    for i in range(4):
+        eta = np.random.randn(n).reshape((n,1))
+        y=np.matmul(L,eta)
+        plt.plot(grid2,y[grid2])
+    plt.show()
+    plt.grid()

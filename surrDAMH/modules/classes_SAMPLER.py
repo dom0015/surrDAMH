@@ -222,9 +222,9 @@ class Algorithm_DAMH(Algorithm_PARENT): # initiated by SAMPLERs
                 self.no_rejected_current += 1
                 if self.save_raw_data:
                     if self.save_transformed_data:
-                        row = ['prerejected'] + list(self.transform(self.proposed_sample)) + list(GS_proposed_sample)
+                        row = ['prerejected'] + list(self.transform(self.proposed_sample)) + [0] + list(GS_proposed_sample)
                     else:
-                        row = ['prerejected'] + list(self.proposed_sample) + list(GS_proposed_sample)
+                        row = ['prerejected'] + list(self.proposed_sample) + [0] + list(GS_proposed_sample)
                     self.writer_raw.writerow(row)
             if time.time() - self.time_start > self.time_limit:
                 print("SAMPLER at RANK", MPI.COMM_WORLD.Get_rank(), "time limit reached - loop",i)
