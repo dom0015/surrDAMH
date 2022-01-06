@@ -65,7 +65,7 @@ class Samples:
         self.modus = self.x_compress[current_i][current_idx]
         return self.modus, current_val, current_i, current_idx
             
-    def find_max_likelihood(self, folder_samples, no_parameters, observations):
+    def find_best_fit(self, folder_samples, no_parameters, observations):
         folder_samples = folder_samples + '/raw_data'
         file_samples = [f for f in listdir(folder_samples) if isfile(join(folder_samples, f))]
         file_samples.sort()
@@ -79,20 +79,68 @@ class Samples:
             types = df_samples.iloc[:,0]
             idx = np.ones(len(types), dtype=bool)
             idx[types=="prerejected"] = 0
-            x_ = np.array(df_samples.iloc[:,1:1+no_parameters])
-            x_all[i] = x_[idx]
-            G_ = np.array(df_samples.iloc[:,2+no_parameters:])
-            G_all[i] = G_[idx]
-            G_norm = np.sum(np.abs(G_all[i] - observations), axis=1)
-            argmin = np.argmin(G_norm)
-            if G_norm_min>G_norm[argmin]:
-                G_norm_min = G_norm[argmin]
-                x_all_min = x_all[i][argmin,:]
-                G_all_min = G_all[i][argmin,:]
-        print(G_norm_min)
-        print(list(x_all_min))
-        print(list(G_all_min))
-
+            if sum(idx)==0:
+                print("find_best_fit EMPTY ", i, " of ", N)
+            else:
+                x_ = np.array(df_samples.iloc[:,1:1+no_parameters])
+                x_all[i] = x_[idx]
+                G_ = np.array(df_samples.iloc[:,2+no_parameters:])
+                G_all[i] = G_[idx]
+                diff2 = np.square(G_all[i] - observations)
+                G_norm = np.sqrt(np.sum(diff2, axis=1))
+                argmin = np.argmin(G_norm)
+                if G_norm_min>G_norm[argmin]:
+                    G_norm_min = G_norm[argmin]
+                    x_all_min = x_all[i][argmin,:]
+                    G_all_min = G_all[i][argmin,:]
+        return x_all_min, G_all_min, G_norm_min
+    
+    def find_max_likelihood(self, folder_samples, no_parameters, observations, noise_cov):
+        folder_samples = folder_samples + '/raw_data'
+        file_samples = [f for f in listdir(folder_samples) if isfile(join(folder_samples, f))]
+        file_samples.sort()
+        N = len(file_samples)
+        x_all = [None] * N
+        G_all = [None] * N
+        G_norm_all = [None] * N
+        G_norm_max = -np.inf
+        vmin = np.inf
+        vmax = -np.inf
+        for i in range(N):
+            path_samples = folder_samples + "/" + file_samples[i]
+            df_samples = pd.read_csv(path_samples, header=None)
+            types = df_samples.iloc[:,0]
+            idx = np.ones(len(types), dtype=bool)
+            idx[types=="prerejected"] = 0
+            if sum(idx)==0:
+                print("find_best_fit EMPTY ", i, " of ", N)
+            else:
+                x_ = np.array(df_samples.iloc[:,1:1+no_parameters])
+                x_all[i] = x_[idx]
+                G_ = np.array(df_samples.iloc[:,2+no_parameters:])
+                G_all[i] = G_[idx]
+                diff = np.array(G_all[i] - observations)
+                invCv = np.linalg.solve(noise_cov,np.transpose(diff))
+                G_norm = np.diag(-0.5*np.matmul(diff,invCv))
+                G_norm_all[i] = G_norm
+                vmin = min(vmin,min(G_norm))
+                vmax = max(vmax,max(G_norm))
+                argmax = np.argmax(G_norm)
+                if G_norm_max<G_norm[argmax]:
+                    G_norm_max = G_norm[argmax]
+                    x_all_max = x_all[i][argmax,:]
+                    G_all_max = G_all[i][argmax,:]
+        # fig = plt.figure(figsize=(12, 12))
+        # ax = fig.add_subplot(projection='3d')
+        plt.figure()
+        for i in range(N):
+            plt.scatter(np.log10(x_all[i][:,0]),np.log10(x_all[i][:,1]),s=1,c=G_norm_all[i],vmin=max(vmin,-100),vmax=vmax,cmap="gist_rainbow")
+            #ax.scatter(x_all[i][:,0],x_all[i][:,1],G_norm_all[i])
+        plt.title("log likelihood (log scale)")
+        plt.grid()
+        plt.colorbar(extend="min")
+        plt.show()
+        return x_all_max, G_all_max, G_norm_max
     
     def load_notes(self, folder_samples, no_samplers):
         folder = folder_samples + '/notes'
@@ -127,7 +175,7 @@ class Samples:
         self.mean = list(np.mean(x[i],axis=0) for i in all_chains)
         self.xp = list(x[i] - self.mean[i] for i in all_chains)
 
-    def print_properties(self):
+    def print_properties0(self):
         print('known autocorr. time:', self.known_autocorr_time)
         if self.known_autocorr_time:
             print('true autocorr. time:', self.autocorr_time_true)
@@ -138,6 +186,32 @@ class Samples:
         print(self.mean)
         print('std:')
         print(self.std)
+        
+    def print_properties(self, no_samplers):
+        print('number of chains:', self.no_chains)
+        print('number of parameters:',self.no_parameters)
+        no_phases = int(self.no_chains/no_samplers)
+        for i in range(no_phases):
+            idx = np.arange(no_samplers) + i*no_samplers
+            print("PHASE ", i+1)
+            print(' - length of chains:',self.length[idx])
+            x_phase = np.empty((0,self.no_parameters))
+            for j in idx:
+                x_phase = np.vstack((x_phase,self.x[j]))
+            mean = np.mean(x_phase,axis=0)
+            print(' - mean =',mean, " -- mean(log10) =", np.log10(mean))
+            std = np.std(x_phase,axis=0)
+            x_phase_log10 = np.log10(x_phase)
+            std_log10 = np.std(x_phase_log10,axis=0)
+            print(' - std =',std, " -- std(log10) =", std_log10)
+            corr = np.corrcoef(np.transpose(x_phase))
+            print(' - corr =',corr)
+            corr_log10 = np.corrcoef(np.transpose(x_phase_log10))
+            print(' - corr(log10) =',corr_log10)
+            cov = np.cov(np.transpose(x_phase))
+            print(' - cov =',cov)
+            cov_log10 = np.cov(np.transpose(x_phase_log10))
+            print(' - cov(log10) =',cov_log10)
         
 ### BASIC VISUALIZATION OF GENERATED CHAINS:
     def plot_segment(self, begin_disp = None, end_disp = None, parameters_disp = None, chains_disp = None, show_legend = False, scale=None):
@@ -284,7 +358,7 @@ class Samples:
                 YY = np.concatenate((YY,np.log10(yy)))
             else:
                 YY = np.concatenate((YY,yy))
-        plt.hist2d(XX, YY, bins = bins, cmap = "binary", density = True)
+        plt.hist2d(XX, YY, bins = bins, cmap = "binary")#, density = True)
         plt.grid(True)
         if colorbar:
             plt.colorbar()
@@ -323,7 +397,7 @@ class Samples:
                 idx = idx + 1
         plt.show()
         
-    def plot_hist_grid_add(self, burn_in = None, parameters_disp = None, chains_disp = None, scale=None):
+    def plot_hist_grid_add(self, settings, burn_in = None, parameters_disp = None, chains_disp = None, scale=None):
         if parameters_disp == None:
             parameters_disp = range(self.no_parameters)
         if chains_disp == None:
@@ -338,23 +412,53 @@ class Samples:
             for idj,j in enumerate(parameters_disp):
                 plt.subplot(n, n, idx)
                 if idi==idj:
-                    if idi==0:
-                        mu=-35
-                        sigma=3
-                        x = np.linspace(mu - 3*sigma, mu + 3*sigma, 100)
-                        y = scipy.stats.norm.pdf(x, mu, sigma)
-                        plt.plot(np.log10(np.exp(x)),y*np.log(100)/np.log10(100))
-                        plt.show()
-                    if idi==1:
-                        alfa=5
-                        beta=5
-                        x=np.linspace(0,1,100)
-                        y=scipy.stats.beta.pdf(x,alfa,beta)
-                        plt.plot(x,y)
-                elif idi>idj:
-                    plt.plot(np.log10(self.modus[idj]),self.modus[idi],'.')
+                    if settings[idi] is None:
+                        pass
+                    else:
+                        trans_type = settings[idi][0]
+                        if trans_type=="normal_to_lognormal":
+                            mu = settings[idi][1]["mu"]
+                            sigma = settings[idi][1]["sigma"]
+                            x = np.linspace(mu - 3*sigma, mu + 3*sigma, 100)
+                            y = scipy.stats.norm.pdf(x, mu, sigma)
+                            plt.plot(np.log10(np.exp(x)),y*np.log(100)/np.log10(100))
+                        elif trans_type=="normal_to_uniform":
+                            a = settings[idi][1]["a"]
+                            b = settings[idi][1]["b"]
+                            plt.plot([a,b],[1/(b-a)]*2)
+                        elif trans_type=="normal_to_beta":
+                            alfa = settings[idi][1]["alfa"]
+                            beta = settings[idi][1]["beta"]
+                            x=np.linspace(0,1,100)
+                            y=scipy.stats.beta.pdf(x,alfa,beta)
+                            plt.plot(x,y)
                 else:
-                    plt.plot(self.modus[1],np.log10(self.modus[0]),'.')
+                    if scale[idi]=="log":
+                        x=np.log10(self.modus[idi])
+                    else:
+                        x=self.modus[idi]
+                    if scale[idj]=="log":
+                        y=np.log10(self.modus[idj])
+                    else:
+                        y=self.modus[idj]
+                    plt.plot(y,x,'.r')
+                    # if idi==0:
+                    #     mu=-35
+                    #     sigma=3
+                    #     x = np.linspace(mu - 3*sigma, mu + 3*sigma, 100)
+                    #     y = scipy.stats.norm.pdf(x, mu, sigma)
+                    #     plt.plot(np.log10(np.exp(x)),y*np.log(100)/np.log10(100))
+                    #     plt.show()
+                    # if idi==1:
+                    #     alfa=5
+                    #     beta=5
+                    #     x=np.linspace(0,1,100)
+                    #     y=scipy.stats.beta.pdf(x,alfa,beta)
+                    #     plt.plot(x,y)
+                # elif idi>idj:
+                #     plt.plot(np.log10(self.modus[idj]),self.modus[idi],'.')
+                # else:
+                #     plt.plot(self.modus[1],np.log10(self.modus[0]),'.')
                 idx = idx + 1
         plt.show()
 
