@@ -84,10 +84,11 @@ while any(sampler_is_active): # while at least 1 sampling algorithm is active
         elif C.debug:
                 print("debug - RANK", rank_world, "POOL Iprobe False - S:", sampler_can_send, "- CH:", child_can_solve)
     # if no sampler can send and only one child is busy, wait for this child:
-    if not any(sampler_can_send):
-        if sum(child_can_solve==False)==1:
-            i = np.nonzero(child_can_solve==False)[0][0]
-            receive_observations_from_child(i)
+    # if not any(sampler_can_send):
+    #     print("SAMPLER CAN SEND --", sampler_can_send)
+    #     if sum(child_can_solve==False)==1:
+    #         i = np.nonzero(child_can_solve==False)[0][0]
+    #         receive_observations_from_child(i)
     for i in range(no_solvers):
         if not child_can_solve[i]: # check all busy child solvers if they finished the request
             if Solvers[i].is_solved(): # if so, send solution to the sampling algorithm

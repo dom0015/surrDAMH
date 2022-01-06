@@ -38,6 +38,7 @@ received_data = np.empty(solver_instance.no_parameters,dtype='d')
 #tag = np.empty((1,),dtype=int);
 tag = np.array(0, dtype='i')
 solver_is_active = True
+counter = 0
 while solver_is_active:
     #parent_comm.Barrier()
     parent_comm.Bcast([tag, MPI.INT], root=0)
@@ -49,6 +50,8 @@ while solver_is_active:
     else:
         parent_comm.Bcast([received_data, MPI.DOUBLE], root=0)
         transformed_data = C.transform(received_data)
+        print("RECEIVED: ", received_data)
+        print("TRANS: ", transformed_data)
         solver_instance.set_parameters(transformed_data.reshape((solver_instance.no_parameters,)))
         if C.solver_returns_tag:
             [convergence_tag,sent_data] = solver_instance.get_observations()
@@ -57,9 +60,10 @@ while solver_is_active:
         else:
             sent_data = solver_instance.get_observations()
             convergence_tag = 0
+        counter += 1
         if rank==0:
             if C.pickled_observations:
                 parent_comm.send([convergence_tag,sent_data], dest=0, tag=tag)
             else:
                 parent_comm.Send(sent_data, dest=0, tag=convergence_tag)
-            
+print("CHILD: ", counter)
