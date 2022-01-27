@@ -113,11 +113,13 @@ Path and constructor arguments of the spawed solver (wrapper) class are specifie
 `    ],`<br>
 `    "surrogate_type": "rbf", ` *"poly" or "rbf" (polynomial or radial basis functions based surrogate model)*<br>
 `    "surr_solver_parameters": { ` *optional - arguments of class Surrogate_apply that evaluates surrogate model*<br>
-`        "kernel_type": 1`<br>
+`        "kernel_type": "polyharmonic",`<br>
+`        "beta": 3`<br>
 `    },`<br>
 `    "surr_updater_parameters": { ` *optional - arguments of class Surrogate_update that updates surrogate model*<br>
-`        "kernel_type": 1,`<br>
-`        "no_keep": 500,`<br>
+`        "kernel_type": "polyharmonic",`<br>
+`        "beta": 3,`<br>
+`        "max_centers": 500,`<br>
 `        "expensive": false`<br>
 `    }`<br>
 `}`<br>
