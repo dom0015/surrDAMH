@@ -11,10 +11,11 @@ import numpy.matlib
 import scipy.sparse.linalg as splin
 
 class Surrogate_apply: # initiated by all SAMPLERs
-    def __init__(self, no_parameters, no_observations, kernel_type=0):
+    def __init__(self, no_parameters, no_observations, kernel_type="polyharmonic", beta=3):
         self.no_parameters = no_parameters
         self.no_observations = no_observations
         self.kernel_type = kernel_type
+        self.beta = beta
         self.alldata_par = None
 
     def apply(self, SOL, datapoints):
@@ -32,7 +33,7 @@ class Surrogate_apply: # initiated by all SAMPLERs
             T = np.transpose(M_new)
             TEMP = TEMP + np.power(M-T,2)
         np.sqrt(TEMP,out=TEMP)
-        kernel(TEMP,self.kernel_type)
+        kernel(TEMP,self.kernel_type,self.beta)
         no_polynomials = 1 + self.no_parameters # plus linear polynomials
         GS_datapoints=np.matmul(TEMP,COEFS[:-no_polynomials])
         pp = COEFS[-1] + np.matmul(datapoints,COEFS[-self.no_parameters-1:-1])
@@ -40,13 +41,14 @@ class Surrogate_apply: # initiated by all SAMPLERs
         return GS_datapoints
 
 class Surrogate_update: # initiated by COLLECTOR
-    def __init__(self, no_parameters, no_observations, initial_iteration=None, no_keep=None, expensive=False, kernel_type=0, solver_tol_exp=-6, solver_type='minres'):
+    def __init__(self, no_parameters, no_observations, initial_iteration=None, max_centers=None, expensive=False, kernel_type="polyharmonic", beta=3, solver_tol_exp=-6, solver_type='minres'):
         self.no_parameters = no_parameters
         self.no_observations = no_observations
         self.initial_iteration = initial_iteration           
-        self.no_keep = no_keep
+        self.max_centers = max_centers
         self.expensive = expensive
         self.kernel_type = kernel_type
+        self.beta = beta
         self.solver_tol_exp = solver_tol_exp
         self.solver_type = solver_type
         # all processed data (used for surrogate construction):
@@ -94,11 +96,11 @@ class Surrogate_update: # initiated by COLLECTOR
             T = np.transpose(Q)
             TEMP = TEMP + np.power(Q-T,2)
         np.sqrt(TEMP,out=TEMP) # distances between all points
-        if self.no_keep is not None:
+        if self.max_centers is not None:
             MAX = 2*np.max(TEMP)
             M = TEMP+MAX*np.eye(no_snapshots) # add MAX to zero distances on diagonal
             to_keep = np.ones(no_snapshots,dtype=bool) # bool - centers to keep
-            for i in range(no_snapshots - self.no_keep): # (no_snapshots - no_keep) have to be removed 
+            for i in range(no_snapshots - self.max_centers): # (no_snapshots - max_centers) have to be removed 
                 argmin = np.argmin(M)
                 xx = argmin // no_snapshots
                 if self.expensive == True:
@@ -118,7 +120,7 @@ class Surrogate_update: # initiated by COLLECTOR
             self.processed_wei = self.processed_wei[to_keep,:]
             self.no_processed = self.processed_par.shape[0]
             no_snapshots = self.no_processed
-        kernel(TEMP,self.kernel_type)
+        kernel(TEMP,self.kernel_type,self.beta)
         P = np.ones((no_snapshots,1)) # only constant polynomials
         P = np.append(self.processed_par,P,axis=1) # plus linear polynomials
         no_polynomials = P.shape[1]
@@ -143,31 +145,30 @@ def analyze(SOL, TEMP2, RHS):
     norm_RHS = np.linalg.norm(RHS)
     return cond_num, norm_RES, norm_RHS
 
-def kernel(arr,kernel_type):
+def kernel(arr,kernel_type,beta):
 #    arr=arr
-    if kernel_type==0:
+    if kernel_type=="polyharmonic":
+        if beta%2 == 1:
+            np.power(arr,beta,out=arr)
+        else:
+            tmp = np.log(arr)
+            np.power(arr,beta,out=arr)
+            arr = arr*tmp
         return
-    if kernel_type==1:
-        np.power(arr,3,out=arr)
+    if kernel_type=="multiquadric":
+        np.power(arr,2,out=arr)
+        arr = np.sqrt(arr+beta**2)
         return
-    if kernel_type==2: # best for 2 parameters
-        np.power(arr,5,out=arr)
+    if kernel_type=="inverse multiquadric":
+        np.power(arr,2,out=arr)
+        arr = np.sqrt(arr+beta**2)
+        arr = 1/arr
         return
-    if kernel_type==3:
-        np.power(arr,7,out=arr)
+    if kernel_type=="Gaussian":
+        np.power(arr,beta,out=arr)
+        arr = np.exp(-beta*arr)
         return
-    if kernel_type==4:
-        temp = -np.power(arr,2)
-        np.exp(temp,out=arr)
-        return
-    if kernel_type==5:
-        temp = np.power(arr,2)+1
-        np.power(temp,-0.5,out=arr)
-        return
-    if kernel_type==6:
-        arr=np.power(arr,5)
-        arr=-arr
-        return
-    if kernel_type==7:
-        np.power(arr,9,out=arr)
+    else:
+        print("polyharmonic RBF with beta=1")
+        np.power(arr,1,out=arr)
         return

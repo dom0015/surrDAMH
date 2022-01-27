@@ -51,11 +51,13 @@
     ],
     "surrogate_type": "rbf",
     "surr_solver_parameters": {
-        "kernel_type": 1
+        "kernel_type": "polyharmonic",
+        "beta": 3
     },
     "surr_updater_parameters": {
-        "kernel_type": 1,
-        "no_keep": 500,
+        "kernel_type": "polyharmonic",
+        "beta": 3,
+        "max_centers": 500,
         "expensive": false
     }
 }
