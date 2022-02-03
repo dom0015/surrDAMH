@@ -13,13 +13,14 @@ import csv
 import time
 
 class Algorithm_PARENT:
-    def __init__(self, Problem, Proposal, Solver, max_samples, name, seed=0, initial_sample=None, G_initial_sample=None, Surrogate=None, is_saved=True, save_raw_data=False, transform_before_saving=None, surrogate_is_updated=True, time_limit=float('inf')):
+    def __init__(self, Problem, Proposal, Solver, max_samples, name, seed=0, initial_sample=None, G_initial_sample=None, Surrogate=None, is_saved=True, save_raw_data=False, transform_before_saving=None, surrogate_is_updated=True, time_limit=float('inf'), output_dir=""):
         self.Problem = Problem
         self.Proposal = Proposal
         self.Solver = Solver
         self.max_samples = max_samples
         self.name = name
         self.seed = seed
+        self.output_dir = output_dir
         self.current_sample = initial_sample
         if self.current_sample is None:
             self.current_sample = self.Problem.prior_mean.copy()
@@ -58,7 +59,7 @@ class Algorithm_PARENT:
         self.time_start = time.time()
         if self.is_saved:
             # saves [no. sample posterior pre_posterior]:
-            filename_G = "saved_samples/" + self.Problem.name + "/data/" + self.name + ".csv"
+            filename_G = self.output_dir + "saved_samples/" + self.Problem.name + "/data/" + self.name + ".csv"
             os.makedirs(os.path.dirname(filename_G), exist_ok=True)
             self.__file_G = open(filename_G, 'w')
             self.__writer_G = csv.writer(self.__file_G)
@@ -66,7 +67,7 @@ class Algorithm_PARENT:
         else:
             self.__write_to_file = self._empty_function
         if self.save_raw_data:
-            filename = "saved_samples/" + self.Problem.name + "/raw_data/" + self.name + ".csv"
+            filename = self.output_dir + "saved_samples/" + self.Problem.name + "/raw_data/" + self.name + ".csv"
             os.makedirs(os.path.dirname(filename), exist_ok=True)
             self.__file_raw = open(filename, 'w')
             self.writer_raw = csv.writer(self.__file_raw)
@@ -114,7 +115,7 @@ class Algorithm_PARENT:
         self.__write_to_file()
         if self.is_saved:
             self.__file_G.close()
-            filename_notes = "saved_samples/" + self.Problem.name + "/notes/" + self.name + ".csv"
+            filename_notes = self.output_dir + "saved_samples/" + self.Problem.name + "/notes/" + self.name + ".csv"
             os.makedirs(os.path.dirname(filename_notes), exist_ok=True)
             labels = ["accepted", "rejected", "pre-rejected", "sum", "seed"]
             no_all = self.no_accepted + self.no_rejected + self.no_prerejected
@@ -152,8 +153,8 @@ class Algorithm_PARENT:
         return
     
 class Algorithm_MH(Algorithm_PARENT): # initiated by SAMPLERs
-    def __init__(self, Problem, Proposal, Solver, max_samples, name, seed=0, initial_sample=None, G_initial_sample=None, Surrogate=None, is_saved=True, save_raw_data=False, transform_before_saving=None, surrogate_is_updated=True, time_limit=float('inf')):
-        super().__init__(Problem, Proposal, Solver, max_samples, name, seed, initial_sample, G_initial_sample, Surrogate, is_saved, save_raw_data, transform_before_saving, surrogate_is_updated, time_limit)
+    def __init__(self, Problem, Proposal, Solver, max_samples, name, seed=0, initial_sample=None, G_initial_sample=None, Surrogate=None, is_saved=True, save_raw_data=False, transform_before_saving=None, surrogate_is_updated=True, time_limit=float('inf'), output_dir=""):
+        super().__init__(Problem, Proposal, Solver, max_samples, name, seed, initial_sample, G_initial_sample, Surrogate, is_saved, save_raw_data, transform_before_saving, surrogate_is_updated, time_limit, output_dir)
 
     def run(self):
         self.prepare()
@@ -170,19 +171,19 @@ class Algorithm_MH(Algorithm_PARENT): # initiated by SAMPLERs
         self.close_files()
         
 class Algorithm_DAMH(Algorithm_PARENT): # initiated by SAMPLERs
-    def __init__(self, Problem, Proposal, Solver, max_samples, name, seed=0, initial_sample=None, G_initial_sample=None, Surrogate=None, is_saved=True, save_raw_data=False, transform_before_saving=None, surrogate_is_updated=True, time_limit=float('inf')):
-        super().__init__(Problem, Proposal, Solver, max_samples, name, seed, initial_sample, G_initial_sample, Surrogate, is_saved, save_raw_data, transform_before_saving, surrogate_is_updated, time_limit)
+    def __init__(self, Problem, Proposal, Solver, max_samples, name, seed=0, initial_sample=None, G_initial_sample=None, Surrogate=None, is_saved=True, save_raw_data=False, transform_before_saving=None, surrogate_is_updated=True, time_limit=float('inf'), output_dir=""):
+        super().__init__(Problem, Proposal, Solver, max_samples, name, seed, initial_sample, G_initial_sample, Surrogate, is_saved, save_raw_data, transform_before_saving, surrogate_is_updated, time_limit, output_dir)
 
     def run(self):
         self.prepare()
         if self.is_saved:
             # posterior (vs approximated posterior) in rejected samples:
-            filename = "saved_samples/" + self.Problem.name + "/DAMH_rejected/" + self.name + ".csv"
+            filename = self.output_dir + "saved_samples/" + self.Problem.name + "/DAMH_rejected/" + self.name + ".csv"
             os.makedirs(os.path.dirname(filename), exist_ok=True)
             self.__file_rejected = open(filename, 'w')
             self.__writer_rejected = csv.writer(self.__file_rejected)
             # posterior (vs approximated posterior) in accepted samples:
-            filename = "saved_samples/" + self.Problem.name + "/DAMH_accepted/" + self.name + ".csv"
+            filename = self.output_dir + "saved_samples/" + self.Problem.name + "/DAMH_accepted/" + self.name + ".csv"
             os.makedirs(os.path.dirname(filename), exist_ok=True)
             self.__file_accepted = open(filename, 'w')
             self.__writer_accepted = csv.writer(self.__file_accepted)

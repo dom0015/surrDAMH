@@ -7,6 +7,7 @@ Created on Wed Oct 23 15:35:47 2019
 """
 
 from mpi4py import MPI
+import sys
 from modules import classes_SAMPLER as cS
 from modules import classes_communication
 from modules import lhs_normal as LHS
@@ -17,6 +18,7 @@ rank_world = comm_world.Get_rank()
 size_world = comm_world.Get_size()
 
 no_samplers, problem_path = comm_world.recv(source=MPI.ANY_SOURCE)
+output_dir = sys.argv[1]
 # data = None
 # data = comm_world.bcast(data,root=MPI.ANY_SOURCE)
 # no_samplers, problem_name = data
@@ -65,7 +67,7 @@ for i,d in enumerate(C.list_alg):
                          save_raw_data=C.save_raw_data,
                          transform_before_saving=C.transform_before_saving,
                          name='alg' + str(i) + 'MH_rank' + str(rank_world),
-                         seed=seed)
+                         seed=seed, output_dir=output_dir)
     else:
         my_Alg = cS.Algorithm_DAMH(my_Prob, my_Prop, my_Sol,
                         Surrogate = my_Surr,
@@ -76,7 +78,7 @@ for i,d in enumerate(C.list_alg):
                         save_raw_data=C.save_raw_data,
                         transform_before_saving=C.transform_before_saving,
                         name='alg' + str(i) + 'DAMH_rank' + str(rank_world),
-                        seed=seed)
+                        seed=seed, output_dir=output_dir)
     print('--- SAMPLER ' + my_Alg.name + ' starts ---')
     my_Alg.run()
     initial_sample = my_Alg.current_sample

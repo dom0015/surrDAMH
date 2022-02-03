@@ -95,7 +95,63 @@ class Samples:
                     G_all_min = G_all[i][argmin,:]
         return x_all_min, G_all_min, G_norm_min
     
-    def find_max_likelihood(self, folder_samples, no_parameters, observations, noise_cov):
+    def hist_G(self, folder_samples, no_parameters, grid, observations, chosen_observations, chains_disp = None):
+        if chains_disp == None:
+            chains_disp = range(self.no_chains)
+        folder_samples = folder_samples + '/raw_data'
+        file_samples = [f for f in listdir(folder_samples) if isfile(join(folder_samples, f))]
+        file_samples.sort()
+        N = len(chains_disp)
+        MAX = 366
+        grid_interp = np.arange(MAX)
+        x_all = np.empty((0,MAX))
+        weights_all = np.empty((0,MAX))
+        G_all = np.empty((0,MAX))
+        for i in chains_disp:
+            path_samples = folder_samples + "/" + file_samples[i]
+            df_samples = pd.read_csv(path_samples, header=None)
+            types = df_samples.iloc[:,0]
+            idx = np.ones(len(types), dtype=bool)
+            idx[types=="prerejected"] = 0
+            idx[types=="rejected"] = 0
+            temp = np.arange(len(types))
+            weights = temp[idx]
+            no_accepted = len(weights)
+            weights[1:] = weights[1:] - weights[:-1]
+            if sum(idx)==0:
+                print("hist_G EMPTY ", i, " of ", N)
+            else:
+                G_ = np.array(df_samples.iloc[:,2+no_parameters+chosen_observations])
+                G_ = G_[idx]
+                G_interp = np.zeros((no_accepted,MAX))
+                for i in range(no_accepted):
+                    G_interp[i,:] = np.interp(grid_interp,grid,G_[i,:])
+                G_all = np.vstack((G_all,G_interp))
+                weights = weights.reshape((-1,1))
+                weights = np.repeat(weights,MAX,1)
+                x = np.arange(MAX).reshape((1,-1))
+                x = np.repeat(x,no_accepted,0)
+                x_all = np.vstack((x_all,x))
+                weights_all = np.vstack((weights_all,weights))
+        plt.figure()
+        range_ = [[0, 366], [-100, 800]]
+        output = plt.hist2d(x_all.flatten(),G_all.flatten(),bins=[MAX,200],range=range_,weights=weights_all.flatten())
+        img = np.flipud(output[0].transpose())
+        # print(sum(img))
+        # img_sum = sum(img)
+        # print(img_sum)
+        # img = img/img_sum
+        # print(sum(img))
+        xx = output[1]
+        yy = output[2]
+        plt.figure()
+        plt.imshow(img,extent=[xx[0],xx[-1],yy[0],yy[-1]], cmap="gist_heat_r")
+        plt.grid()
+        plt.xlabel("time [d]")
+        plt.ylabel("pressure [m]")
+        plt.plot(grid,observations[chosen_observations])
+    
+    def find_max_likelihood(self, folder_samples, no_parameters, observations, noise_cov, scale, disp_parameters):
         folder_samples = folder_samples + '/raw_data'
         file_samples = [f for f in listdir(folder_samples) if isfile(join(folder_samples, f))]
         file_samples.sort()
@@ -132,11 +188,24 @@ class Samples:
                     G_all_max = G_all[i][argmax,:]
         # fig = plt.figure(figsize=(12, 12))
         # ax = fig.add_subplot(projection='3d')
+        if disp_parameters is None:
+            disp_parameters=[0,1]
+        idx=disp_parameters[0]
+        idy=disp_parameters[1]
         plt.figure()
         for i in range(N):
-            plt.scatter(np.log10(x_all[i][:,0]),np.log10(x_all[i][:,1]),s=1,c=G_norm_all[i],vmin=max(vmin,-100),vmax=vmax,cmap="gist_rainbow")
+            if scale is not None:
+                if scale[idx]=="log":
+                    xx=np.log10(x_all[i][:,idx])
+                else:
+                    xx=x_all[i][:,idx]
+                if scale[idy]=="log":
+                    yy=np.log10(x_all[i][:,idy])
+                else:
+                    yy=x_all[i][:,idy]
+            plt.scatter(xx,yy,s=1,c=G_norm_all[i],vmin=max(vmin,-100),vmax=vmax,cmap="gist_rainbow")
             #ax.scatter(x_all[i][:,0],x_all[i][:,1],G_norm_all[i])
-        plt.title("log likelihood (log scale)")
+        plt.title("log likelihood")
         plt.grid()
         plt.colorbar(extend="min")
         plt.show()
@@ -241,7 +310,7 @@ class Samples:
             if scale is not None:
                 axes[idj].set_yscale(scale[idj])
         axes[0].set_ylabel("samples")
-        plt.show()
+        #plt.show()
         
     def plot_average(self, burn_in = None, begin_disp = None, end_disp = None, parameters_disp = None, chains_disp = None, show_legend = False, scale=None):
         if parameters_disp == None:
@@ -270,7 +339,7 @@ class Samples:
             if scale is not None:
                 axes[idj].set_yscale(scale[idj])
         axes[0].set_ylabel("convergence of averages")
-        plt.show()
+        #plt.show()
         
     def plot_average_reverse(self, burn_in = None, begin_disp = None, end_disp = None, parameters_disp = None, chains_disp = None, show_legend = False, scale=None):
         if parameters_disp == None:
@@ -299,7 +368,33 @@ class Samples:
             if scale is not None:
                 axes[idj].set_yscale(scale[idj])
         axes[0].set_ylabel("convergence of averages")
-        plt.show()
+        #plt.show()
+        
+    def plot_dots(self, begin_disp = None, end_disp = None, parameters_disp = None, chains_disp = None, scale=None):
+        if parameters_disp == None:
+            parameters_disp = [0, 1]
+        if chains_disp == None:
+            chains_disp = range(self.no_chains)
+        if begin_disp == None:
+            begin_disp = [0] * len(parameters_disp)
+        if end_disp == None:
+            end_disp = [max([self.length[i] for i in chains_disp])] * len(parameters_disp)
+        plt.figure(figsize=(5.5,5.5))
+
+        begin_disp = min(max(self.length),min(begin_disp))
+        end_disp = min(max(self.length),min(end_disp))
+        for idi,i in enumerate(chains_disp):
+            indices = np.arange(begin_disp,min(end_disp,self.length[i]))
+            xx = self.x[i][indices,parameters_disp[0]]
+            yy = self.x[i][indices,parameters_disp[1]]
+            plt.scatter(xx, yy, s=1, c='blue')
+        plt.xlabel("$par. {0}$".format(parameters_disp[0]))
+        plt.ylabel("$par. {0}$".format(parameters_disp[1]))
+        if scale is not None:
+            plt.xscale(scale[parameters_disp[0]])
+            plt.yscale(scale[parameters_disp[1]])
+        plt.grid(which="both")
+        #plt.show()
     
 ### HISTOGRAMS:
         
@@ -321,7 +416,7 @@ class Samples:
             if self.known_autocorr_time:
                 axes[idj].set_title("$\\tau_\mathrm{{true}} = {0:.0f}$".format(self.autocorr_time_true[j]));
         axes[0].set_ylabel("samples")
-        plt.show()
+        #plt.show()
 
     def plot_hist_1d(self, burn_in = None, dimension = 0, chains_disp = None, bins = 20, show = True, log = False):
         if chains_disp == None:
@@ -376,7 +471,7 @@ class Samples:
             scale = [None] * len(parameters_disp)
         n = len(parameters_disp)
         idx = 1
-        fig, axes = plt.subplots(n, n, sharex=False, sharey=False) # figsize=(12,12)
+        fig, axes = plt.subplots(n, n, sharex=False, sharey=False, figsize=(12,12))
         for idi,i in enumerate(parameters_disp):
             for idj,j in enumerate(parameters_disp):
                 plt.subplot(n, n, idx)
@@ -388,6 +483,9 @@ class Samples:
                     self.plot_hist_1d(dimension = i, burn_in = burn_in, chains_disp=chains_disp, bins=bins1d, show = False, log=log)
                 else:
                     log = [scale[j]=="log", scale[i]=="log"]
+                    # if idi<2 and idj<2:
+                    #     self.plot_hist_2d(dimensions = [j,i],  burn_in = burn_in, chains_disp=chains_disp, bins=30, show = False, log=log)
+                    # else:
                     self.plot_hist_2d(dimensions = [j,i],  burn_in = burn_in, chains_disp=chains_disp, bins=bins2d, show = False, log=log)
                 if idx<=n:
                     label = "$par. {0}$".format(j)
@@ -395,7 +493,7 @@ class Samples:
                         label += " (log scale)"
                     plt.title(label)
                 idx = idx + 1
-        plt.show()
+        #plt.show()
         
     def plot_hist_grid_add(self, settings, burn_in = None, parameters_disp = None, chains_disp = None, scale=None):
         if parameters_disp == None:
@@ -460,7 +558,7 @@ class Samples:
                 # else:
                 #     plt.plot(self.modus[1],np.log10(self.modus[0]),'.')
                 idx = idx + 1
-        plt.show()
+        #plt.show()
 
 ### DAMH ANALYSIS:
     

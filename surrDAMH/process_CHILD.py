@@ -34,7 +34,7 @@ solver_instance = C.child_solver_init(**constructor_parameters)
 # methods "set_parameters" and "get_observations" are called by all ranks
 # observation are sent to parent by rank 0
 #received_data = np.empty((solver_instance.no_parameters,),dtype='float64')
-received_data = np.empty(solver_instance.no_parameters,dtype='d')
+received_data = np.empty(C.no_parameters,dtype='d')
 #tag = np.empty((1,),dtype=int);
 tag = np.array(0, dtype='i')
 solver_is_active = True
@@ -52,7 +52,7 @@ while solver_is_active:
         transformed_data = C.transform(received_data)
         print("RECEIVED: ", received_data)
         print("TRANS: ", transformed_data)
-        solver_instance.set_parameters(transformed_data.reshape((solver_instance.no_parameters,)))
+        solver_instance.set_parameters(transformed_data.reshape((C.no_parameters,)))
         if C.solver_returns_tag:
             [convergence_tag,sent_data] = solver_instance.get_observations()
             if convergence_tag<0:
