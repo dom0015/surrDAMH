@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from os import listdir
 from os.path import isfile, join, getsize
-import surrDAMH.modules.grf_eigenfunctions as grf_eigenfunctions
+import surrDAMH.surrDAMH.modules.grf_eigenfunctions as grf_eigenfunctions
 
 class Samples:
     def __init__(self, samples = None):

@@ -10,7 +10,7 @@ import os
 import sys
 import json
 sys.path.append(os.getcwd())
-from surrDAMH.modules import visualization_and_analysis as va
+from surrDAMH.surrDAMH.modules import visualization_and_analysis as va
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -18,8 +18,8 @@ no_samplers = int(sys.argv[1]) # number of MH/DAMH chains
 conf_path = sys.argv[2]
 basename = os.path.basename(conf_path)
 problem_name, fext = os.path.splitext(basename)
-output_dir = sys.argv[3]
-visualization_dir = output_dir + 'saved_samples/' + problem_name + '/img_Bayes'
+output_dir = os.path.join(sys.argv[3], 'saved_samples', problem_name)
+visualization_dir = os.path.join(output_dir, 'img_Bayes')
 
 with open(conf_path) as f:
     conf = json.load(f)
@@ -36,26 +36,29 @@ if "transformations" in conf.keys():
     for i in range(no_parameters):
         if transformations[i][0] == "normal_to_lognormal":
             scale[i] = "log"
-S.load_notes(output_dir + 'saved_samples/' + problem_name,no_samplers)
-S.load_MH(output_dir + 'saved_samples/' + problem_name,no_parameters)
+S.load_notes(output_dir,no_samplers)
+S.load_MH(output_dir,no_parameters)
 S.calculate_properties()
-S.load_MH_with_posterior(output_dir + 'saved_samples/' + problem_name,no_parameters)
+S.load_MH_with_posterior(output_dir,no_parameters)
 print("-----")
-print("Generates " + output_dir + "saved_samples/" + problem_name + "/output.txt.")
-sys.stdout = open(output_dir + "saved_samples/" + problem_name + "/output.txt", "w")
+output_file = os.path.join(output_dir, "output.txt")
+print("Generates " + output_file + ".")
+sys.stdout = open(output_file, "w")
 print("PHASE 1 (MH):")
 print(S.notes[0])
-print("PHASE 2 (DAMH-SMU):")
-print(S.notes[1])
-print("PHASE 3 (DAMH):")
-print(S.notes[2])
+if len(S.notes)>1:
+    print("PHASE 2 (DAMH-SMU):")
+    print(S.notes[1])
+if len(S.notes)>2:
+    print("PHASE 3 (DAMH):")
+    print(S.notes[2])
 print("-----")
 S.print_properties(no_samplers)
 print("-----")
 mode = S.find_modus()
 print("MODE: ", list(mode[0]))
 print("-----")
-# fit = S.find_best_fit(output_dir + 'saved_samples/' + problem_name,no_parameters,conf["problem_parameters"]["observations"])
+# fit = S.find_best_fit(output_dir,no_parameters,conf["problem_parameters"]["observations"])
 # print("BEST FIT (L2)")
 # print(" - PARAMETERS:", list(fit[0]))
 # print(" - PARAMETERS (log10):", list(np.log10(fit[0])))
@@ -65,13 +68,13 @@ n=int(conf["no_observations"]/4)
 grid=np.array(conf["noise_grid"])
 grid_max = max(grid)+35
 
-from surrDAMH.modules import Gaussian_process
+from surrDAMH.surrDAMH.modules import Gaussian_process
 cov_type = None
 if "noise_cov_type" in conf.keys():
     cov_type = conf["noise_cov_type"]
 noise_cov = Gaussian_process.assemble_covariance_matrix(grid, conf["noise_parameters"], cov_type)
-# fit_likelihood = S.find_max_likelihood(output_dir + 'saved_samples/' + problem_name,no_parameters,conf["problem_parameters"]["observations"],noise_cov=noise_cov,scale=scale,disp_parameters=[0,1])
-# plt.savefig(output_dir + 'saved_samples/' + problem_name + "/img_Bayes/log_likelihood.pdf",bbox_inches="tight")
+# fit_likelihood = S.find_max_likelihood(output_dir,no_parameters,conf["problem_parameters"]["observations"],noise_cov=noise_cov,scale=scale,disp_parameters=[0,1])
+# plt.savefig(output_dir + "/img_Bayes/log_likelihood.pdf",bbox_inches="tight")
 # print("-----")
 # print("BEST FIT (likelihood)")
 # print(" - PARAMETERS:", list(fit_likelihood[0]))
@@ -160,6 +163,6 @@ sys.stdout.close()
 # titles = ["HGT1-5", "HGT1-4", "HGT2-4", "HGT2-3"]
 # for i in range(4):
 #     offset = i*len(grid)
-#     S.hist_G(output_dir + 'saved_samples/' + problem_name,no_parameters, grid, observations, offset+np.arange(len(grid)), range(30,90))
+#     S.hist_G(output_dir,no_parameters, grid, observations, offset+np.arange(len(grid)), range(30,90))
 #     plt.title(titles[i])
 #     plt.savefig(visualization_dir + "/hist_G" + str(i+1) + ".pdf",bbox_inches="tight")
