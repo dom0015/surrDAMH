@@ -59,7 +59,7 @@ class Algorithm_PARENT:
         self.time_start = time.time()
         if self.is_saved:
             # saves [no. sample posterior pre_posterior]:
-            filename_G = self.output_dir + "saved_samples/" + self.Problem.name + "/data/" + self.name + ".csv"
+            filename_G = os.path.join(self.output_dir, "saved_samples", self.Problem.name, "data", self.name + ".csv")
             os.makedirs(os.path.dirname(filename_G), exist_ok=True)
             self.__file_G = open(filename_G, 'w')
             self.__writer_G = csv.writer(self.__file_G)
@@ -67,7 +67,7 @@ class Algorithm_PARENT:
         else:
             self.__write_to_file = self._empty_function
         if self.save_raw_data:
-            filename = self.output_dir + "saved_samples/" + self.Problem.name + "/raw_data/" + self.name + ".csv"
+            filename = os.path.join(self.output_dir, "saved_samples", self.Problem.name, "raw_data", self.name + ".csv")
             os.makedirs(os.path.dirname(filename), exist_ok=True)
             self.__file_raw = open(filename, 'w')
             self.writer_raw = csv.writer(self.__file_raw)
@@ -115,7 +115,7 @@ class Algorithm_PARENT:
         self.__write_to_file()
         if self.is_saved:
             self.__file_G.close()
-            filename_notes = self.output_dir + "saved_samples/" + self.Problem.name + "/notes/" + self.name + ".csv"
+            filename_notes = os.path.join(self.output_dir, "saved_samples", self.Problem.name, "notes", self.name + ".csv")
             os.makedirs(os.path.dirname(filename_notes), exist_ok=True)
             labels = ["accepted", "rejected", "pre-rejected", "sum", "seed"]
             no_all = self.no_accepted + self.no_rejected + self.no_prerejected
@@ -178,12 +178,12 @@ class Algorithm_DAMH(Algorithm_PARENT): # initiated by SAMPLERs
         self.prepare()
         if self.is_saved:
             # posterior (vs approximated posterior) in rejected samples:
-            filename = self.output_dir + "saved_samples/" + self.Problem.name + "/DAMH_rejected/" + self.name + ".csv"
+            filename = os.path.join(self.output_dir, "saved_samples", self.Problem.name, "DAMH_rejected", self.name + ".csv")
             os.makedirs(os.path.dirname(filename), exist_ok=True)
             self.__file_rejected = open(filename, 'w')
             self.__writer_rejected = csv.writer(self.__file_rejected)
             # posterior (vs approximated posterior) in accepted samples:
-            filename = self.output_dir + "saved_samples/" + self.Problem.name + "/DAMH_accepted/" + self.name + ".csv"
+            filename = os.path.join(self.output_dir, "saved_samples", self.Problem.name, "DAMH_accepted", self.name + ".csv")
             os.makedirs(os.path.dirname(filename), exist_ok=True)
             self.__file_accepted = open(filename, 'w')
             self.__writer_accepted = csv.writer(self.__file_accepted)
