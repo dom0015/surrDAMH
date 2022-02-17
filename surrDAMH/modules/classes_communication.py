@@ -12,14 +12,16 @@ import sys
 import os
 
 class Solver_MPI_parent: # initiated by SOLVERS POOL
-    def __init__(self, no_parameters, no_observations, no_samplers, problem_path, maxprocs=1, solver_id=0, pickled_observations=True):
+    def __init__(self, no_parameters, no_observations, no_samplers, problem_path, output_dir, maxprocs=1, solver_id=0, pickled_observations=True):
         self.no_parameters = no_parameters
         self.no_observations = no_observations
         self.max_requests = 1
         # path hack: find absolute path to process_CHILD.py
         # this makes surrDAMH lib independent of the initial calling path
         rep_dir = os.path.dirname(os.path.abspath(__file__))
-        self.comm = MPI.COMM_SELF.Spawn(sys.executable, args=[rep_dir+'/../process_CHILD.py',str(no_samplers),problem_path,str(solver_id)], maxprocs=maxprocs)
+        self.comm = MPI.COMM_SELF.Spawn(sys.executable, args=[rep_dir+'/../process_CHILD.py', str(no_samplers),
+                                                              problem_path, str(solver_id), output_dir],
+                                        maxprocs=maxprocs)
         self.tag = 0
         self.received_data = np.zeros(self.no_observations)
         self.status = MPI.Status()

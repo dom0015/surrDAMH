@@ -17,13 +17,15 @@ rank_world = comm_world.Get_rank()
 size_world = comm_world.Get_size()
 
 no_samplers = rank_world
-problem_path = None
-if len(sys.argv)>1:
-    problem_path = sys.argv[1]
+
+assert(len(sys.argv) == 3)
+problem_path = sys.argv[1]
+output_dir = sys.argv[2]
+
 for i in range(size_world):
     if i != rank_world:
         comm_world.send([no_samplers,problem_path],dest=i)
-C = Configuration(no_samplers,problem_path)
+C = Configuration(no_samplers, problem_path)
 
 solver_init = C.solver_parent_init
 solver_parameters = C.solver_parent_parameters
@@ -35,7 +37,7 @@ no_solvers = C.no_full_solvers
 
 Solvers = []
 for i in range(no_solvers):
-    Solvers.append(solver_init(**solver_parameters[i]))
+    Solvers.append(solver_init(**solver_parameters[i], output_dir=output_dir))
 samplers_rank = np.arange(no_samplers)
 sampler_is_active = np.array([True] * no_samplers)
 sampler_can_send = np.array([True] * no_samplers)
