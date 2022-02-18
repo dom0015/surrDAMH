@@ -98,7 +98,7 @@ class Samples:
     def hist_G(self, folder_samples, no_parameters, grid, observations, chosen_observations, chains_disp = None):
         if chains_disp == None:
             chains_disp = range(self.no_chains)
-        folder_samples = folder_samples + '/raw_data'
+        #folder_samples = folder_samples + '/raw_data'
         file_samples = [f for f in listdir(folder_samples) if isfile(join(folder_samples, f))]
         file_samples.sort()
         N = len(chains_disp)
@@ -107,6 +107,7 @@ class Samples:
         x_all = np.empty((0,MAX))
         weights_all = np.empty((0,MAX))
         G_all = np.empty((0,MAX))
+        param_all = np.empty((0,no_parameters))
         for i in chains_disp:
             path_samples = folder_samples + "/" + file_samples[i]
             df_samples = pd.read_csv(path_samples, header=None)
@@ -127,6 +128,9 @@ class Samples:
                 for i in range(no_accepted):
                     G_interp[i,:] = np.interp(grid_interp,grid,G_[i,:])
                 G_all = np.vstack((G_all,G_interp))
+                param = np.array(df_samples.iloc[:,1:no_parameters+1])
+                param = param[idx]
+                param_all = np.vstack((param_all,param))
                 weights = weights.reshape((-1,1))
                 weights = np.repeat(weights,MAX,1)
                 x = np.arange(MAX).reshape((1,-1))
@@ -135,6 +139,7 @@ class Samples:
                 weights_all = np.vstack((weights_all,weights))
         plt.figure()
         range_ = [[0, 366], [-100, 800]]
+        range_ = [[0, 366], [-2000, 2200]]
         output = plt.hist2d(x_all.flatten(),G_all.flatten(),bins=[MAX,200],range=range_,weights=weights_all.flatten())
         img = np.flipud(output[0].transpose())
         # print(sum(img))
@@ -145,12 +150,108 @@ class Samples:
         xx = output[1]
         yy = output[2]
         plt.figure()
-        plt.imshow(img,extent=[xx[0],xx[-1],yy[0],yy[-1]], cmap="gist_heat_r")
+        #plt.imshow(img,extent=[xx[0],xx[-1],yy[0],yy[-1]], cmap="gist_heat_r", aspect="auto")
         plt.grid()
         plt.xlabel("time [d]")
         plt.ylabel("pressure [m]")
-        plt.plot(grid,observations[chosen_observations])
-    
+        plt.plot(G_all.transpose())
+        #plt.plot(grid,observations[chosen_observations])
+        
+        plt.ylim([-100000,110000])
+        # fig, axes = plt.subplots(1,no_parameters-1)
+        # for i in range(no_parameters-1):
+        #     axes[i].scatter(param_all[:,i],param_all[:,i+1])
+        #     axes[i].set_xlabel(i)
+        #     axes[i].set_ylabel(i+1)
+        
+    def show_non_converging(self, folder_samples, no_parameters, chains_disp = None):
+        if chains_disp == None:
+            chains_disp = range(self.no_chains)
+        #folder_samples = folder_samples + '/raw_data'
+        file_samples = [f for f in listdir(folder_samples) if isfile(join(folder_samples, f))]
+        file_samples.sort()
+        N = len(chains_disp)
+        param0_all = np.empty((0,no_parameters))
+        param1_all = np.empty((0,no_parameters))
+        for i in chains_disp:
+            path_samples = folder_samples + "/" + file_samples[i]
+            df_samples = pd.read_csv(path_samples, header=None)
+            types = df_samples.iloc[:,no_parameters+1]
+            idx = np.ones(len(types), dtype=bool)
+            idx[types<0] = 0
+            if sum(idx)==0:
+                print("show_non_converging EMPTY ", i, " of ", N)
+            else:
+                param = np.array(df_samples.iloc[:,1:no_parameters+1])
+                param1 = param[idx]
+                param0 = param[idx==0]
+                param1_all = np.vstack((param1_all,param1))
+                param0_all = np.vstack((param0_all,param0))
+        fig, axes = plt.subplots(1,no_parameters-1, figsize=(15,5))
+        for i in range(no_parameters-1):
+            axes[i].scatter(np.log10(param1_all[:,i]),np.log10(param1_all[:,i+1]),s=1)
+            axes[i].scatter(np.log10(param0_all[:,i]),np.log10(param0_all[:,i+1]),s=1)
+            axes[i].set_xlabel(i)
+            axes[i].set_ylabel(i+1)
+            
+    def show_extremes(self, folder_samples, no_parameters, chosen_observations, chains_disp = None):
+        if chains_disp == None:
+            chains_disp = range(self.no_chains)
+        #folder_samples = folder_samples + '/raw_data'
+        file_samples = [f for f in listdir(folder_samples) if isfile(join(folder_samples, f))]
+        file_samples.sort()
+        N = len(chains_disp)
+        param0_all = np.empty((0,no_parameters))
+        param1_all = np.empty((0,no_parameters))
+        min_all = np.empty((0,1))
+        max_all = np.empty((0,1))
+        for i in chains_disp:
+            path_samples = folder_samples + "/" + file_samples[i]
+            df_samples = pd.read_csv(path_samples, header=None)
+            types = df_samples.iloc[:,no_parameters+1]
+            idx = np.ones(len(types), dtype=bool)
+            idx[types<0] = 0
+            if sum(idx)==0:
+                print("show_non_converging EMPTY ", i, " of ", N)
+            else:
+                param = np.array(df_samples.iloc[:,1:no_parameters+1])
+                # idx[(np.log(param[:,0]))<-33.7]=0
+                # idx[(np.log(param[:,0]))>-31.7]=0
+                # idx[(np.log(param[:,1]))<-18.4]=0
+                # idx[(np.log(param[:,1]))>-16.4]=0
+                # idx[(np.log10(param[:,3])+3)>np.log10(param[:,2])]=0
+                param1 = param[idx]
+                param0 = param[idx==0]
+                param1_all = np.vstack((param1_all,param1))
+                param0_all = np.vstack((param0_all,param0))
+                G_ = np.array(df_samples.iloc[:,2+no_parameters+chosen_observations])
+                G_ = G_[idx]
+                min_all = np.vstack((min_all,np.min(G_,axis=1).reshape((-1,1))))
+                max_all = np.vstack((max_all,np.max(G_,axis=1).reshape((-1,1))))
+        #np.savetxt("prior_non_converging.csv", param0_all, delimiter=",")
+        
+        print(param1_all[max_all[:,0]>50000,:])
+        np.savetxt("prior_over50000"+str(chosen_observations[0])+".csv", param1_all[max_all[:,0]>50000,:], delimiter=",")
+        fig, axes = plt.subplots(2,no_parameters-1, figsize=(15,10))
+        for i in range(no_parameters-1):
+            color = min_all
+            color[color<-20000] = -20000
+            s = axes[0,i].scatter(np.log10(param1_all[:,i]),np.log10(param1_all[:,i+1]),c=color,s=1,cmap="viridis")
+            #axes[0,i].scatter(np.log10(param0_all[:,i]),np.log10(param0_all[:,i+1]),c='#ff7f0e',s=1)
+            axes[0,i].set_xlabel(i)
+            axes[0,i].set_ylabel(i+1)
+            fig.colorbar(s,ax=axes[0,i])
+        i=0
+        for pair in [[0,2],[1,3],[0,3]]:
+            color = min_all
+            color[color<-20000] = -20000
+            s = axes[1,i].scatter(np.log10(param1_all[:,pair[0]]),np.log10(param1_all[:,pair[1]]),c=color,s=1,cmap="viridis")
+            #axes[1,i].scatter(np.log10(param0_all[:,pair[0]]),np.log10(param0_all[:,pair[1]]),c='#ff7f0e',s=1)
+            axes[1,i].set_xlabel(pair[0])
+            axes[1,i].set_ylabel(pair[1])
+            fig.colorbar(s,ax=axes[1,i])
+            i=i+1
+
     def find_max_likelihood(self, folder_samples, no_parameters, observations, noise_cov, scale, disp_parameters):
         folder_samples = folder_samples + '/raw_data'
         file_samples = [f for f in listdir(folder_samples) if isfile(join(folder_samples, f))]

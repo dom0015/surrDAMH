@@ -160,6 +160,6 @@ sys.stdout.close()
 # titles = ["HGT1-5", "HGT1-4", "HGT2-4", "HGT2-3"]
 # for i in range(4):
 #     offset = i*len(grid)
-#     S.hist_G(output_dir + 'saved_samples/' + problem_name,no_parameters, grid, observations, offset+np.arange(len(grid)), range(30,90))
+#     S.hist_G(output_dir + 'saved_samples/' + problem_name + '/raw_data',no_parameters, grid, observations, offset+np.arange(len(grid)), range(30,90))
 #     plt.title(titles[i])
 #     plt.savefig(visualization_dir + "/hist_G" + str(i+1) + ".pdf",bbox_inches="tight")
