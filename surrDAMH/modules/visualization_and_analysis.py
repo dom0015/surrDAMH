@@ -426,14 +426,15 @@ class Samples:
         XX = np.zeros((0,))
         for i, chain in enumerate(chains_disp):
             xx = self.x[chain][burn_in[i]:,dimension]
-        if log:
-            XX = np.concatenate((XX,np.log10(xx)))
-        else:
-            XX = np.concatenate((XX,xx))
+            if log:
+                XX = np.concatenate((XX,np.log10(xx)))
+            else:
+                XX = np.concatenate((XX,xx))
         plt.hist(XX, bins = bins, density = True)
         plt.grid(True)
         if show:
             plt.show()
+        np.save("XX_borehole1234_" + str(dimension) + ".npy",XX)
 
     def plot_hist_2d(self, burn_in = None, dimensions = [0,1], chains_disp = None, bins = 20, show = True, colorbar = False, log = [False,False]):
         if chains_disp == None:
