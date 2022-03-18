@@ -9,6 +9,7 @@ Created on Sun Feb 28 12:32:40 2021
 import os
 import sys
 sys.path.append(os.getcwd())
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 import json
 import importlib.util as iu
 from modules import classes_communication
