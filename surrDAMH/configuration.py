@@ -10,7 +10,7 @@ import os
 import sys
 sys.path.append(os.getcwd())
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-import json
+import ruamel.yaml as yaml
 import importlib.util as iu
 from modules import classes_communication
 from modules import Gaussian_process
@@ -23,7 +23,7 @@ class Configuration:
         basename = os.path.basename(conf_path)
         conf_name, fext = os.path.splitext(basename)
         with open(conf_path) as f:
-            conf = json.load(f)
+            conf = yaml.safe_load(f)
     
 ### PROBLEM PARAMETERS:
         if "problem_name" in conf.keys():

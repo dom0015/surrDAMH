@@ -8,7 +8,6 @@ Created on Sun Feb 14 12:02:19 2021
 
 import os
 import sys
-import json
 import ruamel.yaml as yaml
 sys.path.append(os.getcwd())
 from surrDAMH.surrDAMH.modules import visualization_and_analysis as va
@@ -23,7 +22,7 @@ output_dir = os.path.join(sys.argv[3], 'saved_samples', problem_name)
 visualization_dir = os.path.join(output_dir, 'img_Bayes')
 
 with open(conf_path) as f:
-    conf = json.load(f)
+    conf = yaml.safe_load(f)
 
 if not os.path.exists(visualization_dir):
     os.makedirs(visualization_dir)
@@ -53,7 +52,6 @@ for idx,d in enumerate(output_dict["samplers_list"]):
 mode = S.find_modus()
 output_dict["mode"] = mode[0].tolist()
 
-from surrDAMH.surrDAMH.modules import Gaussian_process
 cov_type = None
 if "noise_cov_type" in conf.keys():
     cov_type = conf["noise_cov_type"]
@@ -76,5 +74,5 @@ no_observations = conf["no_observations"]
 S.hist_G(output_dir + '/raw_data',no_parameters, observations, np.arange(no_observations), range(no_samplers*len_sampler_list))
 plt.savefig(visualization_dir + "/hist_G.pdf",bbox_inches="tight")
 
-file = open(os.path.join(output_dir, "output.yaml"), 'w')
-yaml.dump(output_dict, file, default_flow_style=None)#, allow_unicode=True)
+with open(os.path.join(output_dir, "output.yaml"), 'w') as f:
+    yaml.dump(output_dict, f, default_flow_style=None)#, allow_unicode=True)
