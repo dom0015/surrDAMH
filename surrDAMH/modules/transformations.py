@@ -17,16 +17,14 @@ def transform(data, settings):
         if settings[i] is None:
             pass
         else:
-            trans_type = settings[i][0]
-            if trans_type=="normal_to_lognormal":
-                options = settings[i][1]
-                trans_data[i] = normal_to_lognormal(data[i],**options)
-            elif trans_type=="normal_to_uniform":
-                options = settings[i][1]
-                trans_data[i] = normal_to_uniform(data[i],**options)
-            elif trans_type=="normal_to_beta":
-                options = settings[i][1]
-                trans_data[i] = normal_to_beta(data[i],**options)
+            trans_type = settings[i]["type"]
+            options = settings[i]["options"]
+            if trans_type == "normal_to_lognormal":
+                trans_data[i] = normal_to_lognormal(data[i], **options)
+            elif trans_type == "normal_to_uniform":
+                trans_data[i] = normal_to_uniform(data[i], **options)
+            elif trans_type == "normal_to_beta":
+                trans_data[i] = normal_to_beta(data[i], **options)
     return trans_data
 
 def normal_to_lognormal(parameters, mu, sigma):
