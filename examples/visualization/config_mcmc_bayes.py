@@ -34,7 +34,7 @@ scale = ["linear"]*no_parameters
 if "transformations" in conf.keys():
     transformations = conf["transformations"]
     for i in range(no_parameters):
-        if transformations[i][0] == "normal_to_lognormal":
+        if transformations[i]["type"] == "normal_to_lognormal":
             scale[i] = "log"
 S.load_notes(output_dir,no_samplers)
 S.load_MH(output_dir,no_parameters)

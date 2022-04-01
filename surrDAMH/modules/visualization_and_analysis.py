@@ -715,20 +715,21 @@ class Samples:
                     if settings[idi] is None:
                         pass
                     else:
-                        trans_type = settings[idi][0]
-                        if trans_type=="normal_to_lognormal":
-                            mu = settings[idi][1]["mu"]
-                            sigma = settings[idi][1]["sigma"]
+                        trans_type = settings[idi]["type"]
+                        trans_options = settings[idi]["options"]
+                        if trans_type == "normal_to_lognormal":
+                            mu = trans_options["mu"]
+                            sigma = trans_options["sigma"]
                             x = np.linspace(mu - 3*sigma, mu + 3*sigma, 100)
                             y = scipy.stats.norm.pdf(x, mu, sigma)
                             plt.plot(np.log10(np.exp(x)),y*np.log(100)/np.log10(100))
-                        elif trans_type=="normal_to_uniform":
-                            a = settings[idi][1]["a"]
-                            b = settings[idi][1]["b"]
+                        elif trans_type == "normal_to_uniform":
+                            a = trans_options["a"]
+                            b = trans_options["b"]
                             plt.plot([a,b],[1/(b-a)]*2)
-                        elif trans_type=="normal_to_beta":
-                            alfa = settings[idi][1]["alfa"]
-                            beta = settings[idi][1]["beta"]
+                        elif trans_type == "normal_to_beta":
+                            alfa = trans_options["alfa"]
+                            beta = trans_options["beta"]
                             x=np.linspace(0,1,100)
                             y=scipy.stats.beta.pdf(x,alfa,beta)
                             plt.plot(x,y)
