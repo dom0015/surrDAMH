@@ -9,10 +9,19 @@ Created on Sun Feb 14 12:02:19 2021
 import os
 import sys
 import ruamel.yaml as yaml
-sys.path.append(os.getcwd())
-from surrDAMH.surrDAMH.modules import visualization_and_analysis as va
+#sys.path.append(os.getcwd())
+#from surrDAMH.surrDAMH.modules import visualization_and_analysis as va
 import matplotlib.pyplot as plt
 import numpy as np
+
+import importlib.util as iu
+path = os.path.dirname(os.path.abspath(__file__))
+path = os.path.dirname(path)
+path = os.path.dirname(path)
+path = os.path.join(path,"surrDAMH/modules/visualization_and_analysis.py")
+spec = iu.spec_from_file_location("visualization_and_analysis",path)
+va = iu.module_from_spec(spec)
+spec.loader.exec_module(va)
 
 no_samplers = int(sys.argv[1]) # number of MH/DAMH chains
 conf_path = sys.argv[2]
@@ -36,6 +45,8 @@ if "transformations" in conf.keys():
     for i in range(no_parameters):
         if transformations[i][0] == "normal_to_lognormal":
             scale[i] = "log"
+else:
+    transformations = [None]*no_parameters
 S.load_notes(output_dir,no_samplers)
 S.load_MH(output_dir,no_parameters)
 S.calculate_properties()
@@ -62,7 +73,7 @@ observations = np.array(conf["problem_parameters"]["observations"])
 no_stages = int(S.no_chains/no_samplers)
 for i in range(no_stages):
     chains_disp=range(i*no_samplers,(i+1)*no_samplers)
-    S.plot_hist_grid(chains_disp=chains_disp, bins1d=9, bins2d=20, scale=scale)
+    S.plot_hist_grid(chains_disp=chains_disp, bins1d=None, bins2d=None, scale=scale)
     S.plot_hist_grid_add(transformations,chains_disp=chains_disp, scale=scale)
     plt.savefig(visualization_dir + "/histograms" +str(i)+ ".pdf",bbox_inches="tight")
     S.plot_segment(chains_disp=chains_disp,scale=scale)
@@ -70,9 +81,11 @@ for i in range(no_stages):
     S.plot_average(chains_disp=chains_disp,scale=scale)
     plt.savefig(visualization_dir + "/average" +str(i)+ ".pdf",bbox_inches="tight")
 
-no_observations = conf["no_observations"]
-S.hist_G(output_dir + '/raw_data',no_parameters, observations, np.arange(no_observations), range(no_samplers*len_sampler_list))
-plt.savefig(visualization_dir + "/hist_G.pdf",bbox_inches="tight")
+if "save_raw_data" in conf.keys():
+    if conf["save_raw_data"]:
+        no_observations = conf["no_observations"]
+        S.hist_G(output_dir + '/raw_data',no_parameters, observations, np.arange(no_observations), range(no_samplers*len_sampler_list))
+        plt.savefig(visualization_dir + "/hist_G.pdf",bbox_inches="tight")
 
 with open(os.path.join(output_dir, "output.yaml"), 'w') as f:
     yaml.dump(output_dict, f, default_flow_style=None)#, allow_unicode=True)

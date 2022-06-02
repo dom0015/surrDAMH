@@ -91,8 +91,12 @@ class Configuration:
             self.rank_surr_collector = self.no_samplers + 1
             if conf["surrogate_type"] == "rbf": # radial basis functions surrogate model
                 from modules import surrogate_rbf as surr
-            else: # polynomial surrogate model
+            elif conf["surrogate_type"] == "poly": # polynomial surrogate model
                 from modules import surrogate_poly as surr
+            else:
+                spec = iu.spec_from_file_location(conf["surrogate_module_name"], conf["surrogate_module_path"])
+                surr = iu.module_from_spec(spec)
+                spec.loader.exec_module(surr)
             self.surr_solver_init = surr.Surrogate_apply
             self.surr_updater_init = surr.Surrogate_update
             self.surr_solver_parameters = {"no_parameters": self.no_parameters,

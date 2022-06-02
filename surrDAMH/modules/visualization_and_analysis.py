@@ -12,7 +12,20 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from os import listdir
 from os.path import isfile, join, getsize
-import surrDAMH.surrDAMH.modules.grf_eigenfunctions as grf_eigenfunctions
+#import surrDAMH.surrDAMH.modules.grf_eigenfunctions as grf_eigenfunctions
+
+import os
+import importlib.util as iu
+path = os.path.dirname(os.path.abspath(__file__))
+
+# import sys
+# sys.path.append(path)
+# from surrDAMH.modules import grf_eigenfunctions
+
+path = os.path.join(path,"grf_eigenfunctions.py")
+spec = iu.spec_from_file_location("grf_eigenfunctions",path)
+grf_eigenfunctions = iu.module_from_spec(spec)
+spec.loader.exec_module(grf_eigenfunctions)
 
 class Samples:
     def __init__(self, samples = None):
@@ -26,12 +39,14 @@ class Samples:
         file_samples.sort()
         N = len(file_samples)
         self.x = [None] * N
+        self.unique_samples = [0] * N
         for i in range(N):
             path_samples = folder_samples + "/" + file_samples[i]
             df_samples = pd.read_csv(path_samples, header=None)
             weights = np.array(df_samples[0])
             tmp = np.array(df_samples.iloc[:,1:1+no_parameters])
             self.x[i] = decompress(tmp, weights)
+            self.unique_samples[i] = len(weights)
         
     def load_MH_with_posterior(self, folder_samples, no_parameters, surrogate_posterior = False):
         folder_samples = folder_samples + '/data'
@@ -625,14 +640,20 @@ class Samples:
         if burn_in == None:
             burn_in = [0] * len(chains_disp)
         XX = np.zeros((0,))
+        no_unique_samples = 0
         for i, chain in enumerate(chains_disp):
+            no_unique_samples += self.unique_samples[chain] # burn-in not excluded
             xx = self.x[chain][burn_in[i]:,dimension]
             if log:
                 XX = np.concatenate((XX,np.log10(xx)))
             else:
                 XX = np.concatenate((XX,xx))
         np.save("XX2_boreholes1234_" + str(dimension) + ".npy",XX)
-        plt.hist(XX, bins = bins, density = True)
+        if bins is None:
+            bins = np.floor(no_unique_samples/20)
+            bins = min(bins,100)
+            bins = max(bins,10)
+        plt.hist(XX, bins = int(bins), density = True)
         plt.grid(True)
         if show:
             plt.show()
@@ -644,7 +665,9 @@ class Samples:
             burn_in = [0] * len(chains_disp)
         XX = np.zeros((0,))
         YY = np.zeros((0,))
+        no_unique_samples = 0
         for i, chain in enumerate(chains_disp):
+            no_unique_samples += self.unique_samples[chain] # burn-in not excluded
             xx = self.x[chain][burn_in[i]:,dimensions[0]]
             yy = self.x[chain][burn_in[i]:,dimensions[1]]
             if log[0]:
@@ -655,7 +678,11 @@ class Samples:
                 YY = np.concatenate((YY,np.log10(yy)))
             else:
                 YY = np.concatenate((YY,yy))
-        plt.hist2d(XX, YY, bins = bins, cmap = "binary")#, density = True)
+        if bins is None:
+            bins = np.floor(np.sqrt(no_unique_samples)/5)
+            bins = min(bins,100)
+            bins = max(bins,10)
+        plt.hist2d(XX, YY, bins = int(bins), cmap = "binary")#, density = True)
         plt.grid(True)
         if colorbar:
             plt.colorbar()
