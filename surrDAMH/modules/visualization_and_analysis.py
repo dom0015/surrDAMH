@@ -42,7 +42,11 @@ class Samples:
         self.unique_samples = [0] * N
         for i in range(N):
             path_samples = folder_samples + "/" + file_samples[i]
-            df_samples = pd.read_csv(path_samples, header=None)
+            try:
+                df_samples = pd.read_csv(path_samples, header=None)
+            except pd.errors.EmptyDataError:
+                print(path_samples + "EMPTY!")
+                continue
             weights = np.array(df_samples[0])
             tmp = np.array(df_samples.iloc[:,1:1+no_parameters])
             self.x[i] = decompress(tmp, weights)
@@ -59,7 +63,11 @@ class Samples:
             self.surrogate_posteriors = [None] * N
         for i in range(N):
             path_samples = folder_samples + "/" + file_samples[i]
-            df_samples = pd.read_csv(path_samples, header=None)
+            try:
+                df_samples = pd.read_csv(path_samples, header=None)
+            except pd.errors.EmptyDataError:
+                print(path_samples + "EMPTY!")
+                continue
             self.x_compress[i] = np.array(df_samples.iloc[:,1:1+no_parameters])
             self.posteriors[i] = np.array(df_samples.iloc[:,1+no_parameters])
             if surrogate_posterior:
@@ -71,6 +79,8 @@ class Samples:
         current_val = -np.inf
         current_idx = 0
         for i in range(N):
+            if self.posteriors[i] is None:
+                continue
             idx=np.argmax(self.posteriors[i])
             val = self.posteriors[i][idx]
             if val>current_val:
@@ -415,9 +425,11 @@ class Samples:
         
     def calculate_properties(self, burn_in = None):
         self.no_chains = len(self.x)
-        all_chains = range(self.no_chains)
+        all_chains = np.arange(self.no_chains)
         if burn_in == None:
             burn_in = [0] * self.no_chains
+        tmp = list(self.x[i] is not None for i in all_chains)
+        all_chains = all_chains[tmp]
         x = list(self.x[i][burn_in[i]:,:] for i in all_chains)
         self.no_parameters = x[0].shape[1]
         self.length = list(x[i].shape[0] for i in all_chains)
@@ -473,6 +485,8 @@ class Samples:
         samplers_list = list()
         for i in range(no_phases):
             idx = np.arange(no_samplers) + i*no_samplers
+            if max(idx)>=len(self.length):
+                break
             d = dict()
             d["length of chains"] = self.length[idx].tolist()
             x_phase = np.empty((0,self.no_parameters))
@@ -504,6 +518,12 @@ class Samples:
             parameters_disp = range(self.no_parameters)
         if chains_disp == None:
             chains_disp = range(self.no_chains)
+        chains_disp = np.array(chains_disp)
+        tmp = list(self.x[i] is not None for i in chains_disp)
+        chains_disp = chains_disp[tmp]
+        if len(chains_disp)==0:
+            print("PLOT SEGMENT: NO DATA TO PLOT")
+            return
         if begin_disp == None:
             begin_disp = [0] * len(parameters_disp)
         if end_disp == None:
@@ -533,6 +553,12 @@ class Samples:
             parameters_disp = range(self.no_parameters)
         if chains_disp == None:
             chains_disp = range(self.no_chains)
+        chains_disp = np.array(chains_disp)
+        tmp = list(self.x[i] is not None for i in chains_disp)
+        chains_disp = chains_disp[tmp]
+        if len(chains_disp)==0:
+            print("PLOT AVERAGE: NO DATA TO PLOT")
+            return
         if burn_in == None:
             burn_in = [0] * len(chains_disp)
         if begin_disp == None:
@@ -643,12 +669,16 @@ class Samples:
         no_unique_samples = 0
         for i, chain in enumerate(chains_disp):
             no_unique_samples += self.unique_samples[chain] # burn-in not excluded
-            xx = self.x[chain][burn_in[i]:,dimension]
+            try:
+                xx = self.x[chain][burn_in[i]:,dimension]
+            except:
+                print("HISTOGRAM 1D: CHAIN", chain, "NOT AVAILABLE")
+                continue
             if log:
                 XX = np.concatenate((XX,np.log10(xx)))
             else:
                 XX = np.concatenate((XX,xx))
-        np.save("XX2_boreholes1234_" + str(dimension) + ".npy",XX)
+        #np.save("XX2_boreholes1234_" + str(dimension) + ".npy",XX)
         if bins is None:
             bins = np.floor(no_unique_samples/20)
             bins = min(bins,100)
@@ -668,8 +698,12 @@ class Samples:
         no_unique_samples = 0
         for i, chain in enumerate(chains_disp):
             no_unique_samples += self.unique_samples[chain] # burn-in not excluded
-            xx = self.x[chain][burn_in[i]:,dimensions[0]]
-            yy = self.x[chain][burn_in[i]:,dimensions[1]]
+            try:
+                xx = self.x[chain][burn_in[i]:,dimensions[0]]
+                yy = self.x[chain][burn_in[i]:,dimensions[1]]
+            except:
+                print("HISTOGRAM 2D: CHAIN", chain, "NOT AVAILABLE")
+                continue
             if log[0]:
                 XX = np.concatenate((XX,np.log10(xx)))
             else:
