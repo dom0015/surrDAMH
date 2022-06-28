@@ -50,12 +50,13 @@ with open(problem_path) as f:
 
 if visualize:
     args = [str(N), problem_path, output_dir]
-    visualization_path = os.path.abspath(os.path.join("examples/visualization/", problem_name + ".py "))
+    file_path = os.path.dirname(os.path.abspath(__file__))
+    visualization_path = file_path + "/examples/visualization/" + problem_name + ".py"
     if os.path.exists(visualization_path):
-        command = "python3 " + visualization_path + " ".join(args)
+        command = "python3 " + visualization_path + " " + " ".join(args)
     else:
-        visualization_path = os.path.abspath(os.path.join("examples/visualization/general_visualization.py "))
-        command = "python3 " + visualization_path + " ".join(args)
+        visualization_path = os.path.abspath(os.path.join("examples/visualization/general_visualization.py"))
+        command = "python3 " + visualization_path + " " + " ".join(args)
 else:
     if oversubscribe:
         opt = " --oversubscribe " 

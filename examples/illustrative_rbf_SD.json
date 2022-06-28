@@ -1,0 +1,203 @@
+{
+    "no_parameters": 2,
+    "no_observations": 1,
+    "problem_parameters": {
+        "prior_mean": [0.0, 0.0],
+        "prior_std": [[2,0],[0,2]],
+        "observations": [2.0],
+        "noise_std": 1
+    },
+    "solver_module_path": "examples/solvers/solver_examples.py",
+    "solver_module_name": "solver_examples",
+    "solver_init_name": "Solver_illustrative_local",
+    "solver_parameters": {
+    },
+    "initial_sample_type": "prior",
+    "no_solvers": 20,
+    "samplers_list": [
+        {
+            "type": "MH",
+            "max_samples": 200,
+            "time_limit": 120,
+            "proposal_std": 3.0,
+            "surrogate_is_updated": true
+        },    
+        {
+            "type": "DAMH",
+            "max_samples": 300000,
+            "time_limit": 180,
+            "proposal_std": 0.4,
+            "surrogate_is_updated": false
+        },    
+        {
+            "type": "DAMH",
+            "max_samples": 300000,
+            "time_limit": 180,
+            "proposal_std": 0.6,
+            "surrogate_is_updated": false
+        },
+        {
+            "type": "DAMH",
+            "max_samples": 300000,
+            "time_limit": 180,
+            "proposal_std": 0.8,
+            "surrogate_is_updated": false
+        },
+        {
+            "type": "DAMH",
+            "max_samples": 300000,
+            "time_limit": 180,
+            "proposal_std": 1.0,
+            "surrogate_is_updated": false
+        },
+        {
+            "type": "DAMH",
+            "max_samples": 300000,
+            "time_limit": 180,
+            "proposal_std": 1.2,
+            "surrogate_is_updated": false
+        },
+        {
+            "type": "DAMH",
+            "max_samples": 300000,
+            "time_limit": 180,
+            "proposal_std": 1.4,
+            "surrogate_is_updated": false
+        },
+        {
+            "type": "DAMH",
+            "max_samples": 300000,
+            "time_limit": 180,
+            "proposal_std": 1.6,
+            "surrogate_is_updated": false
+        },
+        {
+            "type": "DAMH",
+            "max_samples": 300000,
+            "time_limit": 180,
+            "proposal_std": 1.8,
+            "surrogate_is_updated": false
+        },
+        {
+            "type": "DAMH",
+            "max_samples": 300000,
+            "time_limit": 180,
+            "proposal_std": 2.0,
+            "surrogate_is_updated": false
+        },
+        {
+            "type": "DAMH",
+            "max_samples": 300000,
+            "time_limit": 180,
+            "proposal_std": 2.2,
+            "surrogate_is_updated": false
+        },
+        {
+            "type": "DAMH",
+            "max_samples": 300000,
+            "time_limit": 180,
+            "proposal_std": 2.4,
+            "surrogate_is_updated": false
+        },
+        {
+            "type": "DAMH",
+            "max_samples": 300000,
+            "time_limit": 180,
+            "proposal_std": 2.6,
+            "surrogate_is_updated": false
+        },
+        {
+            "type": "DAMH",
+            "max_samples": 300000,
+            "time_limit": 180,
+            "proposal_std": 2.8,
+            "surrogate_is_updated": false
+        },
+        {
+            "type": "DAMH",
+            "max_samples": 300000,
+            "time_limit": 180,
+            "proposal_std": 3.0,
+            "surrogate_is_updated": false
+        },
+        {
+            "type": "DAMH",
+            "max_samples": 300000,
+            "time_limit": 180,
+            "proposal_std": 3.2,
+            "surrogate_is_updated": false
+        },
+        {
+            "type": "DAMH",
+            "max_samples": 300000,
+            "time_limit": 180,
+            "proposal_std": 3.4,
+            "surrogate_is_updated": false
+        },
+        {
+            "type": "DAMH",
+            "max_samples": 300000,
+            "time_limit": 180,
+            "proposal_std": 3.6,
+            "surrogate_is_updated": false
+        },
+        {
+            "type": "DAMH",
+            "max_samples": 300000,
+            "time_limit": 180,
+            "proposal_std": 3.8,
+            "surrogate_is_updated": false
+        },
+        {
+            "type": "DAMH",
+            "max_samples": 300000,
+            "time_limit": 180,
+            "proposal_std": 4.0,
+            "surrogate_is_updated": false
+        },
+        {
+            "type": "DAMH",
+            "max_samples": 300000,
+            "time_limit": 180,
+            "proposal_std": 4.2,
+            "surrogate_is_updated": false
+        },
+        {
+            "type": "DAMH",
+            "max_samples": 300000,
+            "time_limit": 180,
+            "proposal_std": 4.4,
+            "surrogate_is_updated": false
+        },
+        {
+            "type": "DAMH",
+            "max_samples": 300000,
+            "time_limit": 180,
+            "proposal_std": 4.6,
+            "surrogate_is_updated": false
+        },
+        {
+            "type": "DAMH",
+            "max_samples": 300000,
+            "time_limit": 180,
+            "proposal_std": 4.8,
+            "surrogate_is_updated": false
+        },
+        {
+            "type": "DAMH",
+            "max_samples": 300000,
+            "time_limit": 180,
+            "proposal_std": 5.0,
+            "surrogate_is_updated": false
+        }
+    ],
+    "surrogate_type": "rbf",
+    "surr_solver_parameters": {
+        "kernel_type": 1
+    },
+    "surr_updater_parameters": {
+        "kernel_type": 1,
+        "no_keep": 1000,
+        "expensive": false
+    }
+}

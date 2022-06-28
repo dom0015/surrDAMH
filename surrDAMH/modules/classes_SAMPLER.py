@@ -13,11 +13,12 @@ import csv
 import time
 
 class Algorithm_PARENT:
-    def __init__(self, Problem, Proposal, Solver, max_samples, name, seed=0, initial_sample=None, G_initial_sample=None, Surrogate=None, is_saved=True, save_raw_data=False, transform_before_saving=None, surrogate_is_updated=True, time_limit=float('inf'), output_dir=""):
+    def __init__(self, Problem, Proposal, Solver, max_samples, max_evaluations, name, seed=0, initial_sample=None, G_initial_sample=None, Surrogate=None, is_saved=True, save_raw_data=False, transform_before_saving=None, surrogate_is_updated=True, time_limit=float('inf'), output_dir=""):
         self.Problem = Problem
         self.Proposal = Proposal
         self.Solver = Solver
         self.max_samples = max_samples
+        self.max_evaluations = max_evaluations
         self.name = name
         self.seed = seed
         self.output_dir = output_dir
@@ -94,9 +95,9 @@ class Algorithm_PARENT:
         self.posterior_current_sample = self.posterior_proposed_sample
         if self.save_raw_data:
             if self.save_transformed_data:
-                row = ['accepted'] + list(self.transform(self.proposed_sample)) + [self.convergence_tag] + list(self.G_current_sample)
+                row = ['accepted'] + list(self.transform(self.proposed_sample)) + [self.convergence_tag] + list(self.G_current_sample.flatten())
             else:
-                row = ['accepted'] + list(self.proposed_sample) + [self.convergence_tag] + list(self.G_current_sample)
+                row = ['accepted'] + list(self.proposed_sample) + [self.convergence_tag] + list(self.G_current_sample.flatten())
             self.writer_raw.writerow(row)
         
     def if_rejected(self):
@@ -106,9 +107,9 @@ class Algorithm_PARENT:
             self.__send_to_surrogate(sample=self.proposed_sample.copy(), G_sample=self.G_proposed_sample.copy(), weight=0)
         if self.save_raw_data:
             if self.save_transformed_data:
-                row = ['rejected'] + list(self.transform(self.proposed_sample)) + [self.convergence_tag] + list(self.G_proposed_sample)
+                row = ['rejected'] + list(self.transform(self.proposed_sample)) + [self.convergence_tag] + list(self.G_proposed_sample.flatten())
             else:
-                row = ['rejected'] + list(self.proposed_sample) + [self.convergence_tag] + list(self.G_proposed_sample)
+                row = ['rejected'] + list(self.proposed_sample) + [self.convergence_tag] + list(self.G_proposed_sample.flatten())
             self.writer_raw.writerow(row)
         
     def close_files(self):
@@ -153,8 +154,9 @@ class Algorithm_PARENT:
         return
     
 class Algorithm_MH(Algorithm_PARENT): # initiated by SAMPLERs
-    def __init__(self, Problem, Proposal, Solver, max_samples, name, seed=0, initial_sample=None, G_initial_sample=None, Surrogate=None, is_saved=True, save_raw_data=False, transform_before_saving=None, surrogate_is_updated=True, time_limit=float('inf'), output_dir=""):
-        super().__init__(Problem, Proposal, Solver, max_samples, name, seed, initial_sample, G_initial_sample, Surrogate, is_saved, save_raw_data, transform_before_saving, surrogate_is_updated, time_limit, output_dir)
+    def __init__(self, Problem, Proposal, Solver, max_samples, max_evaluations, name, seed=0, initial_sample=None, G_initial_sample=None, Surrogate=None, is_saved=True, save_raw_data=False, transform_before_saving=None, surrogate_is_updated=True, time_limit=float('inf'), output_dir=""):
+        super().__init__(Problem, Proposal, Solver, max_samples, max_evaluations, name, seed, initial_sample, G_initial_sample, Surrogate, is_saved, save_raw_data, transform_before_saving, surrogate_is_updated, time_limit, output_dir)
+        self.max_samples = min(self.max_samples,self.max_evaluations)
 
     def run(self):
         self.prepare()
@@ -166,13 +168,14 @@ class Algorithm_MH(Algorithm_PARENT): # initiated by SAMPLERs
             else:
                 self.if_rejected()
             if time.time() - self.time_start > self.time_limit:
-                print("SAMPLER at RANK", MPI.COMM_WORLD.Get_rank(), "time limit reached - loop",i)
+                print("SAMPLER at RANK", MPI.COMM_WORLD.Get_rank(), "time limit ", self.time_limit, " reached - loop",i)
                 break
         self.close_files()
         
 class Algorithm_MH_adaptive(Algorithm_PARENT): # initiated by SAMPLERs
-    def __init__(self, Problem, Proposal, Solver, max_samples, name, target_rate=None, corr_limit=None, sample_limit=None, seed=0, initial_sample=None, G_initial_sample=None, Surrogate=None, is_saved=True, save_raw_data=False, transform_before_saving=None, surrogate_is_updated=True, time_limit=float('inf'), output_dir=""):
-        super().__init__(Problem, Proposal, Solver, max_samples, name, seed, initial_sample, G_initial_sample, Surrogate, is_saved, save_raw_data, transform_before_saving, surrogate_is_updated, time_limit, output_dir)
+    def __init__(self, Problem, Proposal, Solver, max_samples, max_evaluations, name, target_rate=None, corr_limit=None, sample_limit=None, seed=0, initial_sample=None, G_initial_sample=None, Surrogate=None, is_saved=True, save_raw_data=False, transform_before_saving=None, surrogate_is_updated=True, time_limit=float('inf'), output_dir=""):
+        super().__init__(Problem, Proposal, Solver, max_samples, max_evaluations, name, seed, initial_sample, G_initial_sample, Surrogate, is_saved, save_raw_data, transform_before_saving, surrogate_is_updated, time_limit, output_dir)
+        self.max_samples = min(self.max_samples,self.max_evaluations)
         self.target_rate = target_rate # target acceptance rate
         if self.target_rate==None:
             self.target_rate = 0.25
@@ -243,15 +246,14 @@ class Algorithm_MH_adaptive(Algorithm_PARENT): # initiated by SAMPLERs
                 counter_rejected = 0
 
             if time.time() - self.time_start > self.time_limit:
-                print("SAMPLER at RANK", MPI.COMM_WORLD.Get_rank(), "time limit reached - loop",i)
+                print("SAMPLER at RANK", MPI.COMM_WORLD.Get_rank(), "time limit ", self.time_limit, " reached - loop",i)
                 break
         #print("RANK", MPI.COMM_WORLD.Get_rank(), "FINAL COV", coef*COV)
-            
         self.close_files()
         
 class Algorithm_DAMH(Algorithm_PARENT): # initiated by SAMPLERs
-    def __init__(self, Problem, Proposal, Solver, max_samples, name, seed=0, initial_sample=None, G_initial_sample=None, Surrogate=None, is_saved=True, save_raw_data=False, transform_before_saving=None, surrogate_is_updated=True, time_limit=float('inf'), output_dir=""):
-        super().__init__(Problem, Proposal, Solver, max_samples, name, seed, initial_sample, G_initial_sample, Surrogate, is_saved, save_raw_data, transform_before_saving, surrogate_is_updated, time_limit, output_dir)
+    def __init__(self, Problem, Proposal, Solver, max_samples, max_evaluations, name, seed=0, initial_sample=None, G_initial_sample=None, Surrogate=None, is_saved=True, save_raw_data=False, transform_before_saving=None, surrogate_is_updated=True, time_limit=float('inf'), output_dir=""):
+        super().__init__(Problem, Proposal, Solver, max_samples, max_evaluations, name, seed, initial_sample, G_initial_sample, Surrogate, is_saved, save_raw_data, transform_before_saving, surrogate_is_updated, time_limit, output_dir)
 
     def run(self):
         self.prepare()
@@ -302,12 +304,15 @@ class Algorithm_DAMH(Algorithm_PARENT): # initiated by SAMPLERs
                 self.no_rejected_current += 1
                 if self.save_raw_data:
                     if self.save_transformed_data:
-                        row = ['prerejected'] + list(self.transform(self.proposed_sample)) + [0] + list(GS_proposed_sample)
+                        row = ['prerejected'] + list(self.transform(self.proposed_sample)) + [0] + list(GS_proposed_sample.flatten())
                     else:
-                        row = ['prerejected'] + list(self.proposed_sample) + [0] + list(GS_proposed_sample)
+                        row = ['prerejected'] + list(self.proposed_sample) + [0] + list(GS_proposed_sample.flatten())
                     self.writer_raw.writerow(row)
             if time.time() - self.time_start > self.time_limit:
-                print("SAMPLER at RANK", MPI.COMM_WORLD.Get_rank(), "time limit reached - loop",i)
+                print("SAMPLER at RANK", MPI.COMM_WORLD.Get_rank(), "time limit ", self.time_limit, " reached - loop",i)
+                break
+            if (self.no_rejected + self.no_accepted)>=self.max_evaluations:
+                print("SAMPLER at RANK", MPI.COMM_WORLD.Get_rank(), "evaluations limit ", self.max_evaluations, " reached - loop",i)
                 break
         self.close_files()
         self.__file_rejected.close()

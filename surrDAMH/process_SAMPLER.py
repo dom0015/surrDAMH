@@ -83,13 +83,14 @@ for i,d in enumerate(C.list_alg):
                              surrogate_is_updated = surrogate_is_updated,
                              initial_sample=initial_sample,
                              max_samples=d['max_samples'],
+                             max_evaluations=d['max_evaluations'],
                              time_limit=d['time_limit'],
                              target_rate=target_rate,
                              corr_limit=corr_limit,
                              sample_limit=sample_limit,
                              save_raw_data=C.save_raw_data,
                              transform_before_saving=C.transform_before_saving,
-                             name='alg' + str(i) + 'MH_adaptive_rank' + str(rank_world),
+                             name='alg' + str(i).zfill(4) + 'MH_adaptive_rank' + str(rank_world),
                              seed=seed, output_dir=output_dir)
         else:
             my_Alg = cS.Algorithm_MH(my_Prob, my_Prop,
@@ -98,10 +99,11 @@ for i,d in enumerate(C.list_alg):
                              surrogate_is_updated = surrogate_is_updated,
                              initial_sample=initial_sample,
                              max_samples=d['max_samples'],
+                             max_evaluations=d['max_evaluations'],
                              time_limit=d['time_limit'],
                              save_raw_data=C.save_raw_data,
                              transform_before_saving=C.transform_before_saving,
-                             name='alg' + str(i) + 'MH_rank' + str(rank_world),
+                             name='alg' + str(i).zfill(4) + 'MH_rank' + str(rank_world),
                              seed=seed, output_dir=output_dir)
     elif d['type'] == 'DAMH':
         my_Alg = cS.Algorithm_DAMH(my_Prob, my_Prop, my_Sol,
@@ -109,10 +111,11 @@ for i,d in enumerate(C.list_alg):
                         surrogate_is_updated = d['surrogate_is_updated'],
                         initial_sample=initial_sample,
                         max_samples=d['max_samples'],
+                        max_evaluations=d['max_evaluations'],
                         time_limit=d['time_limit'],
                         save_raw_data=C.save_raw_data,
                         transform_before_saving=C.transform_before_saving,
-                        name='alg' + str(i) + 'DAMH_rank' + str(rank_world),
+                        name='alg' + str(i).zfill(4) + 'DAMH_rank' + str(rank_world),
                         seed=seed, output_dir=output_dir)
     print('--- SAMPLER ' + my_Alg.name + ' starts ---')
     #print("RANK", rank_world, "INITIAL SAMPLE", initial_sample)

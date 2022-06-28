@@ -43,7 +43,7 @@ scale = ["linear"]*no_parameters
 if "transformations" in conf.keys():
     transformations = conf["transformations"]
     for i in range(no_parameters):
-        if transformations[i][0] == "normal_to_lognormal":
+        if transformations[i]["type"] == "normal_to_lognormal":
             scale[i] = "log"
 else:
     transformations = [None]*no_parameters
@@ -53,7 +53,6 @@ S.calculate_properties()
 S.load_MH_with_posterior(output_dir,no_parameters)
 
 output_dict = S.get_properties(no_samplers)
-
 title = ",".join([str(i) for i in S.notes[0].columns.values])
 len_sampler_list = len(output_dict["samplers_list"])
 for idx,d in enumerate(output_dict["samplers_list"]):

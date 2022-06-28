@@ -7,7 +7,7 @@ Created on Wed Apr 29 11:01:04 2020
 """
 
 import numpy as np
-#import emcee
+import emcee
 import matplotlib.pyplot as plt
 import pandas as pd
 from os import listdir
@@ -713,7 +713,7 @@ class Samples:
             else:
                 YY = np.concatenate((YY,yy))
         if bins is None:
-            bins = np.floor(np.sqrt(no_unique_samples)/5)
+            bins = np.floor(np.sqrt(no_unique_samples/4))
             bins = min(bins,100)
             bins = max(bins,10)
         plt.hist2d(XX, YY, bins = int(bins), cmap = "binary")#, density = True)
@@ -995,43 +995,44 @@ class Samples:
 # The samples in one chain form a numpy array of shape (l_i, n).
 # All samples form a python list of length N.
 
-    # def calculate_autocorr_function(self,begin=None,end=None,chains_range=None):
-    #     if chains_range==None:
-    #         chains_range = range(self.no_chains)
-    #     no_chains = len(chains_range)
-    #     self.autocorr_function = [None] * no_chains
-    #     if end == None:
-    #         end = self.length
-    #     else:
-    #         end = [int(end)] * no_chains
-    #     if begin == None:
-    #         begin = [0] * no_chains
-    #     else:
-    #         begin = [int(begin)] * no_chains
-    #     for idx,i in enumerate(chains_range):
-    #         tmp = np.zeros((end[idx]-begin[idx],self.no_parameters))
-    #         for j in range(self.no_parameters):
-    #             tmp[:,j] = emcee.autocorr.function_1d(self.x[i][begin[idx]:end[idx],j])
-    #         self.autocorr_function[idx] = tmp
+    def calculate_autocorr_function(self,begin=None,end=None,chains_range=None):
+        if chains_range==None:
+            chains_range = range(self.no_chains)
+        no_chains = len(chains_range)
+        self.autocorr_function = [None] * (1+max(chains_range))
+        if end == None:
+            end = self.length[chains_range]
+        else:
+            end = [int(end)] * no_chains
+        if begin == None:
+            begin = [0] * no_chains
+        else:
+            begin = [int(begin)] * no_chains
+        for idx,i in enumerate(chains_range):
+            tmp = np.zeros((end[idx]-begin[idx],self.no_parameters))
+            for j in range(self.no_parameters):
+                tmp[:,j] = emcee.autocorr.function_1d(self.x[i][begin[idx]:end[idx],j])
+            self.autocorr_function[i] = tmp
             
     def calculate_autocorr_function_mean(self,length=None,chains_range=None):
         if chains_range==None:
             chains_range = range(len(self.autocorr_function))
         no_chains = len(chains_range)
         if length==None:
-            length = self.length
+            length = self.length[chains_range]
             max_length = max(self.length[chains_range])
         else:
             max_length = int(length)
             length = [int(length)] * no_chains
-        self.autocorr_function_mean = np.zeros((max_length, self.no_parameters))
+        autocorr_function_mean = np.zeros((max_length, self.no_parameters))
         for j in range(self.no_parameters):
             tmp = np.zeros(max_length)
             count = np.zeros(max_length)
-            for i in chains_range:
-                tmp[:length[i]] += self.autocorr_function[i][:,j]
-                count[:length[i]] += 1
-            self.autocorr_function_mean[:,j] = tmp/count
+            for idx,i in enumerate(chains_range):
+                tmp[:length[idx]] += self.autocorr_function[i][:,j]
+                count[:length[idx]] += 1
+            autocorr_function_mean[:,j] = tmp/count
+        return autocorr_function_mean
 
     # def calculate_autocorr_time(self, c=5, tol=50, quiet=True):
     #     self.autocorr_time = [None] * self.no_chains
@@ -1041,18 +1042,22 @@ class Samples:
     #             tmp[j] = emcee.autocorr.integrated_time(self.x[i][:,j], c=c, tol=tol, quiet=quiet)
     #         self.autocorr_time[i] = tmp
         
-    def calculate_autocorr_time_mean(self, c=5, length=None):
-        self.autocorr_time_mean = [None] * self.no_parameters
-        self.autocorr_time_mean_beta = [None] * self.no_parameters
+    def calculate_autocorr_time_mean(self, c=5, length=None, chains_range=None):
+        if chains_range==None:
+            chains_range = range(len(self.autocorr_function))
+        autocorr_time_mean = [None] * self.no_parameters
+        autocorr_time_mean_beta = [None] * self.no_parameters
         if length==None:
-            length = min(self.length)
+            length = min(self.length[chains_range])
         else:
             length = int(length)
+        autocorr_function_mean = self.calculate_autocorr_function_mean(None,chains_range)
         for j in range(self.no_parameters):
-            f = self.autocorr_function_mean[:length,j]
-            self.autocorr_time_mean[j] = autocorr_FM(f, c)
-            f = self.autocorr_function_mean[:,j]
-            self.autocorr_time_mean_beta[j] = autocorr_FM(f, c)
+            f = autocorr_function_mean[:length,j]
+            autocorr_time_mean[j] = autocorr_FM(f, c)
+            f = autocorr_function_mean[:,j]
+            autocorr_time_mean_beta[j] = autocorr_FM(f, c)
+        return autocorr_time_mean, autocorr_time_mean_beta
 
     # def calculate_autocorr_time_sliding(self,no_sw=4,window_length=None,chains_range=None):
     #     if chains_range==None:

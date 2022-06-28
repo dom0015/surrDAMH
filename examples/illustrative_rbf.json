@@ -19,8 +19,7 @@
             "max_samples": 10,
             "time_limit": 60,
             "proposal_std": 1.0,
-            "surrogate_is_updated": true,
-            "adaptive": true
+            "surrogate_is_updated": true
         },
         {
             "type": "MH",
@@ -28,11 +27,7 @@
             "time_limit": 60,
             "proposal_std": 1.0,
             "surrogate_is_updated": false,
-            "excluded": false,
-            "adaptive": true,
-            "use_only_surrogate": true,
-            "target_rate": 0.1,
-            "sample_limit": 100
+            "excluded": false
         },
         {
             "type": "DAMH",
@@ -118,8 +113,13 @@
             "excluded": true
         }
     ],
-    "surrogate_type": "poly",
+    "surrogate_type": "rbf",
+    "surr_solver_parameters": {
+        "kernel_type": 1
+    },
     "surr_updater_parameters": {
-        "max_degree": 15
+        "kernel_type": 1,
+        "no_keep": 1000,
+        "expensive": false
     }
 }
