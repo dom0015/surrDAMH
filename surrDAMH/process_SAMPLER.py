@@ -17,6 +17,8 @@ comm_world = MPI.COMM_WORLD
 rank_world = comm_world.Get_rank()
 size_world = comm_world.Get_size()
 
+comm_sampler = comm_world.Split(color=0, key=rank_world)
+
 no_samplers, problem_path = comm_world.recv(source=MPI.ANY_SOURCE)
 comm_world.Barrier()
 output_dir = sys.argv[1]
@@ -76,7 +78,7 @@ for i,d in enumerate(C.list_alg):
                 corr_limit = d["corr_limit"]
             sample_limit = None
             if "sample_limit" in d.keys():
-                sample_limit = d["sample_limit"] 
+                sample_limit = d["sample_limit"]
             my_Alg = cS.Algorithm_MH_adaptive(my_Prob, my_Prop,
                              Solver = Solver,
                              Surrogate = Surrogate,
@@ -121,6 +123,11 @@ for i,d in enumerate(C.list_alg):
     #print("RANK", rank_world, "INITIAL SAMPLE", initial_sample)
     my_Alg.run()
     #print("RANK", rank_world, "LAST SAMPLE", my_Alg.current_sample)
+    if "adaptive" in d.keys() and d["adaptive"]==True:
+        sendbuf = my_Prop.proposal_std
+        recvbuf = sendbuf.copy()
+        comm_sampler.Allreduce(sendbuf, recvbuf)
+        my_Prop.set_covariance(proposal_std = recvbuf/no_samplers)
     if "excluded" in d.keys() and d["excluded"]==True:
         pass
     else:

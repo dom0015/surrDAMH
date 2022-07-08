@@ -16,8 +16,8 @@
     "samplers_list": [
         {
             "type": "MH",
-            "max_samples": 200,
-            "time_limit": 30,
+            "max_evaluations": 200,
+            "time_limit": 180,
             "proposal_std": 0.1,
             "surrogate_is_updated": true,
             "adaptive": true

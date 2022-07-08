@@ -72,6 +72,11 @@ class Algorithm_PARENT:
             os.makedirs(os.path.dirname(filename), exist_ok=True)
             self.__file_raw = open(filename, 'w')
             self.writer_raw = csv.writer(self.__file_raw)
+            """ temporary (4 lines, monitoring log_ratio): """
+            # filename = os.path.join(self.output_dir, "temp", self.Problem.name, "log_ratio", self.name + ".csv")
+            # os.makedirs(os.path.dirname(filename), exist_ok=True)
+            # self.__file_temp = open(filename, 'w')
+            # self.writer_temp = csv.writer(self.__file_temp)
         if self.G_current_sample is None:
             self.Solver.send_parameters(self.current_sample)
             self.convergence_tag, self.G_current_sample = self.Solver.recv_observations()
@@ -84,6 +89,9 @@ class Algorithm_PARENT:
         self.convergence_tag, self.G_proposed_sample = self.Solver.recv_observations()
         self.posterior_proposed_sample = self.compute_posterior(self.proposed_sample, self.G_proposed_sample, self.convergence_tag)
         self.log_ratio = self.posterior_proposed_sample - self.posterior_current_sample
+        """ temporary: (2 lines) """
+        # row = ["log_ratio", self.log_ratio, self.posterior_proposed_sample, self.posterior_current_sample]
+        # self.writer_temp.writerow(row)
         
     def if_accepted(self):
         self.__write_to_file()
@@ -128,6 +136,8 @@ class Algorithm_PARENT:
             file_notes.close()
         if self.save_raw_data:
             self.__file_raw.close()
+            """ temporary: """
+            # self.__file_temp.close()
 
     def _acceptance_log_symmetric(self,log_ratio):
         temp = self.__generator.uniform(0.0,1.0)
@@ -196,6 +206,13 @@ class Algorithm_MH_adaptive(Algorithm_PARENT): # initiated by SAMPLERs
         counter_accepted = 0
         counter_rejected = 0
         init_flag = True
+        coef = 1
+        ## find initial proposal SD:
+        if self.Proposal.proposal_std.ndim == 1:
+            initial_SD = self.Proposal.proposal_std
+        else:
+            initial_SD = np.sqrt(np.diag(self.Proposal.proposal_std))
+        COV = initial_SD
         for i in range(self.max_samples):
             self.proposed_sample = self.Proposal.propose_sample(self.current_sample)
             self.request_observations()
@@ -228,19 +245,18 @@ class Algorithm_MH_adaptive(Algorithm_PARENT): # initiated by SAMPLERs
                 #print(CORR)
                 if init_flag:
                     init_flag = False
-                    ## find initial proposal SD:
-                    if self.Proposal.proposal_std.ndim == 1:
-                        tmp = self.Proposal.proposal_std
-                    else:
-                        tmp = np.sqrt(np.diag(self.Proposal.proposal_std))
-                    coef = np.mean(tmp/SD)
+                    coef = np.mean(initial_SD/SD)
                 ratio = current_rate/self.target_rate
                 if ratio>1.2: # acceptance rate is too high:
                     coef = coef*min(ratio**(2/self.Problem.no_parameters),2.0)
                     self.Proposal.set_covariance(coef*COV)
+                    # print("COVARIANCE CHANGED (rate too high):", ratio, self.Proposal.proposal_std)
                 elif (1/ratio)>1.2: # acceptance rate is too low:
                     coef = coef*max(ratio**(2/self.Problem.no_parameters),0.5)
                     self.Proposal.set_covariance(coef*COV)
+                #     print("COVARIANCE CHANGED (rate too low):", ratio, self.Proposal.proposal_std)
+                # else:
+                #     print("COVARIANCE NOT CHANGED:", ratio)
                 #print("RANK", MPI.COMM_WORLD.Get_rank(), "acceptance rate:",counter_accepted,"/",counter_rejected+counter_accepted,"=", np.round(current_rate,4), "coef:",coef)
                 counter_accepted = 0
                 counter_rejected = 0
@@ -248,7 +264,7 @@ class Algorithm_MH_adaptive(Algorithm_PARENT): # initiated by SAMPLERs
             if time.time() - self.time_start > self.time_limit:
                 print("SAMPLER at RANK", MPI.COMM_WORLD.Get_rank(), "time limit ", self.time_limit, " reached - loop",i)
                 break
-        #print("RANK", MPI.COMM_WORLD.Get_rank(), "FINAL COV", coef*COV)
+        print("RANK", MPI.COMM_WORLD.Get_rank(), "FINAL COV", coef*COV)
         self.close_files()
         
 class Algorithm_DAMH(Algorithm_PARENT): # initiated by SAMPLERs
@@ -283,6 +299,10 @@ class Algorithm_DAMH(Algorithm_PARENT): # initiated by SAMPLERs
             GS_proposed_sample = tmp[1,:]
             pre_posterior_proposed_sample = self.compute_posterior(self.proposed_sample, GS_proposed_sample)
             pre_log_ratio = pre_posterior_proposed_sample - self.pre_posterior_current_sample
+            """ temporary: (2 lines) """
+            # row = ["pre_log_ratio", pre_log_ratio, pre_posterior_proposed_sample, self.pre_posterior_current_sample]
+            # self.writer_temp.writerow(row)
+            
             if self.is_accepted_sample(pre_log_ratio):
                 self.request_observations()
                 if self.is_accepted_sample(self.log_ratio - pre_log_ratio):

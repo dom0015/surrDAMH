@@ -7,7 +7,7 @@ Created on Wed Apr 29 11:01:04 2020
 """
 
 import numpy as np
-#import emcee
+import emcee
 import matplotlib.pyplot as plt
 import pandas as pd
 from os import listdir
@@ -995,119 +995,120 @@ class Samples:
 # The samples in one chain form a numpy array of shape (l_i, n).
 # All samples form a python list of length N.
 
-    # def calculate_autocorr_function(self,begin=None,end=None,chains_range=None):
+    def calculate_autocorr_function(self,begin=None,end=None,chains_range=None):
+        if chains_range==None:
+            chains_range = range(self.no_chains)
+        no_chains = len(chains_range)
+        self.autocorr_function = [None] * (1+max(chains_range))
+        if end == None:
+            end = self.length[chains_range]
+        else:
+            end = [int(end)] * no_chains
+        if begin == None:
+            begin = [0] * no_chains
+        else:
+            begin = [int(begin)] * no_chains
+        for idx,i in enumerate(chains_range):
+            tmp = np.zeros((end[idx]-begin[idx],self.no_parameters))
+            for j in range(self.no_parameters):
+                tmp[:,j] = emcee.autocorr.function_1d(self.x[i][begin[idx]:end[idx],j])
+            self.autocorr_function[i] = tmp
+            
+    def calculate_autocorr_function_mean(self,length=None,chains_range=None):
+        if chains_range==None:
+            chains_range = range(len(self.autocorr_function))
+        no_chains = len(chains_range)
+        if length==None:
+            length = self.length[chains_range]
+            max_length = max(self.length[chains_range])
+        else:
+            max_length = int(length)
+            length = [int(length)] * no_chains
+        autocorr_function_mean = np.zeros((max_length, self.no_parameters))
+        for j in range(self.no_parameters):
+            tmp = np.zeros(max_length)
+            count = np.zeros(max_length)
+            for idx,i in enumerate(chains_range):
+                tmp[:length[idx]] += self.autocorr_function[i][:,j]
+                count[:length[idx]] += 1
+            autocorr_function_mean[:,j] = tmp/count
+        return autocorr_function_mean
+
+    # def calculate_autocorr_time(self, c=5, tol=50, quiet=True):
+    #     self.autocorr_time = [None] * self.no_chains
+    #     for i in range(self.no_chains):
+    #         tmp = np.zeros((self.no_parameters))
+    #         for j in range(self.no_parameters):
+    #             tmp[j] = emcee.autocorr.integrated_time(self.x[i][:,j], c=c, tol=tol, quiet=quiet)
+    #         self.autocorr_time[i] = tmp
+        
+    def calculate_autocorr_time_mean(self, c=5, length=None, chains_range=None):
+        if chains_range==None:
+            chains_range = range(len(self.autocorr_function))
+        autocorr_time_mean = [None] * self.no_parameters
+        autocorr_time_mean_beta = [None] * self.no_parameters
+        if length==None:
+            length = min(self.length[chains_range])
+        else:
+            length = int(length)
+        autocorr_function_mean = self.calculate_autocorr_function_mean(None,chains_range)
+        for j in range(self.no_parameters):
+            f = autocorr_function_mean[:length,j]
+            autocorr_time_mean[j] = autocorr_FM(f, c)
+            f = autocorr_function_mean[:,j]
+            autocorr_time_mean_beta[j] = autocorr_FM(f, c)
+        return autocorr_time_mean, autocorr_time_mean_beta
+
+    # def calculate_autocorr_time_sliding(self,no_sw=4,window_length=None,chains_range=None):
     #     if chains_range==None:
     #         chains_range = range(self.no_chains)
-    #     no_chains = len(chains_range)
-    #     self.autocorr_function = [None] * (1+max(chains_range))
-    #     if end == None:
-    #         end = self.length[chains_range]
+    #     min_length = min(self.length[list(chains_range)])
+    #     if window_length == None:
+    #         sw_step = np.floor(min_length/(no_sw+1))
+    #         window_length = sw_step*2
     #     else:
-    #         end = [int(end)] * no_chains
-    #     if begin == None:
-    #         begin = [0] * no_chains
-    #     else:
-    #         begin = [int(begin)] * no_chains
-    #     for idx,i in enumerate(chains_range):
-    #         tmp = np.zeros((end[idx]-begin[idx],self.no_parameters))
-    #         for j in range(self.no_parameters):
-    #             tmp[:,j] = emcee.autocorr.function_1d(self.x[i][begin[idx]:end[idx],j])
-    #         self.autocorr_function[i] = tmp
-            
-    # def calculate_autocorr_function_mean(self,length=None,chains_range=None):
-    #     if chains_range==None:
-    #         chains_range = range(len(self.autocorr_function))
-    #     no_chains = len(chains_range)
-    #     if length==None:
-    #         length = self.length[chains_range]
-    #         max_length = max(self.length[chains_range])
-    #     else:
-    #         max_length = int(length)
-    #         length = [int(length)] * no_chains
-    #     autocorr_function_mean = np.zeros((max_length, self.no_parameters))
-    #     for j in range(self.no_parameters):
-    #         tmp = np.zeros(max_length)
-    #         count = np.zeros(max_length)
-    #         for idx,i in enumerate(chains_range):
-    #             tmp[:length[idx]] += self.autocorr_function[i][:,j]
-    #             count[:length[idx]] += 1
-    #         autocorr_function_mean[:,j] = tmp/count
-    #     return autocorr_function_mean
+    #         sw_step = np.floor((min_length-window_length)/no_sw)
+    #     print("window length:",window_length)
+    #     self.tau_sliding_mean = [None] * no_sw
+    #     self.tau_sliding_max = [None] * no_sw
+    #     self.tau_sliding_min = [None] * no_sw
+    #     for i in range(no_sw):
+    #         begin=i*sw_step
+    #         end=i*sw_step+window_length
+    #         self.calculate_autocorr_function(begin, end, chains_range=chains_range)
+    #         self.calculate_autocorr_function_mean(length=end-begin)
+    #         self.calculate_autocorr_time_mean(length=end-begin)
+    #         self.tau_sliding_mean[i] = np.mean(self.autocorr_time_mean)
+    #         self.tau_sliding_max[i] = np.max(self.autocorr_time_mean)
+    #         self.tau_sliding_min[i] = np.min(self.autocorr_time_mean)
+    #         print("i, mean, min, max:", i, self.tau_sliding_mean[i], self.tau_sliding_min[i], self.tau_sliding_max[i])
 
-    # # def calculate_autocorr_time(self, c=5, tol=50, quiet=True):
-    # #     self.autocorr_time = [None] * self.no_chains
-    # #     for i in range(self.no_chains):
-    # #         tmp = np.zeros((self.no_parameters))
-    # #         for j in range(self.no_parameters):
-    # #             tmp[j] = emcee.autocorr.integrated_time(self.x[i][:,j], c=c, tol=tol, quiet=quiet)
-    # #         self.autocorr_time[i] = tmp
+    def plot_autocorr_function(self, length_disp, plot_mean=False, parameters_disp = None, chains_disp = None, show_legend = False):
+        if parameters_disp == None:
+            parameters_disp = range(self.no_parameters)
+        no_parameters_disp = len(parameters_disp)
+        if chains_disp == None:
+            chains_disp = range(self.no_chains)
+        fig, axes = plt.subplots(1, no_parameters_disp, figsize=(12, 3), sharey=True)
+        for idj,j in enumerate(parameters_disp):
+            length_disp[idj] = min(max(self.length),length_disp[idj])
+        for idj,j in enumerate(parameters_disp):
+            for idi,i in enumerate(chains_disp):
+                axes[idj].plot(self.autocorr_function[i][:length_disp[idj],j], label=i)
+            if plot_mean:
+                axes[idj].plot(self.autocorr_function_mean[:,j],label="mean")
+            axes[idj].set_xlim(0, length_disp[idj]-1)
+            if show_legend:
+                axes[idj].legend(loc=1)
+            axes[idj].set_xlabel("$par. {0}$".format(j))
+            axes[idj].grid(True)
+            if self.known_autocorr_time:
+                axes[idj].set_title("$\\tau_\mathrm{{true}} = {0:.0f}$".format(self.autocorr_time_true[j]));
+        axes[0].set_ylabel("autocorr. function")
+        plt.show()
         
-    # def calculate_autocorr_time_mean(self, c=5, length=None, chains_range=None):
-    #     if chains_range==None:
-    #         chains_range = range(len(self.autocorr_function))
-    #     autocorr_time_mean = [None] * self.no_parameters
-    #     autocorr_time_mean_beta = [None] * self.no_parameters
-    #     if length==None:
-    #         length = min(self.length[chains_range])
-    #     else:
-    #         length = int(length)
-    #     autocorr_function_mean = self.calculate_autocorr_function_mean(None,chains_range)
-    #     for j in range(self.no_parameters):
-    #         f = autocorr_function_mean[:length,j]
-    #         autocorr_time_mean[j] = autocorr_FM(f, c)
-    #         f = autocorr_function_mean[:,j]
-    #         autocorr_time_mean_beta[j] = autocorr_FM(f, c)
-    #     return autocorr_time_mean, autocorr_time_mean_beta
-
-    # # def calculate_autocorr_time_sliding(self,no_sw=4,window_length=None,chains_range=None):
-    # #     if chains_range==None:
-    # #         chains_range = range(self.no_chains)
-    # #     min_length = min(self.length[list(chains_range)])
-    # #     if window_length == None:
-    # #         sw_step = np.floor(min_length/(no_sw+1))
-    # #         window_length = sw_step*2
-    # #     else:
-    # #         sw_step = np.floor((min_length-window_length)/no_sw)
-    # #     print("window length:",window_length)
-    # #     self.tau_sliding_mean = [None] * no_sw
-    # #     self.tau_sliding_max = [None] * no_sw
-    # #     self.tau_sliding_min = [None] * no_sw
-    # #     for i in range(no_sw):
-    # #         begin=i*sw_step
-    # #         end=i*sw_step+window_length
-    # #         self.calculate_autocorr_function(begin, end, chains_range=chains_range)
-    # #         self.calculate_autocorr_function_mean(length=end-begin)
-    # #         self.calculate_autocorr_time_mean(length=end-begin)
-    # #         self.tau_sliding_mean[i] = np.mean(self.autocorr_time_mean)
-    # #         self.tau_sliding_max[i] = np.max(self.autocorr_time_mean)
-    # #         self.tau_sliding_min[i] = np.min(self.autocorr_time_mean)
-    # #         print("i, mean, min, max:", i, self.tau_sliding_mean[i], self.tau_sliding_min[i], self.tau_sliding_max[i])
-
-    # def plot_autocorr_function(self, length_disp, plot_mean=False, parameters_disp = None, chains_disp = None, show_legend = False):
-    #     if parameters_disp == None:
-    #         parameters_disp = range(self.no_parameters)
-    #     no_parameters_disp = len(parameters_disp)
-    #     if chains_disp == None:
-    #         chains_disp = range(self.no_chains)
-    #     fig, axes = plt.subplots(1, no_parameters_disp, figsize=(12, 3), sharey=True)
-    #     for idj,j in enumerate(parameters_disp):
-    #         length_disp[idj] = min(max(self.length),length_disp[idj])
-    #     for idj,j in enumerate(parameters_disp):
-    #         for idi,i in enumerate(chains_disp):
-    #             axes[idj].plot(self.autocorr_function[i][:length_disp[idj],j], label=i)
-    #         if plot_mean:
-    #             axes[idj].plot(self.autocorr_function_mean[:,j],label="mean")
-    #         axes[idj].set_xlim(0, length_disp[idj]-1)
-    #         if show_legend:
-    #             axes[idj].legend(loc=1)
-    #         axes[idj].set_xlabel("$par. {0}$".format(j))
-    #         axes[idj].grid(True)
-    #         if self.known_autocorr_time:
-    #             axes[idj].set_title("$\\tau_\mathrm{{true}} = {0:.0f}$".format(self.autocorr_time_true[j]));
-    #     axes[0].set_ylabel("autocorr. function")
-    #     plt.show()
-
-### GAUSSIAN RANDOM FIELDS:        
+### GAUSSIAN RANDOM FIELDS:
+        
     def plot_grf(self, eta, grf_path = None):
         if grf_path == None:
             grf_path = 'modules/unit50.pckl'
