@@ -64,7 +64,23 @@ class Samples:
                 current_idx = idx
         self.modus = self.x_compress[current_i][current_idx]
         return self.modus, current_val, current_i, current_idx
-            
+
+    def find_n_modi(self, count):
+        import queue
+        N = len(self.posteriors)
+        current = queue.PriorityQueue(count)
+        for i in range(N):
+            idx = np.argmax(self.posteriors[i])
+            val = self.posteriors[i][idx]
+            if not current.full():
+                current.put_nowait((val, i, idx, self.x_compress[i][idx]))
+                continue
+            elif val > current.queue[0][0]:
+                if current.full():
+                    current.get_nowait()
+                current.put_nowait((val, i, idx, self.x_compress[i][idx]))
+        return sorted(current.queue, reverse=True)
+
     def find_best_fit(self, folder_samples, no_parameters, observations):
         folder_samples = folder_samples + '/raw_data'
         file_samples = [f for f in listdir(folder_samples) if isfile(join(folder_samples, f))]
