@@ -157,12 +157,12 @@ for i in range(no_stages):
 # plt.colorbar()
 # plt.savefig(visualization_dir + "/noise_cov.pdf",bbox_inches="tight")
 
-#titles = ["HGT1-5", "HGT1-4", "HGT2-4", "HGT2-3"]
+titles = conf["observe_points"]
 N = int(len(observations)/len(grid))
 for i in range(N):
     offset = i*len(grid)
     S.hist_G_TSX(output_dir + '/raw_data',no_parameters, grid, observations, offset+np.arange(len(grid)), range(no_samplers,no_samplers*3))
-    #plt.title(titles[i])
+    plt.title(titles[i])
     plt.savefig(visualization_dir + "/hist_G" + str(i+1) + ".pdf",bbox_inches="tight")
 
 S.show_non_converging(output_dir + '/raw_data', no_parameters)

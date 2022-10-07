@@ -189,24 +189,36 @@ class Samples:
         # #     axes[i].set_xlabel(i)
         # #     axes[i].set_ylabel(i+1)
         
-        
-        plt.figure()
-        range_ = [[0, 366], [-100, 800]]
-        output = plt.hist2d(x_all.flatten(),G_all.flatten(),bins=[MAX,200],range=range_,weights=weights_all.flatten())
-        img = np.flipud(output[0].transpose())
-        # print(sum(img))
-        # img_sum = sum(img)
-        # print(img_sum)
-        # img = img/img_sum
-        # print(sum(img))
-        xx = output[1]
-        yy = output[2]
-        plt.figure()
-        plt.imshow(img,extent=[xx[0],xx[-1],yy[0],yy[-1]], cmap="gist_heat_r")
+        figsize=(6,6)
+        fig = plt.figure(figsize=figsize)
+        range_ = [[0, 366], [-100, 1000]]
+        quartiles = np.percentile(G_all, [5, 25, 75, 95], axis=0, method='midpoint')
+        # https://www.statisticshowto.com/choose-bin-sizes-statistics/
+        # nbins = (1+ 3.322*np.log10(G_all.shape[0])).astype(int) # too small
+        n_samples = G_all.shape[0]
+        nbins = (np.sqrt(n_samples)).astype(int)
+        h2d = plt.hist2d(x_all.flatten(),G_all.flatten(),bins=[MAX,nbins],range=range_,#weights=weights_all.flatten(),
+                            cmin=1e-10, cmap="viridis_r", vmin=1, vmax=n_samples/3)
+        fig.colorbar(h2d[3])
+        # img = np.flipud(output[0].transpose())
+        # # print(sum(img))
+        # # img_sum = sum(img)
+        # # print(img_sum)
+        # # img = img/img_sum
+        # # print(sum(img))
+        # xx = output[1]
+        # print(xx)
+        # yy = output[2]
+        # plt.figure(figsize=(12,6))
+        # # f.set_figwidth(3)
+        # # f.set_figheight(2)
+        # plt.imshow(img,extent=[xx[0],xx[-1],yy[0],yy[-1]], cmap="copper_r")
         plt.grid()
         plt.xlabel("time [d]")
         plt.ylabel("pressure [m]")
         plt.plot(grid,observations[chosen_observations])
+        plt.plot(x_all[0], quartiles.take([0,3],axis=0).transpose(),color="black", linestyle='dashed', linewidth=0.75)
+        plt.plot(x_all[0], quartiles.take([1,2],axis=0).transpose(), color="black", linestyle='dotted', linewidth=0.75)
         
     def hist_G(self, folder_samples, no_parameters, observations, chosen_observations, chains_disp = None):
         if chains_disp == None:
