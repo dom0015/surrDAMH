@@ -133,9 +133,11 @@ observations = np.array(conf["problem_parameters"]["observations"])
 
 ### SAMPLES VISUALIZATION:
 no_stages = int(S.no_chains/no_samplers)
+par_names = [p["name"] for p in conf["transformations"]]
+print(par_names)
 for i in range(no_stages):
     chains_disp=range(i*no_samplers,(i+1)*no_samplers)
-    S.plot_hist_grid(chains_disp=chains_disp, bins1d=9, bins2d=20, scale=scale)
+    S.plot_hist_grid(par_names=par_names, chains_disp=chains_disp, bins1d=9, bins2d=20, scale=scale)
     S.plot_hist_grid_add(transformations,chains_disp=chains_disp, scale=scale)
     plt.savefig(visualization_dir + "/histograms" +str(i)+ ".pdf",bbox_inches="tight")
     S.plot_segment(chains_disp=chains_disp,scale=scale)

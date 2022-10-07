@@ -712,7 +712,7 @@ class Samples:
         if show:
             plt.show()
     
-    def plot_hist_grid(self, burn_in = None, parameters_disp = None, chains_disp = None, bins1d = 20, bins2d = 20, scale=None):
+    def plot_hist_grid(self, par_names = None, burn_in = None, parameters_disp = None, chains_disp = None, bins1d = 20, bins2d = 20, scale=None):
         if parameters_disp == None:
             parameters_disp = range(self.no_parameters)
         if chains_disp == None:
@@ -740,9 +740,13 @@ class Samples:
                     # else:
                     self.plot_hist_2d(dimensions = [j,i],  burn_in = burn_in, chains_disp=chains_disp, bins=bins2d, show = False, log=log)
                 if idx<=n:
-                    label = "$par. {0}$".format(j)
+                    if par_names is not None:
+                        par_name = par_names[j].replace('_', '\_')
+                        label = "${0}$".format(par_name)
+                    else:
+                        label = "$par. {0}$".format(j)
                     if scale[idj] == "log":
-                        label += " (log scale)"
+                        label += " (log)"
                     plt.title(label)
                 idx = idx + 1
         #plt.show()
