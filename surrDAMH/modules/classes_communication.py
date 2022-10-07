@@ -19,9 +19,11 @@ class Solver_MPI_parent: # initiated by SOLVERS POOL
         # path hack: find absolute path to process_CHILD.py
         # this makes surrDAMH lib independent of the initial calling path
         rep_dir = os.path.dirname(os.path.abspath(__file__))
+        print("Spawning on rank " + str(MPI.COMM_WORLD.Get_rank()), flush=True)
         self.comm = MPI.COMM_SELF.Spawn(sys.executable, args=[rep_dir+'/../process_CHILD.py', str(no_samplers),
                                                               problem_path, str(solver_id), output_dir],
                                         maxprocs=maxprocs)
+        print("Spawned. MPI Status " + str(MPI.Status()), flush=True)
         self.tag = 0
         self.received_data = np.zeros(self.no_observations)
         self.status = MPI.Status()
