@@ -92,7 +92,6 @@ class Samples:
         return sorted(current.queue, reverse=True)
 
     def find_best_fit(self, folder_samples, no_parameters, observations):
-        folder_samples = folder_samples + '/raw_data'
         file_samples = [f for f in listdir(folder_samples) if isfile(join(folder_samples, f))]
         file_samples.sort()
         N = len(file_samples)
@@ -124,7 +123,7 @@ class Samples:
     def hist_G_TSX(self, folder_samples, no_parameters, grid, observations, chosen_observations, chains_disp = None):
         if chains_disp == None:
             chains_disp = range(self.no_chains)
-        #folder_samples = folder_samples + '/raw_data'
+
         file_samples = [f for f in listdir(folder_samples) if isfile(join(folder_samples, f))]
         file_samples.sort()
         MAX = 366
@@ -217,8 +216,13 @@ class Samples:
         plt.xlabel("time [d]")
         plt.ylabel("pressure [m]")
         plt.plot(grid,observations[chosen_observations])
-        plt.plot(x_all[0], quartiles.take([0,3],axis=0).transpose(),color="black", linestyle='dashed', linewidth=0.75)
-        plt.plot(x_all[0], quartiles.take([1,2],axis=0).transpose(), color="black", linestyle='dotted', linewidth=0.75)
+        plt.plot(x_all[0], quartiles.take([0,3], axis=0).transpose(), color="black", linestyle='dashed', linewidth=0.75)
+        plt.plot(x_all[0], quartiles.take([1,2], axis=0).transpose(), color="black", linestyle='dotted', linewidth=0.75)
+
+        # plot best fit - find, interpolate, plot
+        best_fit_x, best_fit_G, best_fit_norm = self.find_best_fit(folder_samples, no_parameters, observations)
+        best_fit_interp = np.interp(grid_interp, grid, best_fit_G)
+        plt.plot(x_all[0], best_fit_interp, color="red", linestyle='dashed', linewidth=1.0)
         
     def hist_G(self, folder_samples, no_parameters, observations, chosen_observations, chains_disp = None):
         if chains_disp == None:
