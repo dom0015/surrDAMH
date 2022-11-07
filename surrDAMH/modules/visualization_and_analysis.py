@@ -802,7 +802,9 @@ class Samples:
                             beta = trans_options["beta"]
                             x=np.linspace(0,1,100)
                             y=scipy.stats.beta.pdf(x,alfa,beta)
-                            plt.plot(x,y)
+                            # possibly cut the x-axis width for reasonable values
+                            cut = np.argwhere(y>1e-3)
+                            plt.plot(x[cut],y[cut])
                 else:
                     if scale[idi]=="log":
                         x=np.log10(self.modus[idi])
