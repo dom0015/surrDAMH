@@ -221,7 +221,7 @@ class Samples:
 
         # plot best fit - find, interpolate, plot
         best_fit_x, best_fit_G, best_fit_norm = self.find_best_fit(folder_samples, no_parameters, observations)
-        best_fit_interp = np.interp(grid_interp, grid, best_fit_G)
+        best_fit_interp = np.interp(grid_interp, grid, best_fit_G[chosen_observations])
         plt.plot(x_all[0], best_fit_interp, color="red", linestyle='dashed', linewidth=1.0)
         
     def hist_G(self, folder_samples, no_parameters, observations, chosen_observations, chains_disp = None):
