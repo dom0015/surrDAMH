@@ -215,14 +215,22 @@ class Samples:
         plt.grid()
         plt.xlabel("time [d]")
         plt.ylabel("pressure [m]")
-        plt.plot(grid,observations[chosen_observations])
-        plt.plot(x_all[0], quartiles.take([0,3], axis=0).transpose(), color="black", linestyle='dashed', linewidth=0.75)
-        plt.plot(x_all[0], quartiles.take([1,2], axis=0).transpose(), color="black", linestyle='dotted', linewidth=0.75)
+        plt.plot(grid,observations[chosen_observations], color="cyan", label="measurement")
+        plt.plot(x_all[0], quartiles.take([0,3], axis=0).transpose(), color="black", linestyle='dashed', linewidth=0.75,
+                 label="0.05,0.95 quantile")
+        plt.plot(x_all[0], quartiles.take([1,2], axis=0).transpose(), color="black", linestyle='dotted', linewidth=0.75,
+                 label="0.25,0.75 quantile")
 
         # plot best fit - find, interpolate, plot
         best_fit_x, best_fit_G, best_fit_norm = self.find_best_fit(folder_samples, no_parameters, observations)
         best_fit_interp = np.interp(grid_interp, grid, best_fit_G[chosen_observations])
-        plt.plot(x_all[0], best_fit_interp, color="red", linestyle='dashed', linewidth=1.0)
+        plt.plot(x_all[0], best_fit_interp, color="red", linestyle='dashed', linewidth=1.0,
+                 # label="best fit ($||\cdot||_{L^2}$)"
+                 label="best fit ($L^2$)")
+
+        handles, labels = plt.gca().get_legend_handles_labels()
+        by_label = dict(zip(labels, handles))
+        plt.legend(by_label.values(), by_label.keys(), loc='upper right')
         
     def hist_G(self, folder_samples, no_parameters, observations, chosen_observations, chains_disp = None):
         if chains_disp == None:
