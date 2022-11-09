@@ -10,6 +10,7 @@ import numpy as np
 #import emcee
 import matplotlib.pyplot as plt
 import pandas as pd
+import os
 from os import listdir
 from os.path import isfile, join, getsize
 import surrDAMH.surrDAMH.modules.grf_eigenfunctions as grf_eigenfunctions
@@ -99,7 +100,7 @@ class Samples:
         G_all = [None] * N
         G_norm_min = np.inf
         for i in range(N):
-            path_samples = folder_samples + "/" + file_samples[i]
+            path_samples = os.path.join(folder_samples, file_samples[i])
             df_samples = pd.read_csv(path_samples, header=None)
             types = df_samples.iloc[:,0]
             idx = np.ones(len(types), dtype=bool)
@@ -119,6 +120,44 @@ class Samples:
                     x_all_min = x_all[i][argmin,:]
                     G_all_min = G_all[i][argmin,:]
         return x_all_min, G_all_min, G_norm_min
+
+    def estimate_distributions(self, folder_samples, transformations):
+        no_parameters = len(transformations)
+        file_samples = [f for f in listdir(folder_samples) if isfile(join(folder_samples, f))]
+        file_samples.sort()
+        N = len(file_samples)
+        param_all = np.empty((0, no_parameters))
+        for i in range(N):
+            path_samples = os.path.join(folder_samples, file_samples[i])
+            df_samples = pd.read_csv(path_samples, header=None)
+            types = df_samples.iloc[:,0]
+            idx = np.ones(len(types), dtype=bool)
+            idx[types == "prerejected"] = 0
+            idx[types == "rejected"] = 0
+            if sum(idx)==0:
+                print("find_best_fit EMPTY ", i, " of ", N)
+            else:
+                param = np.array(df_samples.iloc[:, 1:no_parameters + 1])
+                param = param[idx]
+                param_all = np.vstack((param_all, param))
+
+        param_all_log = np.log10(param_all)
+        mean = np.mean(param_all, axis=0).tolist()
+        mean_log = np.mean(param_all_log, axis=0).tolist()
+        std = np.std(param_all, axis=0).tolist()
+        std_log = np.std(param_all_log, axis=0).tolist()
+
+        output_list = []
+        for i in range(no_parameters):
+            d = dict()
+            d["name"] = transformations[i]["name"]
+            d["mu"] = mean[i]
+            d["mu_log10"] = mean_log[i]
+            d["sigma"] = std[i]
+            d["sigma_log10"] = std_log[i]
+            output_list.append(d)
+
+        return output_list
     
     def hist_G_TSX(self, folder_samples, no_parameters, grid, observations, chosen_observations, chains_disp = None):
         if chains_disp == None:
@@ -133,7 +172,7 @@ class Samples:
         G_all = np.empty((0,MAX))
         param_all = np.empty((0,no_parameters))
         for i in chains_disp:
-            path_samples = folder_samples + "/" + file_samples[i]
+            path_samples = os.path.join(folder_samples, file_samples[i])
             df_samples = pd.read_csv(path_samples, header=None)
             types = df_samples.iloc[:,0]
             idx = np.ones(len(types), dtype=bool)
@@ -191,11 +230,21 @@ class Samples:
         figsize=(6,6)
         fig = plt.figure(figsize=figsize)
         range_ = [[0, 366], [-100, 1000]]
+        # print(x_all)
+        # print(G_all)
+        # print(G_all.shape)
+        # print(weights_all)
+        # print(weights_all.shape)
+        # print(np.sum(weights_all[:,0]))
+        # print(np.sum(weights_all)/weights_all.shape[0])
         quartiles = np.percentile(G_all, [5, 25, 75, 95], axis=0, method='midpoint')
+        # print(quartiles)
         # https://www.statisticshowto.com/choose-bin-sizes-statistics/
         # nbins = (1+ 3.322*np.log10(G_all.shape[0])).astype(int) # too small
         n_samples = G_all.shape[0]
         nbins = (np.sqrt(n_samples)).astype(int)
+        # print(n_samples, nbins)
+        # density = True
         h2d = plt.hist2d(x_all.flatten(),G_all.flatten(),bins=[MAX,nbins],range=range_,#weights=weights_all.flatten(),
                             cmin=1e-10, cmap="viridis_r", vmin=1, vmax=n_samples/3)
         fig.colorbar(h2d[3])
@@ -508,6 +557,9 @@ class Samples:
         data['no parameters'] = self.no_parameters
         no_phases = int(self.no_chains/no_samplers)
         samplers_list = list()
+        # print("no_samplers: ", no_samplers)
+        # print("len(self.x)", len(self.x))
+        # print("self.x", self.x)
         for i in range(no_phases):
             idx = np.arange(no_samplers) + i*no_samplers
             if max(idx)>=len(self.length):
@@ -516,7 +568,10 @@ class Samples:
             d["length of chains"] = self.length[idx].tolist()
             x_phase = np.empty((0,self.no_parameters))
             for j in idx:
+                # print("j ", j, " len(self.x[j]", len(self.x[j]))
                 x_phase = np.vstack((x_phase,self.x[j]))
+            # print("x_phase: ", len(x_phase))
+            # print(x_phase)
             mean = np.mean(x_phase,axis=0)
             d["mean"] = mean.tolist()
             d["mean_log10"] = np.log10(mean).tolist()
@@ -747,7 +802,8 @@ class Samples:
             scale = [None] * len(parameters_disp)
         n = len(parameters_disp)
         idx = 1
-        fig, axes = plt.subplots(n, n, sharex=False, sharey=False, figsize=(12,12))
+        fig, axes = plt.subplots(n, n, sharex=False, sharey=False, figsize=(15,15))
+        plt.subplots_adjust(wspace=0.5, hspace=0.3)
         for idi,i in enumerate(parameters_disp):
             for idj,j in enumerate(parameters_disp):
                 plt.subplot(n, n, idx)
@@ -764,18 +820,20 @@ class Samples:
                     # else:
                     self.plot_hist_2d(dimensions = [j,i],  burn_in = burn_in, chains_disp=chains_disp, bins=bins2d, show = False, log=log)
                 if idx<=n:
+                    # determine parameter name
                     if par_names is not None:
                         par_name = par_names[j].replace('_', '\_')
                         label = "${0}$".format(par_name)
                     else:
                         label = "$par. {0}$".format(j)
                     if scale[idj] == "log":
-                        label += " (log)"
-                    plt.title(label)
+                        label += "\n(log)"
+                    axes[idi,idj].set_title(label, x=1.05, rotation=45, multialignment='center')
                 idx = idx + 1
         #plt.show()
         
-    def plot_hist_grid_add(self, settings, burn_in = None, parameters_disp = None, chains_disp = None, scale=None):
+    def plot_hist_grid_add(self, settings, estimated_distributions,
+                           burn_in = None, parameters_disp = None, chains_disp = None, scale=None):
         if parameters_disp == None:
             parameters_disp = range(self.no_parameters)
         if chains_disp == None:
@@ -795,12 +853,20 @@ class Samples:
                     else:
                         trans_type = settings[idi]["type"]
                         trans_options = settings[idi]["options"]
+                        # TODO add posterior
                         if trans_type == "normal_to_lognormal":
                             mu = trans_options["mu"]
                             sigma = trans_options["sigma"]
                             x = np.linspace(mu - 3*sigma, mu + 3*sigma, 100)
                             y = scipy.stats.norm.pdf(x, mu, sigma)
                             plt.plot(np.log10(np.exp(x)),y*np.log(100)/np.log10(100))
+
+                            est = estimated_distributions[idi]
+                            est_mu = est["mu_log10"]
+                            est_sigma = est["sigma_log10"]
+                            x = np.linspace(est_mu - 3 * est_sigma, est_mu + 3 * est_sigma, 100)
+                            y = scipy.stats.norm.pdf(x, est_mu, est_sigma)
+                            plt.plot(x, y, color='red')
                         elif trans_type == "normal_to_uniform":
                             a = trans_options["a"]
                             b = trans_options["b"]
@@ -813,6 +879,18 @@ class Samples:
                             # possibly cut the x-axis width for reasonable values
                             cut = np.argwhere(y>1e-3)
                             plt.plot(x[cut],y[cut])
+
+                            est = estimated_distributions[idi]
+                            est_mu = est["mu"]
+                            est_var = est["sigma"]*est["sigma"]
+                            s = est_mu*(1-est_mu)/est_var - 1
+                            est_alpha = est_mu * s
+                            est_beta = s - est_alpha
+                            x = np.linspace(0, 1, 100)
+                            y = scipy.stats.beta.pdf(x, est_alpha, est_beta)
+                            # possibly cut the x-axis width for reasonable values
+                            cut = np.argwhere(y > 1e-3)
+                            plt.plot(x[cut], y[cut], color='red')
                 else:
                     if scale[idi]=="log":
                         x=np.log10(self.modus[idi])
