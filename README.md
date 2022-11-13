@@ -113,11 +113,19 @@ Path and constructor arguments of the spawed solver (wrapper) class are specifie
 `    ],`<br>
 `    "surrogate_type": "rbf", ` *"poly" or "rbf" (polynomial or radial basis functions based surrogate model)*<br>
 `    "surr_solver_parameters": { ` *optional - arguments of class Surrogate_apply that evaluates surrogate model*<br>
-`        "kernel_type": 1`<br>
+`        "kernel_type": 1` *0: $x$, 1: $x^3$, 2: $x^5$, 3: $x^7$, 4: $e^{-x^2}$, 5: $1/\sqrt{x^2 + 1}$, 6: $-x^5$, 7: $x^9$* <br>
 `    },`<br>
 `    "surr_updater_parameters": { ` *optional - arguments of class Surrogate_update that updates surrogate model*<br>
 `        "kernel_type": 1,`<br>
-`        "no_keep": 500,`<br>
-`        "expensive": false`<br>
+`        "no_keep": 500,` *number of points to keep in the rbf surrogate*<br>
+`        "expensive": false` *keep as false, experimental not finished option* <br>
 `    }`<br>
+
+alternatively for polynomial surrogate: <br>
+--------------------------------------- <br>
+`    "surrogate_type": "poly", ` <br>
+`    "surr_updater_parameters": { ` <br>
+`        "max_degree": 8`<br>
+`    }`<br>
+--------------------------------------- <br>
 `}`<br>
