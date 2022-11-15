@@ -54,6 +54,8 @@ for idx,d in enumerate(output_dict["samplers_list"]):
 
     d[title] = S.notes[idx].values.tolist()
     d["acceptance ratio [a/r, a/all]"] = np.array([count_list[0]/count_list[1], count_list[0]/count_list[3]]).tolist()
+    d["N samples [a, r, pr, all]"] = np.array(
+        [count_list[0], count_list[1], count_list[2], count_list[3]]).tolist()
     d.update(conf["samplers_list"][idx])
 
 mode = S.find_modus()
