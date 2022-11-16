@@ -138,7 +138,11 @@ observations = np.array(conf["problem_parameters"]["observations"])
 # plt.grid()
 # plt.savefig(visualization_dir + "/observations.pdf",bbox_inches="tight")
 
-estimated_distributions = S.estimate_distributions(raw_data_dir, transformations)
+# collecting samples in the same way as SB does in hist_G_TSX
+# parameter chains_disp selects samples from 2. and 3. phase
+estimated_distributions = S.estimate_distributions(raw_data_dir, transformations,
+                                                   chains_disp=range(no_samplers, no_samplers*3),
+                                                   output_file=os.path.join(visualization_dir, "parameters.csv"))
 print(estimated_distributions)
 
 ### SAMPLES VISUALIZATION:

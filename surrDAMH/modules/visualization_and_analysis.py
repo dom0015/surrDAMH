@@ -121,25 +121,48 @@ class Samples:
                     G_all_min = G_all[i][argmin,:]
         return x_all_min, G_all_min, G_norm_min
 
-    def estimate_distributions(self, folder_samples, transformations):
+    def estimate_distributions(self, folder_samples, transformations, chains_disp = None, output_file = None):
+        if chains_disp == None:
+            chains_disp = range(self.no_chains)
+
         no_parameters = len(transformations)
         file_samples = [f for f in listdir(folder_samples) if isfile(join(folder_samples, f))]
         file_samples.sort()
-        N = len(file_samples)
         param_all = np.empty((0, no_parameters))
-        for i in range(N):
+
+        weights_all = np.empty((0,1))
+        for i in chains_disp:
             path_samples = os.path.join(folder_samples, file_samples[i])
             df_samples = pd.read_csv(path_samples, header=None)
             types = df_samples.iloc[:,0]
             idx = np.ones(len(types), dtype=bool)
             idx[types == "prerejected"] = 0
             idx[types == "rejected"] = 0
+            temp = np.arange(len(types))
+            weights = temp[idx]
+            weights[1:] = weights[1:] - weights[:-1]
+            # print(np.shape(weights))
             if sum(idx)==0:
-                print("find_best_fit EMPTY ", i, " of ", N)
+                print("find_best_fit EMPTY ", i, " of ", chains_disp)
             else:
                 param = np.array(df_samples.iloc[:, 1:no_parameters + 1])
                 param = param[idx]
                 param_all = np.vstack((param_all, param))
+
+                weights = weights.reshape((-1, 1))
+                weights_all = np.vstack((weights_all, weights)).astype(int)
+
+        # print(np.shape(param_all))
+        # print(np.shape(weights_all))
+        # print(param_all)
+        # print(weights_all)
+        if output_file is not None:
+            with open(output_file, 'w') as file:
+                header ='N,' + ','.join([s["name"] for s in transformations])
+                file.write(header + "\n")
+                for i in range(np.shape(weights_all)[0]):
+                    line = str(weights_all[i][0]) + ',' + ','.join([str(s) for s in param_all[i]])
+                    file.write(line + "\n")
 
         param_all_log = np.log10(param_all)
         mean = np.mean(param_all, axis=0).tolist()
