@@ -25,6 +25,11 @@ visualization_dir = os.path.join(output_dir, 'img_Bayes')
 with open(conf_path) as f:
     conf = yaml.safe_load(f)
 
+no_stages = len(conf["samplers_list"])
+# parameter chains_disp selects samples from 2. and 3. stage
+chains_disp = range(no_samplers, no_samplers * no_stages)
+print("chains_disp", chains_disp)
+
 if not os.path.exists(visualization_dir):
     os.makedirs(visualization_dir)
 
@@ -139,19 +144,17 @@ observations = np.array(conf["problem_parameters"]["observations"])
 # plt.savefig(visualization_dir + "/observations.pdf",bbox_inches="tight")
 
 # collecting samples in the same way as SB does in hist_G_TSX
-# parameter chains_disp selects samples from 2. and 3. phase
 estimated_distributions = S.estimate_distributions(raw_data_dir, transformations,
-                                                   chains_disp=range(no_samplers, no_samplers*3),
+                                                   chains_disp=chains_disp,
                                                    output_file=os.path.join(visualization_dir, "parameters.csv"))
 print(estimated_distributions)
 
 ### SAMPLES VISUALIZATION:
-no_stages = int(S.no_chains/no_samplers)
 par_names = [p["name"] for p in conf["transformations"]]
 print("parameters:", par_names)
 for i in range(no_stages):
     chains_disp=range(i*no_samplers,(i+1)*no_samplers)
-    S.plot_hist_grid(par_names=par_names, chains_disp=chains_disp, bins1d=9, bins2d=20, scale=scale)
+    S.plot_hist_grid(par_names=par_names, chains_disp=chains_disp, bins1d=15, bins2d=20, scale=scale)
     S.plot_hist_grid_add(transformations, estimated_distributions, chains_disp=chains_disp, scale=scale)
     plt.savefig(visualization_dir + "/histograms" +str(i)+ ".pdf",bbox_inches="tight")
     S.plot_segment(chains_disp=chains_disp,scale=scale)
@@ -176,7 +179,7 @@ print("observe points:", titles)
 N = int(len(observations)/len(grid))
 for i in range(N):
     offset = i*len(grid)
-    S.hist_G_TSX(raw_data_dir, no_parameters, grid, observations, offset+np.arange(len(grid)), range(no_samplers,no_samplers*3))
+    S.hist_G_TSX(raw_data_dir, no_parameters, grid, observations, offset+np.arange(len(grid)), chains_disp)
     plt.title(titles[i])
     plt.savefig(visualization_dir + "/hist_G" + str(i+1) + ".pdf",bbox_inches="tight")
 
