@@ -121,6 +121,41 @@ class Samples:
                     G_all_min = G_all[i][argmin,:]
         return x_all_min, G_all_min, G_norm_min
 
+    def find_n_best_fits(self, folder_samples, no_parameters, observations, count):
+        file_samples = [f for f in listdir(folder_samples) if isfile(join(folder_samples, f))]
+        file_samples.sort()
+        N = len(file_samples)
+        x_all = np.empty((0, no_parameters))
+        G_all = np.empty((0, len(observations)))
+        for i in range(N):
+            path_samples = os.path.join(folder_samples, file_samples[i])
+            df_samples = pd.read_csv(path_samples, header=None)
+            types = df_samples.iloc[:,0]
+            idx = np.ones(len(types), dtype=bool)
+            idx[types=="prerejected"] = 0
+            if sum(idx)==0:
+                print("find_n_best_fits EMPTY ", i, " of ", N)
+            else:
+                x_ = np.array(df_samples.iloc[:,1:1+no_parameters])
+                x_all = np.vstack((x_all, x_[idx]))
+                G_ = np.array(df_samples.iloc[:,2+no_parameters:])
+                G_all = np.vstack((G_all, G_[idx]))
+                # diff2 = np.square(G_all[i] - observations)
+                # G_norm = np.sqrt(np.sum(diff2, axis=1))
+                # argmin = np.argmin(G_norm)
+                # if G_norm_min>G_norm[argmin]:
+                #     G_norm_min = G_norm[argmin]
+                #     x_all_min = x_all[i][argmin,:]
+                #     G_all_min = G_all[i][argmin,:]
+        diff2 = np.square(G_all - observations)
+        G_L2norm = np.sqrt(np.sum(diff2, axis=1))
+        sorted_idx = np.argsort(G_L2norm)
+        # print(G_L2norm[sorted_idx])
+        x_best = x_all[sorted_idx[:count]]
+        G_best = G_all[sorted_idx[:count]]
+        G_norm_best = G_L2norm[sorted_idx[:count]]
+        return x_best, G_best, G_norm_best
+
     def estimate_distributions(self, folder_samples, transformations, chains_disp = None, output_file = None):
         if chains_disp == None:
             chains_disp = range(self.no_chains)
@@ -296,10 +331,18 @@ class Samples:
 
         # plot best fit - find, interpolate, plot
         best_fit_x, best_fit_G, best_fit_norm = self.find_best_fit(folder_samples, no_parameters, observations)
-        best_fit_interp = np.interp(grid_interp, grid, best_fit_G[chosen_observations])
-        plt.plot(x_all[0], best_fit_interp, color="red", linestyle='solid', linewidth=1.0,
-                 # label="best fit ($||\cdot||_{L^2}$)"
-                 label="best fit ($L^2$)")
+        N = 1
+        best_Nfit_x, best_Nfit_G, best_Nfit_norm = self.find_n_best_fits(folder_samples, no_parameters, observations, count=N)
+        # print("best_Nfit_norm", best_Nfit_norm)
+        # print("best_Nfit_x", best_Nfit_x)
+
+        alpha_step =1/N
+        for i in range(N):
+            best_fit_interp = np.interp(grid_interp, grid, best_Nfit_G[i][chosen_observations])
+            plt.plot(x_all[0], best_fit_interp, color="red", linestyle='solid', linewidth=0.1,
+                     # label="best fit ($||\cdot||_{L^2}$)"
+                     alpha = 1-i*alpha_step,
+                     label="best fit ($L^2$)")
 
         handles, labels = plt.gca().get_legend_handles_labels()
         by_label = dict(zip(labels, handles))
