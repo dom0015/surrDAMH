@@ -807,7 +807,7 @@ class Samples:
         axes[0].set_ylabel("samples")
         #plt.show()
 
-    def plot_hist_1d(self, burn_in = None, dimension = 0, chains_disp = None, bins = 20, show = True, log = False):
+    def plot_hist_1d(self, axis, burn_in = None, param_no = 0, chains_disp = None, bins = 20, show = True, log = False):
         if chains_disp == None:
             chains_disp = range(self.no_chains)
         if burn_in == None:
@@ -815,7 +815,7 @@ class Samples:
         XX = np.zeros((0,))
         for i, chain in enumerate(chains_disp):
             try:
-                xx = self.x[chain][burn_in[i]:,dimension]
+                xx = self.x[chain][burn_in[i]:,param_no]
             except:
                 print("HISTOGRAM 1D: CHAIN", chain, "NOT AVAILABLE")
                 continue
@@ -823,13 +823,12 @@ class Samples:
                 XX = np.concatenate((XX,np.log10(xx)))
             else:
                 XX = np.concatenate((XX,xx))
-        np.save("XX2_boreholes1234_" + str(dimension) + ".npy",XX)
-        plt.hist(XX, bins = bins, density = True)
-        plt.grid(True)
+        np.save("XX2_boreholes1234_" + str(param_no) + ".npy",XX)
+        axis.hist(XX, bins=bins, density=True)
         if show:
             plt.show()
 
-    def plot_hist_2d(self, burn_in = None, dimensions = [0,1], chains_disp = None, bins = 20, show = True, colorbar = False, log = [False,False]):
+    def plot_hist_2d(self, axis, burn_in = None, param_no = [0,1], chains_disp = None, bins = 20, show = True, colorbar = False, log = [False,False]):
         if chains_disp == None:
             chains_disp = range(self.no_chains)
         if burn_in == None:
@@ -838,8 +837,8 @@ class Samples:
         YY = np.zeros((0,))
         for i, chain in enumerate(chains_disp):
             try:
-                xx = self.x[chain][burn_in[i]:,dimensions[0]]
-                yy = self.x[chain][burn_in[i]:,dimensions[1]]
+                xx = self.x[chain][burn_in[i]:,param_no[0]]
+                yy = self.x[chain][burn_in[i]:,param_no[1]]
             except:
                 print("HISTOGRAM 2D: CHAIN", chain, "NOT AVAILABLE")
                 continue
@@ -851,10 +850,10 @@ class Samples:
                 YY = np.concatenate((YY,np.log10(yy)))
             else:
                 YY = np.concatenate((YY,yy))
-        plt.hist2d(XX, YY, bins = bins, cmap = "binary")#, density = True)
-        plt.grid(True)
+        axis.hist2d(XX, YY, bins = bins, cmap = "binary")#, density = True)
+        axis.grid(True)
         if colorbar:
-            plt.colorbar()
+            axis.colorbar()
         if show:
             plt.show()
     
@@ -873,20 +872,20 @@ class Samples:
         plt.subplots_adjust(wspace=0.5, hspace=0.3)
         for idi,i in enumerate(parameters_disp):
             for idj,j in enumerate(parameters_disp):
-                plt.subplot(n, n, idx)
+                axis = axes[i,j]
                 if idi==idj:
                     if scale[i] == 'log':
                         log = True
                     else:
                         log = False
-                    self.plot_hist_1d(dimension = i, burn_in = burn_in, chains_disp=chains_disp, bins=bins1d, show = False, log=log)
+                    self.plot_hist_1d(axis=axis, param_no = i, burn_in = burn_in, chains_disp=chains_disp, bins=bins1d, show = False, log=log)
                 else:
                     log = [scale[j]=="log", scale[i]=="log"]
                     # if idi<2 and idj<2:
                     #     self.plot_hist_2d(dimensions = [j,i],  burn_in = burn_in, chains_disp=chains_disp, bins=30, show = False, log=log)
                     # else:
-                    self.plot_hist_2d(dimensions = [j,i],  burn_in = burn_in, chains_disp=chains_disp, bins=bins2d, show = False, log=log)
-                if idx<=n:
+                    self.plot_hist_2d(axis=axis, param_no = [j,i],  burn_in = burn_in, chains_disp=chains_disp, bins=bins2d, show = False, log=log)
+                if idi==0:
                     # determine parameter name
                     if par_names is not None:
                         par_name = par_names[j].replace('_', '\_')
@@ -896,8 +895,7 @@ class Samples:
                     if scale[idj] == "log":
                         label += "\n(log)"
                     axes[idi,idj].set_title(label, x=1.05, rotation=45, multialignment='center')
-                idx = idx + 1
-        #plt.show()
+        return fig, axes
         
     def plot_hist_grid_add(self, settings, estimated_distributions,
                            burn_in = None, parameters_disp = None, chains_disp = None, scale=None):
