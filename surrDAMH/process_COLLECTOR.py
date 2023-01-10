@@ -10,6 +10,10 @@ from mpi4py import MPI
 import numpy as np
 from configuration import Configuration
 
+# try FIX unpickled error
+import mpi4py
+mpi4py.rc.recv_mprobe = False
+
 # communicates with: SAMPLERs 
 comm_world = MPI.COMM_WORLD
 rank_world = comm_world.Get_rank()
