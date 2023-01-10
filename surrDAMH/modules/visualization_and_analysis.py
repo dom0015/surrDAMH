@@ -872,7 +872,7 @@ class Samples:
         plt.subplots_adjust(wspace=0.5, hspace=0.3)
         for idi,i in enumerate(parameters_disp):
             for idj,j in enumerate(parameters_disp):
-                axis = axes[i,j]
+                axis = axes[idi,idj]
                 if idi==idj:
                     if scale[i] == 'log':
                         log = True
@@ -894,10 +894,10 @@ class Samples:
                         label = "$par. {0}$".format(j)
                     if scale[idj] == "log":
                         label += "\n(log)"
-                    axes[idi,idj].set_title(label, x=1.05, rotation=45, multialignment='center')
+                    axis.set_title(label, x=1.05, rotation=45, multialignment='center')
         return fig, axes
         
-    def plot_hist_grid_add(self, settings, estimated_distributions,
+    def plot_hist_grid_add(self, axes, settings, estimated_distributions,
                            burn_in = None, parameters_disp = None, chains_disp = None, scale=None):
         if parameters_disp == None:
             parameters_disp = range(self.no_parameters)
@@ -906,12 +906,10 @@ class Samples:
         if scale is None:
             scale = [None] * len(parameters_disp)
         n = len(parameters_disp)
-        idx = 1
-        # fig, axes = plt.subplots(n, n, sharex=False, sharey=False) # figsize=(12,12)
         import scipy.stats
         for idi,i in enumerate(parameters_disp):
             for idj,j in enumerate(parameters_disp):
-                plt.subplot(n, n, idx)
+                axis = axes[idi, idj]
                 if idi==idj:
                     if settings[idi] is None:
                         pass
@@ -924,18 +922,18 @@ class Samples:
                             sigma = trans_options["sigma"]
                             x = np.linspace(mu - 3*sigma, mu + 3*sigma, 100)
                             y = scipy.stats.norm.pdf(x, mu, sigma)
-                            plt.plot(np.log10(np.exp(x)),y*np.log(100)/np.log10(100))
+                            axis.plot(np.log10(np.exp(x)),y*np.log(100)/np.log10(100))
 
                             est = estimated_distributions[idi]
                             est_mu = est["mu_log10"]
                             est_sigma = est["sigma_log10"]
                             x = np.linspace(est_mu - 3 * est_sigma, est_mu + 3 * est_sigma, 100)
                             y = scipy.stats.norm.pdf(x, est_mu, est_sigma)
-                            plt.plot(x, y, color='red')
+                            axis.plot(x, y, color='red')
                         elif trans_type == "normal_to_uniform":
                             a = trans_options["a"]
                             b = trans_options["b"]
-                            plt.plot([a,b],[1/(b-a)]*2)
+                            axis.plot([a,b],[1/(b-a)]*2)
                         elif trans_type == "normal_to_beta":
                             alfa = trans_options["alfa"]
                             beta = trans_options["beta"]
@@ -943,7 +941,7 @@ class Samples:
                             y=scipy.stats.beta.pdf(x,alfa,beta)
                             # possibly cut the x-axis width for reasonable values
                             cut = np.argwhere(y>1e-3)
-                            plt.plot(x[cut],y[cut])
+                            axis.plot(x[cut],y[cut])
 
                             est = estimated_distributions[idi]
                             est_mu = est["mu"]
@@ -955,7 +953,7 @@ class Samples:
                             y = scipy.stats.beta.pdf(x, est_alpha, est_beta)
                             # possibly cut the x-axis width for reasonable values
                             cut = np.argwhere(y > 1e-3)
-                            plt.plot(x[cut], y[cut], color='red')
+                            axis.plot(x[cut], y[cut], color='red')
                 else:
                     if scale[idi]=="log":
                         x=np.log10(self.modus[idi])
@@ -965,26 +963,24 @@ class Samples:
                         y=np.log10(self.modus[idj])
                     else:
                         y=self.modus[idj]
-                    plt.plot(y,x,'.r')
+                    axis.plot(y,x,'.r')
                     # if idi==0:
                     #     mu=-35
                     #     sigma=3
                     #     x = np.linspace(mu - 3*sigma, mu + 3*sigma, 100)
                     #     y = scipy.stats.norm.pdf(x, mu, sigma)
-                    #     plt.plot(np.log10(np.exp(x)),y*np.log(100)/np.log10(100))
-                    #     plt.show()
+                    #     axis.plot(np.log10(np.exp(x)),y*np.log(100)/np.log10(100))
                     # if idi==1:
                     #     alfa=5
                     #     beta=5
                     #     x=np.linspace(0,1,100)
                     #     y=scipy.stats.beta.pdf(x,alfa,beta)
-                    #     plt.plot(x,y)
+                    #     axis.plot(x,y)
                 # elif idi>idj:
-                #     plt.plot(np.log10(self.modus[idj]),self.modus[idi],'.')
+                #     axis.plot(np.log10(self.modus[idj]),self.modus[idi],'.')
                 # else:
-                #     plt.plot(self.modus[1],np.log10(self.modus[0]),'.')
-                idx = idx + 1
-        #plt.show()
+                #     axis.plot(self.modus[1],np.log10(self.modus[0]),'.')
+        return axes
 
 ### DAMH ANALYSIS:
     
