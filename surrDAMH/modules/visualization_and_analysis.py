@@ -911,6 +911,8 @@ class Samples:
             for idj,j in enumerate(parameters_disp):
                 axis = axes[idi, idj]
                 if idi==idj:
+                    major_ticks = None
+                    minor_ticks = None
                     if settings[idi] is None:
                         pass
                     else:
@@ -918,11 +920,17 @@ class Samples:
                         trans_options = settings[idi]["options"]
                         # TODO add posterior
                         if trans_type == "normal_to_lognormal":
-                            mu = trans_options["mu"]
-                            sigma = trans_options["sigma"]
-                            x = np.linspace(mu - 3*sigma, mu + 3*sigma, 100)
+                            # mu = trans_options["mu"]
+                            # sigma = trans_options["sigma"]
+                            # x = np.linspace(mu - 3*sigma, mu + 3*sigma, 100)
+                            # y = scipy.stats.norm.pdf(x, mu, sigma)
+                            # axis.plot(np.log10(np.exp(x)),y*np.log(100)/np.log10(100))
+                            mu = np.log10(np.exp(trans_options["mu"]))
+                            sigma = trans_options["sigma"]*np.log10(np.e)
+                            print("mu,sigma:", mu, sigma)
+                            x = np.linspace(mu - 3 * sigma, mu + 3 * sigma, 100)
                             y = scipy.stats.norm.pdf(x, mu, sigma)
-                            axis.plot(np.log10(np.exp(x)),y*np.log(100)/np.log10(100))
+                            axis.plot(x, y)
 
                             est = estimated_distributions[idi]
                             est_mu = est["mu_log10"]
@@ -930,6 +938,9 @@ class Samples:
                             x = np.linspace(est_mu - 3 * est_sigma, est_mu + 3 * est_sigma, 100)
                             y = scipy.stats.norm.pdf(x, est_mu, est_sigma)
                             axis.plot(x, y, color='red')
+
+                            major_ticks = np.array([mu - 3*sigma, mu, mu + 3*sigma])
+                            minor_ticks = np.array([mu - 2*sigma, mu - sigma, mu, mu + sigma, mu + 2*sigma])
                         elif trans_type == "normal_to_uniform":
                             a = trans_options["a"]
                             b = trans_options["b"]
@@ -942,6 +953,11 @@ class Samples:
                             # possibly cut the x-axis width for reasonable values
                             cut = np.argwhere(y>1e-3)
                             axis.plot(x[cut],y[cut])
+                            # equivalent normal dist.
+                            mu = alfa / (alfa + beta)
+                            sigma = np.sqrt(alfa*beta / ((alfa+beta)**2*(alfa+beta+1)))
+                            major_ticks = np.array([mu - 3 * sigma, mu, mu + 3 * sigma])
+                            minor_ticks = np.array([mu - 2 * sigma, mu - sigma, mu, mu + sigma, mu + 2 * sigma])
 
                             est = estimated_distributions[idi]
                             est_mu = est["mu"]
@@ -954,6 +970,22 @@ class Samples:
                             # possibly cut the x-axis width for reasonable values
                             cut = np.argwhere(y > 1e-3)
                             axis.plot(x[cut], y[cut], color='red')
+
+                    if major_ticks is not None:
+                        axis.set_xticks(major_ticks)
+                        axis.set_xticks(minor_ticks, minor=True)
+                        nd = np.log(np.mean(major_ticks))
+                        # axis.xaxis.set_major_formatter('{x:.'+str(nd)+'}')
+                        if nd < 0:
+                            axis.xaxis.set_major_formatter('{x:.1}')
+                        else:
+                            axis.xaxis.set_major_formatter('{x:.0f}')
+                        # axis.set_yticks(major_ticks)
+                        # axis.set_yticks(minor_ticks, minor=True)
+                        axis.grid(which='minor', alpha=0.2)
+                        axis.grid(which='major', alpha=0.5)
+                    else:
+                        axis.grid(which='both')
                 else:
                     if scale[idi]=="log":
                         x=np.log10(self.modus[idi])
