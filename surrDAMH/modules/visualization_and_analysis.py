@@ -337,9 +337,13 @@ class Samples:
         # print("best_Nfit_x", best_Nfit_x)
 
         alpha_step =1/N
+        if N==1:
+            lw=1
+        else:
+            lw=0.1
         for i in range(N):
             best_fit_interp = np.interp(grid_interp, grid, best_Nfit_G[i][chosen_observations])
-            plt.plot(x_all[0], best_fit_interp, color="red", linestyle='solid', linewidth=0.1,
+            plt.plot(x_all[0], best_fit_interp, color="red", linestyle='solid', linewidth=lw,
                      # label="best fit ($||\cdot||_{L^2}$)"
                      alpha = 1-i*alpha_step,
                      label="best fit ($L^2$)")
@@ -867,7 +871,6 @@ class Samples:
         if scale is None:
             scale = [None] * len(parameters_disp)
         n = len(parameters_disp)
-        idx = 1
         fig, axes = plt.subplots(n, n, sharex=False, sharey=False, figsize=(15,15))
         plt.subplots_adjust(wspace=0.5, hspace=0.3)
         for idi,i in enumerate(parameters_disp):
