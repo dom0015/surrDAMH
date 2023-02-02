@@ -30,6 +30,8 @@ no_stages = len(conf["samplers_list"])
 chains_disp = range(no_samplers, no_samplers * no_stages)
 print("chains_disp", chains_disp)
 
+observations = np.array(conf["problem_parameters"]["observations"])
+
 if not os.path.exists(visualization_dir):
     os.makedirs(visualization_dir)
 
@@ -66,21 +68,20 @@ for idx,d in enumerate(output_dict["samplers_list"]):
 mode = S.find_modus()
 output_dict["mode"] = mode[0].tolist()
 
-# fit = S.find_best_fit(output_dir,no_parameters,conf["problem_parameters"]["observations"])
-# print("BEST FIT (L2)")
-# print(" - PARAMETERS:", list(fit[0]))
-# print(" - PARAMETERS (log10):", list(np.log10(fit[0])))
-# print(" - OUTPUT:", list(fit[1]))
+fit_L2_x, fit_L2_G, fit_L2_norm = S.find_best_fit(raw_data_dir, no_parameters, observations)
+output_dict["best_fit_L2"] = {"parameters": fit_L2_x.tolist(),
+                              "parameters_log": np.log(fit_L2_x).tolist(),
+                              "parameters_log10": np.log10(fit_L2_x).tolist()}
 
 n=int(conf["no_observations"]/4)
 grid=np.array(conf["noise_grid"])
 grid_max = max(grid)+35
 
-from surrDAMH.surrDAMH.modules import Gaussian_process
-cov_type = None
-if "noise_cov_type" in conf.keys():
-    cov_type = conf["noise_cov_type"]
-noise_cov = Gaussian_process.assemble_covariance_matrix(grid, conf["noise_parameters"], cov_type)
+# from surrDAMH.surrDAMH.modules import Gaussian_process
+# cov_type = None
+# if "noise_cov_type" in conf.keys():
+#     cov_type = conf["noise_cov_type"]
+# noise_cov = Gaussian_process.assemble_covariance_matrix(grid, conf["noise_parameters"], cov_type)
 # fit_likelihood = S.find_max_likelihood(output_dir,no_parameters,conf["problem_parameters"]["observations"],noise_cov=noise_cov,scale=scale,disp_parameters=[0,1])
 # plt.savefig(output_dir + "/img_Bayes/log_likelihood.pdf",bbox_inches="tight")
 # print("-----")
@@ -89,7 +90,6 @@ noise_cov = Gaussian_process.assemble_covariance_matrix(grid, conf["noise_parame
 # print(" - PARAMETERS (log10):", list(np.log10(fit_likelihood[0])))
 # print(" - OUTPUT:", list(fit_likelihood[1]))
 
-observations = np.array(conf["problem_parameters"]["observations"])
 # plt.figure()
 # for i in range(4):
 #     idx=np.arange(n)+i*n
