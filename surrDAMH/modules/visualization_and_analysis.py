@@ -274,7 +274,7 @@ class Samples:
         # #plt.imshow(img,extent=[xx[0],xx[-1],yy[0],yy[-1]], cmap="gist_heat_r", aspect="auto")
         # plt.grid()
         # plt.xlabel("time [d]")
-        # plt.ylabel("pressure [m]")
+        # plt.ylabel("pressure head [m]")
         # plt.plot(G_all.transpose())
         # #plt.plot(grid,observations[chosen_observations])
         
@@ -322,7 +322,7 @@ class Samples:
         plt.grid()
         lbl_fontsize = "large"
         plt.xlabel("time [d]", fontsize=lbl_fontsize)
-        plt.ylabel("pressure [m]", fontsize=lbl_fontsize)
+        plt.ylabel("pressure head [m]", fontsize=lbl_fontsize)
         plt.plot(grid,observations[chosen_observations], color="cyan", label="measurement")
         plt.plot(x_all[0], quartiles.take([0,3], axis=0).transpose(), color="black", linestyle='dashed', linewidth=0.75,
                  label="0.05,0.95 quantile")
@@ -335,6 +335,8 @@ class Samples:
         best_Nfit_x, best_Nfit_G, best_Nfit_norm = self.find_n_best_fits(folder_samples, no_parameters, observations, count=N)
         # print("best_Nfit_norm", best_Nfit_norm)
         # print("best_Nfit_x", best_Nfit_x)
+        est_noise = np.std(best_Nfit_G[0][chosen_observations] - observations[chosen_observations])
+        print("estimated noise std (best_fit-observations)", est_noise)
 
         alpha_step =1/N
         if N==1:
