@@ -22,9 +22,12 @@ assert(len(sys.argv) == 3)
 problem_path = sys.argv[1]
 output_dir = sys.argv[2]
 
+print("process_SOLVER: ", no_samplers, problem_path, flush=True)
 for i in range(size_world):
     if i != rank_world:
-        comm_world.send([no_samplers,problem_path],dest=i)
+        list_to_send = [no_samplers, problem_path]
+        print("comm_world.send(dest=", i, ") params: ", list_to_send, flush=True)
+        comm_world.send(list_to_send, dest=i)
 C = Configuration(no_samplers, problem_path)
 
 solver_init = C.solver_parent_init
