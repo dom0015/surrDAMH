@@ -17,7 +17,7 @@ comm_world = MPI.COMM_WORLD
 rank_world = comm_world.Get_rank()
 size_world = comm_world.Get_size()
 
-no_samplers, problem_path = comm_world.recv(source=MPI.ANY_SOURCE)
+no_samplers, problem_path = comm_world.recv(source=MPI.ANY_SOURCE, tag=100)
 output_dir = sys.argv[1]
 # data = None
 # data = comm_world.bcast(data,root=MPI.ANY_SOURCE)

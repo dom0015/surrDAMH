@@ -12,6 +12,10 @@ import sys
 from collections import deque
 from configuration import Configuration
 
+# try FIX unpickled error
+import mpi4py
+mpi4py.rc.recv_mprobe = False
+
 comm_world = MPI.COMM_WORLD
 rank_world = comm_world.Get_rank()
 size_world = comm_world.Get_size()
@@ -27,7 +31,7 @@ for i in range(size_world):
     if i != rank_world:
         list_to_send = [no_samplers, problem_path]
         print("comm_world.send(dest=", i, ") params: ", list_to_send, flush=True)
-        comm_world.send(list_to_send, dest=i)
+        comm_world.send(list_to_send, dest=i, tag=100)
 C = Configuration(no_samplers, problem_path)
 
 solver_init = C.solver_parent_init
