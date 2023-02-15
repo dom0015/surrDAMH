@@ -37,16 +37,8 @@ class Configuration:
             self.problem_parameters["prior_mean"] = [0]*self.no_parameters
         if "prior_std" not in self.problem_parameters.keys():
             self.problem_parameters["prior_std"] = [1]*self.no_parameters
-        noise_type = None
-        if "noise_type" in conf.keys():
-            noise_type = conf["noise_type"]
-        if noise_type == "Gaussian_process":
-            grid = conf["noise_grid"]
-            parameters = conf["noise_parameters"]
-            cov_type = None
-            if "noise_cov_type" in conf.keys():
-                cov_type = conf["noise_cov_type"]
-            noise_cov = Gaussian_process.assemble_covariance_matrix(grid, parameters, cov_type)
+        if "noise_model" in conf.keys():
+            noise_cov = Gaussian_process.assemble_covariance_matrix(conf["noise_model"])
             self.problem_parameters["noise_std"] = noise_cov
         if "transformations" in conf.keys():
             def transform(data):

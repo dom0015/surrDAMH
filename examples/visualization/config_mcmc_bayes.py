@@ -73,10 +73,8 @@ output_dict["best_fit_L2"] = {"parameters": fit_L2_x.tolist(),
                               "parameters_log": np.log(fit_L2_x).tolist(),
                               "parameters_log10": np.log10(fit_L2_x).tolist()}
 
-n=int(conf["no_observations"]/4)
-grid=np.array(conf["noise_grid"])
-grid_max = max(grid)+35
-
+# grid=np.array(conf["noise_grid"])
+# grid_max = max(grid)+35
 # from surrDAMH.surrDAMH.modules import Gaussian_process
 # cov_type = None
 # if "noise_cov_type" in conf.keys():
@@ -176,13 +174,17 @@ for i in range(no_stages):
 # plt.colorbar()
 # plt.savefig(visualization_dir + "/noise_cov.pdf",bbox_inches="tight")
 
-titles = conf["observe_points"]
-print("observe points:", titles)
-N = int(len(observations)/len(grid))
+pressure_boreholes = conf["observe_points"]
+print("observe points:", pressure_boreholes)
+N = len(pressure_boreholes)
+noise_model_list = conf["noise_model"]
 for i in range(N):
-    offset = i*len(grid)
-    S.hist_G_TSX(raw_data_dir, no_parameters, grid, observations, offset+np.arange(len(grid)), chains_disp)
-    plt.title(titles[i])
+    # offset = i*len(grid)
+    noise_model = noise_model_list[i]
+    time_grid = np.array(noise_model["time_grid"])
+    offsets = noise_model["range"]
+    S.hist_G_TSX(raw_data_dir, no_parameters, time_grid, observations, np.arange(*offsets), chains_disp)
+    plt.title(pressure_boreholes[i])
     plt.savefig(visualization_dir + "/hist_G" + str(i+1) + ".pdf",bbox_inches="tight")
 
 S.show_non_converging(raw_data_dir, no_parameters)
