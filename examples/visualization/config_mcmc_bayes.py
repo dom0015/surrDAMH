@@ -9,8 +9,9 @@ Created on Sun Feb 14 12:02:19 2021
 import os
 import sys
 import ruamel.yaml as yaml
-sys.path.append(os.getcwd())
-from surrDAMH.surrDAMH.modules import visualization_and_analysis as va
+
+sys.path.append(os.path.dirname(os.path.realpath(__file__)) + "/../..")
+from surrDAMH.modules import visualization_and_analysis as va
 import matplotlib.pyplot as plt
 import numpy as np
 
