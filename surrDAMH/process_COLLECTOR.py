@@ -15,6 +15,7 @@ comm_world = MPI.COMM_WORLD
 rank_world = comm_world.Get_rank()
 
 no_samplers, problem_name = comm_world.recv(source=MPI.ANY_SOURCE)
+comm_world.Barrier()
 C = Configuration(no_samplers, problem_name)
 updater_init = C.surr_updater_init
 updater_parameters = C.surr_updater_parameters

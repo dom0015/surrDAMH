@@ -17,6 +17,7 @@ rank_world = comm_world.Get_rank()
 size_world = comm_world.Get_size()
 
 no_samplers, problem_name = comm_world.recv(source=MPI.ANY_SOURCE)
+comm_world.Barrier()
 C = Configuration(no_samplers, problem_name)
 seed0 = max(1000,size_world)*rank_world # TO DO seeds
 
