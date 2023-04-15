@@ -1,0 +1,63 @@
+{
+    "problem_name": "Darcy",
+    "no_parameters": 4,
+    "no_observations": 3,
+    "problem_parameters": {
+        "prior_mean": 0.0,
+        "prior_std": 1.0,
+        "observations": [10.24925199, -6.07103574, -4.17821625],
+        "noise_std": [0.2, 0.1, 0.1]
+    },
+    "paths_to_append": [
+        "/home/simona/GIT/Simple_Python_PETSc_FEM"
+    ],
+    "solver_module_path": "examples/solvers/MyFEM_wrapper.py",
+    "solver_module_name": "MyFEM_wrapper",
+    "solver_init_name": "FEM",
+    "solver_parameters": {
+        "no_parameters": 4,
+        "no_observations": 3,
+        "no_configurations": 1,
+        "n": 50,
+        "quiet": true,
+        "tolerance": 1e-8,
+        "PC": "icc",
+        "use_deflation": false,
+        "deflation_imp": 1e-2
+    },
+    "no_solvers": 3,
+    "samplers_list": [
+        {
+            "type": "MH",
+            "max_samples": 200,
+            "time_limit": 60,
+            "proposal_std": 0.2,
+            "surrogate_is_updated": true
+        },
+        {
+            "type": "DAMH",
+            "max_samples": 2000,
+            "time_limit": 60,
+            "proposal_std": 0.2,
+            "surrogate_is_updated": true
+        },
+        {
+            "type": "DAMH",
+            "max_samples": 10000,
+            "time_limit": 60,
+            "proposal_std": 0.2,
+            "surrogate_is_updated": false
+        }
+    ],
+    "surrogate_type": "rbf",
+    "surr_solver_parameters": {
+        "kernel_type": "polyharmonic",
+        "beta": 3
+    },
+    "surr_updater_parameters": {
+        "kernel_type": "polyharmonic",
+        "beta": 3,
+        "max_centers": 500,
+        "expensive": false
+    }
+}
