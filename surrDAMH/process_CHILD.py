@@ -50,8 +50,8 @@ while solver_is_active:
     else:
         parent_comm.Bcast([received_data, MPI.DOUBLE], root=0)
         transformed_data = C.transform(received_data)
-        print("RECEIVED: ", received_data)
-        print("TRANS: ", transformed_data)
+        # print("RECEIVED: ", received_data)
+        # print("TRANS: ", transformed_data)
         solver_instance.set_parameters(transformed_data.reshape((C.no_parameters,)))
         if C.solver_returns_tag:
             [convergence_tag,sent_data] = solver_instance.get_observations()

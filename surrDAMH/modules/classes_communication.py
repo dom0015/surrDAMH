@@ -148,7 +148,7 @@ class Solver_local_collector_MPI: # initiated by SAMPLERs
         
         computed_observations = self.local_solver_instance.apply(self.solver_data[self.solver_data_idx],self.parameters)
         self.computation_in_progress = False
-        return computed_observations
+        return 1, computed_observations
 
     def send_to_data_collector(self, snapshot_to_send):
         # Adds new snapsahot to a list; if COLLECTOR is ready to receive new

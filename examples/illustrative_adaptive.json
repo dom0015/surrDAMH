@@ -1,0 +1,49 @@
+{
+    "no_parameters": 2,
+    "no_observations": 1,
+    "problem_parameters": {
+        "prior_mean": [0.0, 0.0],
+        "prior_std": [[2,0],[0,2]],
+        "observations": [2.0],
+        "noise_std": 1
+    },
+    "solver_module_path": "examples/solvers/solver_examples.py",
+    "solver_module_name": "solver_examples",
+    "solver_init_name": "Solver_illustrative_local",
+    "solver_parameters": {
+    },
+    "no_solvers": 3,
+    "samplers_list": [
+        {
+            "type": "MH",
+            "max_evaluations": 200,
+            "time_limit": 180,
+            "proposal_std": 0.1,
+            "surrogate_is_updated": true,
+            "adaptive": true
+        },
+        {
+            "type": "MH",
+            "max_samples": 100000,
+            "time_limit": 30,
+            "proposal_std": null,
+            "surrogate_is_updated": false,
+            "adaptive": true,
+            "use_only_surrogate": true,
+            "target_rate": 0.1,
+            "sample_limit": 100
+        },
+        {
+            "type": "DAMH",
+            "max_samples": 100000,
+            "time_limit": 30,
+            "proposal_std": null,
+            "surrogate_is_updated": false,
+            "excluded": true
+        }
+    ],
+    "surrogate_type": "poly",
+    "surr_updater_parameters": {
+        "max_degree": 5
+    }
+}

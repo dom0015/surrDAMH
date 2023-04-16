@@ -20,6 +20,8 @@ comm_world = MPI.COMM_WORLD
 rank_world = comm_world.Get_rank()
 size_world = comm_world.Get_size()
 
+comm_sampler = comm_world.Split(color=1, key=rank_world)
+
 no_samplers = rank_world
 
 assert(len(sys.argv) == 3)

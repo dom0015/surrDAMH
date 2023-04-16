@@ -1,0 +1,46 @@
+{
+    "no_parameters": 10,
+    "no_observations": 10,
+    "problem_parameters": {
+        "prior_mean": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        "prior_std": 1,
+        "observations": [2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0],
+        "noise_std": 0.5
+    },
+    "solver_module_path": "examples/solvers/solver_examples.py",
+    "solver_module_name": "solver_examples",
+    "solver_init_name": "Generic",
+    "solver_parameters": {
+        "no_parameters": 10,
+        "no_observations": 10
+    },
+    "no_solvers": 3,
+    "samplers_list": [
+        {
+            "type": "MH_adaptive",
+            "max_samples": 2000,
+            "time_limit": 60,
+            "proposal_std": 0.1,
+            "surrogate_is_updated": true
+        },
+        {
+            "type": "MH_surrogate",
+            "max_samples": 2000,
+            "time_limit": 60,
+            "proposal_std": null,
+            "surrogate_is_updated": false
+        },
+        {
+            "type": "DAMH",
+            "max_samples": 10000,
+            "time_limit": 60,
+            "proposal_std": null,
+            "surrogate_is_updated": false,
+            "excluded": true
+        }
+    ],
+    "surrogate_type": "poly",
+    "surr_updater_parameters": {
+        "max_degree": 5
+    }
+}

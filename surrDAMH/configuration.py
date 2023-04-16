@@ -15,6 +15,7 @@ import importlib.util as iu
 from modules import classes_communication
 from modules import Gaussian_process
 from modules import transformations as trans
+import numpy as np
 
 class Configuration:
     def __init__(self, no_samplers, conf_path):
@@ -72,6 +73,13 @@ class Configuration:
         self.no_full_solvers = conf["no_solvers"]
         self.no_samplers = no_samplers
         self.list_alg = conf["samplers_list"]
+        for a in self.list_alg:
+            if "max_samples" not in a.keys():
+                a["max_samples"] = sys.maxsize
+            if "max_evaluations" not in a.keys():
+                a["max_evaluations"] = sys.maxsize
+            if "time_limit" not in a.keys():
+                a["time_limit"] = np.inf
         if "initial_sample_type" in conf.keys():
             self.initial_sample_type = conf["initial_sample_type"]
         else:
@@ -83,8 +91,12 @@ class Configuration:
             self.rank_surr_collector = self.no_samplers + 1
             if conf["surrogate_type"] == "rbf": # radial basis functions surrogate model
                 from modules import surrogate_rbf as surr
-            else: # polynomial surrogate model
+            elif conf["surrogate_type"] == "poly": # polynomial surrogate model
                 from modules import surrogate_poly as surr
+            else:
+                spec = iu.spec_from_file_location(conf["surrogate_module_name"], conf["surrogate_module_path"])
+                surr = iu.module_from_spec(spec)
+                spec.loader.exec_module(surr)
             self.surr_solver_init = surr.Surrogate_apply
             self.surr_updater_init = surr.Surrogate_update
             self.surr_solver_parameters = {"no_parameters": self.no_parameters,

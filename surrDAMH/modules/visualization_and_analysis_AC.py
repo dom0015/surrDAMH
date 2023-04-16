@@ -7,30 +7,25 @@ Created on Wed Apr 29 11:01:04 2020
 """
 
 import numpy as np
-#import emcee
+import emcee
 import matplotlib.pyplot as plt
 import pandas as pd
-import os
 from os import listdir
 from os.path import isfile, join, getsize
-# <<<<<<< HEAD
-import surrDAMH.modules.grf_eigenfunctions as grf_eigenfunctions
-# =======
-# #import surrDAMH.surrDAMH.modules.grf_eigenfunctions as grf_eigenfunctions
-# 
-# import os
-# import importlib.util as iu
-# path = os.path.dirname(os.path.abspath(__file__))
-# 
-# # import sys
-# # sys.path.append(path)
-# # from surrDAMH.modules import grf_eigenfunctions
-# 
-# path = os.path.join(path,"grf_eigenfunctions.py")
-# spec = iu.spec_from_file_location("grf_eigenfunctions",path)
-# grf_eigenfunctions = iu.module_from_spec(spec)
-# spec.loader.exec_module(grf_eigenfunctions)
-# >>>>>>> SD4
+#import surrDAMH.surrDAMH.modules.grf_eigenfunctions as grf_eigenfunctions
+
+import os
+import importlib.util as iu
+path = os.path.dirname(os.path.abspath(__file__))
+
+# import sys
+# sys.path.append(path)
+# from surrDAMH.modules import grf_eigenfunctions
+
+path = os.path.join(path,"grf_eigenfunctions.py")
+spec = iu.spec_from_file_location("grf_eigenfunctions",path)
+grf_eigenfunctions = iu.module_from_spec(spec)
+spec.loader.exec_module(grf_eigenfunctions)
 
 class Samples:
     def __init__(self, samples = None):
@@ -50,7 +45,7 @@ class Samples:
             try:
                 df_samples = pd.read_csv(path_samples, header=None)
             except pd.errors.EmptyDataError:
-                print(path_samples + " EMPTY!")
+                print(path_samples + "EMPTY!")
                 continue
             weights = np.array(df_samples[0])
             tmp = np.array(df_samples.iloc[:,1:1+no_parameters])
@@ -71,7 +66,7 @@ class Samples:
             try:
                 df_samples = pd.read_csv(path_samples, header=None)
             except pd.errors.EmptyDataError:
-                print(path_samples + " EMPTY!")
+                print(path_samples + "EMPTY!")
                 continue
             self.x_compress[i] = np.array(df_samples.iloc[:,1:1+no_parameters])
             self.posteriors[i] = np.array(df_samples.iloc[:,1+no_parameters])
@@ -94,24 +89,9 @@ class Samples:
                 current_idx = idx
         self.modus = self.x_compress[current_i][current_idx]
         return self.modus, current_val, current_i, current_idx
-
-    def find_n_modi(self, count):
-        import queue
-        N = len(self.posteriors)
-        current = queue.PriorityQueue(count)
-        for i in range(N):
-            idx = np.argmax(self.posteriors[i])
-            val = self.posteriors[i][idx]
-            if not current.full():
-                current.put_nowait((val, i, idx, self.x_compress[i][idx]))
-                continue
-            elif val > current.queue[0][0]:
-                if current.full():
-                    current.get_nowait()
-                current.put_nowait((val, i, idx, self.x_compress[i][idx]))
-        return sorted(current.queue, reverse=True)
-
+            
     def find_best_fit(self, folder_samples, no_parameters, observations):
+        folder_samples = folder_samples + '/raw_data'
         file_samples = [f for f in listdir(folder_samples) if isfile(join(folder_samples, f))]
         file_samples.sort()
         N = len(file_samples)
@@ -119,7 +99,7 @@ class Samples:
         G_all = [None] * N
         G_norm_min = np.inf
         for i in range(N):
-            path_samples = os.path.join(folder_samples, file_samples[i])
+            path_samples = folder_samples + "/" + file_samples[i]
             df_samples = pd.read_csv(path_samples, header=None)
             types = df_samples.iloc[:,0]
             idx = np.ones(len(types), dtype=bool)
@@ -139,107 +119,11 @@ class Samples:
                     x_all_min = x_all[i][argmin,:]
                     G_all_min = G_all[i][argmin,:]
         return x_all_min, G_all_min, G_norm_min
-
-    def find_n_best_fits(self, folder_samples, no_parameters, observations, count):
-        file_samples = [f for f in listdir(folder_samples) if isfile(join(folder_samples, f))]
-        file_samples.sort()
-        N = len(file_samples)
-        x_all = np.empty((0, no_parameters))
-        G_all = np.empty((0, len(observations)))
-        for i in range(N):
-            path_samples = os.path.join(folder_samples, file_samples[i])
-            df_samples = pd.read_csv(path_samples, header=None)
-            types = df_samples.iloc[:,0]
-            idx = np.ones(len(types), dtype=bool)
-            idx[types=="prerejected"] = 0
-            if sum(idx)==0:
-                print("find_n_best_fits EMPTY ", i, " of ", N)
-            else:
-                x_ = np.array(df_samples.iloc[:,1:1+no_parameters])
-                x_all = np.vstack((x_all, x_[idx]))
-                G_ = np.array(df_samples.iloc[:,2+no_parameters:])
-                G_all = np.vstack((G_all, G_[idx]))
-                # diff2 = np.square(G_all[i] - observations)
-                # G_norm = np.sqrt(np.sum(diff2, axis=1))
-                # argmin = np.argmin(G_norm)
-                # if G_norm_min>G_norm[argmin]:
-                #     G_norm_min = G_norm[argmin]
-                #     x_all_min = x_all[i][argmin,:]
-                #     G_all_min = G_all[i][argmin,:]
-        diff2 = np.square(G_all - observations)
-        G_L2norm = np.sqrt(np.sum(diff2, axis=1))
-        sorted_idx = np.argsort(G_L2norm)
-        # print(G_L2norm[sorted_idx])
-        x_best = x_all[sorted_idx[:count]]
-        G_best = G_all[sorted_idx[:count]]
-        G_norm_best = G_L2norm[sorted_idx[:count]]
-        return x_best, G_best, G_norm_best
-
-    def estimate_distributions(self, folder_samples, transformations, chains_disp = None, output_file = None):
-        if chains_disp == None:
-            chains_disp = range(self.no_chains)
-
-        no_parameters = len(transformations)
-        file_samples = [f for f in listdir(folder_samples) if isfile(join(folder_samples, f))]
-        file_samples.sort()
-        param_all = np.empty((0, no_parameters))
-
-        weights_all = np.empty((0,1))
-        for i in chains_disp:
-            path_samples = os.path.join(folder_samples, file_samples[i])
-            df_samples = pd.read_csv(path_samples, header=None)
-            types = df_samples.iloc[:,0]
-            idx = np.ones(len(types), dtype=bool)
-            idx[types == "prerejected"] = 0
-            idx[types == "rejected"] = 0
-            temp = np.arange(len(types))
-            weights = temp[idx]
-            weights[1:] = weights[1:] - weights[:-1]
-            # print(np.shape(weights))
-            if sum(idx)==0:
-                print("find_best_fit EMPTY ", i, " of ", chains_disp)
-            else:
-                param = np.array(df_samples.iloc[:, 1:no_parameters + 1])
-                param = param[idx]
-                param_all = np.vstack((param_all, param))
-
-                weights = weights.reshape((-1, 1))
-                weights_all = np.vstack((weights_all, weights)).astype(int)
-
-        # print(np.shape(param_all))
-        # print(np.shape(weights_all))
-        # print(param_all)
-        # print(weights_all)
-        if output_file is not None:
-            with open(output_file, 'w') as file:
-                header ='N,' + ','.join([s["name"] for s in transformations])
-                file.write(header + "\n")
-                for i in range(np.shape(weights_all)[0]):
-                    line = str(weights_all[i][0]) + ',' + ','.join([str(s) for s in param_all[i]])
-                    file.write(line + "\n")
-
-        param_all_log = np.log10(param_all)
-        mean = np.mean(param_all, axis=0).tolist()
-        mean_log = np.mean(param_all_log, axis=0).tolist()
-        std = np.std(param_all, axis=0).tolist()
-        std_log = np.std(param_all_log, axis=0).tolist()
-
-        output_list = []
-        for i in range(no_parameters):
-            d = dict()
-            d["name"] = transformations[i]["name"]
-            d["mu"] = mean[i]
-            d["mu_log10"] = mean_log[i]
-            d["sigma"] = std[i]
-            d["sigma_log10"] = std_log[i]
-            output_list.append(d)
-
-        return output_list
     
     def hist_G_TSX(self, folder_samples, no_parameters, grid, observations, chosen_observations, chains_disp = None):
         if chains_disp == None:
             chains_disp = range(self.no_chains)
-
+        #folder_samples = folder_samples + '/raw_data'
         file_samples = [f for f in listdir(folder_samples) if isfile(join(folder_samples, f))]
         file_samples.sort()
         MAX = 366
@@ -249,7 +133,7 @@ class Samples:
         G_all = np.empty((0,MAX))
         param_all = np.empty((0,no_parameters))
         for i in chains_disp:
-            path_samples = os.path.join(folder_samples, file_samples[i])
+            path_samples = folder_samples + "/" + file_samples[i]
             df_samples = pd.read_csv(path_samples, header=None)
             types = df_samples.iloc[:,0]
             idx = np.ones(len(types), dtype=bool)
@@ -293,7 +177,7 @@ class Samples:
         # #plt.imshow(img,extent=[xx[0],xx[-1],yy[0],yy[-1]], cmap="gist_heat_r", aspect="auto")
         # plt.grid()
         # plt.xlabel("time [d]")
-        # plt.ylabel("pressure head [m]")
+        # plt.ylabel("pressure [m]")
         # plt.plot(G_all.transpose())
         # #plt.plot(grid,observations[chosen_observations])
         
@@ -304,74 +188,24 @@ class Samples:
         # #     axes[i].set_xlabel(i)
         # #     axes[i].set_ylabel(i+1)
         
-        figsize=(6,6)
-        fig = plt.figure(figsize=figsize)
-        range_ = [[0, 366], [-100, 1000]]
-        # print(x_all)
-        # print(G_all)
-        # print(G_all.shape)
-        # print(weights_all)
-        # print(weights_all.shape)
-        # print(np.sum(weights_all[:,0]))
-        # print(np.sum(weights_all)/weights_all.shape[0])
-        quartiles = np.percentile(G_all, [5, 25, 75, 95], axis=0, method='midpoint')
-        # print(quartiles)
-        # https://www.statisticshowto.com/choose-bin-sizes-statistics/
-        # nbins = (1+ 3.322*np.log10(G_all.shape[0])).astype(int) # too small
-        n_samples = G_all.shape[0]
-        nbins = (np.sqrt(n_samples)).astype(int)
-        # print(n_samples, nbins)
-        # density = True
-        h2d = plt.hist2d(x_all.flatten(),G_all.flatten(),bins=[MAX,nbins],range=range_,#weights=weights_all.flatten(),
-                            cmin=1e-10, cmap="viridis_r", vmin=1, vmax=n_samples/3)
-        fig.colorbar(h2d[3])
-        # img = np.flipud(output[0].transpose())
-        # # print(sum(img))
-        # # img_sum = sum(img)
-        # # print(img_sum)
-        # # img = img/img_sum
-        # # print(sum(img))
-        # xx = output[1]
-        # print(xx)
-        # yy = output[2]
-        # plt.figure(figsize=(12,6))
-        # # f.set_figwidth(3)
-        # # f.set_figheight(2)
-        # plt.imshow(img,extent=[xx[0],xx[-1],yy[0],yy[-1]], cmap="copper_r")
+        
+        plt.figure()
+        range_ = [[0, 366], [-100, 800]]
+        output = plt.hist2d(x_all.flatten(),G_all.flatten(),bins=[MAX,200],range=range_,weights=weights_all.flatten())
+        img = np.flipud(output[0].transpose())
+        # print(sum(img))
+        # img_sum = sum(img)
+        # print(img_sum)
+        # img = img/img_sum
+        # print(sum(img))
+        xx = output[1]
+        yy = output[2]
+        plt.figure()
+        plt.imshow(img,extent=[xx[0],xx[-1],yy[0],yy[-1]], cmap="gist_heat_r")
         plt.grid()
-        lbl_fontsize = "large"
-        plt.xlabel("time [d]", fontsize=lbl_fontsize)
-        plt.ylabel("pressure head [m]", fontsize=lbl_fontsize)
-        plt.plot(grid,observations[chosen_observations], color="cyan", label="measurement")
-        plt.plot(x_all[0], quartiles.take([0,3], axis=0).transpose(), color="black", linestyle='dashed', linewidth=0.75,
-                 label="0.05,0.95 quantile")
-        plt.plot(x_all[0], quartiles.take([1,2], axis=0).transpose(), color="black", linestyle='dotted', linewidth=0.75,
-                 label="0.25,0.75 quantile")
-
-        # plot best fit - find, interpolate, plot
-        best_fit_x, best_fit_G, best_fit_norm = self.find_best_fit(folder_samples, no_parameters, observations)
-        N = 1
-        best_Nfit_x, best_Nfit_G, best_Nfit_norm = self.find_n_best_fits(folder_samples, no_parameters, observations, count=N)
-        # print("best_Nfit_norm", best_Nfit_norm)
-        # print("best_Nfit_x", best_Nfit_x)
-        est_noise = np.std(best_Nfit_G[0][chosen_observations] - observations[chosen_observations])
-        print("estimated noise std (best_fit-observations)", est_noise)
-
-        alpha_step =1/N
-        if N==1:
-            lw=1
-        else:
-            lw=0.1
-        for i in range(N):
-            best_fit_interp = np.interp(grid_interp, grid, best_Nfit_G[i][chosen_observations])
-            plt.plot(x_all[0], best_fit_interp, color="red", linestyle='solid', linewidth=lw,
-                     # label="best fit ($||\cdot||_{L^2}$)"
-                     alpha = 1-i*alpha_step,
-                     label="best fit ($L^2$)")
-
-        handles, labels = plt.gca().get_legend_handles_labels()
-        by_label = dict(zip(labels, handles))
-        plt.legend(by_label.values(), by_label.keys(), loc='upper right')
+        plt.xlabel("time [d]")
+        plt.ylabel("pressure [m]")
+        plt.plot(grid,observations[chosen_observations])
         
     def hist_G(self, folder_samples, no_parameters, observations, chosen_observations, chains_disp = None):
         if chains_disp == None:
@@ -649,9 +483,6 @@ class Samples:
         data['no parameters'] = self.no_parameters
         no_phases = int(self.no_chains/no_samplers)
         samplers_list = list()
-        # print("no_samplers: ", no_samplers)
-        # print("len(self.x)", len(self.x))
-        # print("self.x", self.x)
         for i in range(no_phases):
             idx = np.arange(no_samplers) + i*no_samplers
             if max(idx)>=len(self.length):
@@ -660,10 +491,7 @@ class Samples:
             d["length of chains"] = self.length[idx].tolist()
             x_phase = np.empty((0,self.no_parameters))
             for j in idx:
-                # print("j ", j, " len(self.x[j]", len(self.x[j]))
                 x_phase = np.vstack((x_phase,self.x[j]))
-            # print("x_phase: ", len(x_phase))
-            # print(x_phase)
             mean = np.mean(x_phase,axis=0)
             d["mean"] = mean.tolist()
             d["mean_log10"] = np.log10(mean).tolist()
@@ -832,7 +660,7 @@ class Samples:
         axes[0].set_ylabel("samples")
         #plt.show()
 
-    def plot_hist_1d(self, axis, burn_in = None, param_no = 0, chains_disp = None, bins = 20, show = True, log = False):
+    def plot_hist_1d(self, burn_in = None, dimension = 0, chains_disp = None, bins = 20, show = True, log = False):
         if chains_disp == None:
             chains_disp = range(self.no_chains)
         if burn_in == None:
@@ -842,7 +670,7 @@ class Samples:
         for i, chain in enumerate(chains_disp):
             no_unique_samples += self.unique_samples[chain] # burn-in not excluded
             try:
-                xx = self.x[chain][burn_in[i]:,param_no]
+                xx = self.x[chain][burn_in[i]:,dimension]
             except:
                 print("HISTOGRAM 1D: CHAIN", chain, "NOT AVAILABLE")
                 continue
@@ -850,7 +678,7 @@ class Samples:
                 XX = np.concatenate((XX,np.log10(xx)))
             else:
                 XX = np.concatenate((XX,xx))
-        #np.save("XX2_boreholes1234_" + str(param_no) + ".npy",XX)
+        #np.save("XX2_boreholes1234_" + str(dimension) + ".npy",XX)
         if bins is None:
             bins = np.floor(no_unique_samples/20)
             bins = min(bins,100)
@@ -860,7 +688,7 @@ class Samples:
         if show:
             plt.show()
 
-    def plot_hist_2d(self, axis, burn_in = None, param_no = [0,1], chains_disp = None, bins = 20, show = True, colorbar = False, log = [False,False]):
+    def plot_hist_2d(self, burn_in = None, dimensions = [0,1], chains_disp = None, bins = 20, show = True, colorbar = False, log = [False,False]):
         if chains_disp == None:
             chains_disp = range(self.no_chains)
         if burn_in == None:
@@ -871,8 +699,8 @@ class Samples:
         for i, chain in enumerate(chains_disp):
             no_unique_samples += self.unique_samples[chain] # burn-in not excluded
             try:
-                xx = self.x[chain][burn_in[i]:,param_no[0]]
-                yy = self.x[chain][burn_in[i]:,param_no[1]]
+                xx = self.x[chain][burn_in[i]:,dimensions[0]]
+                yy = self.x[chain][burn_in[i]:,dimensions[1]]
             except:
                 print("HISTOGRAM 2D: CHAIN", chain, "NOT AVAILABLE")
                 continue
@@ -891,11 +719,11 @@ class Samples:
         plt.hist2d(XX, YY, bins = int(bins), cmap = "binary")#, density = True)
         plt.grid(True)
         if colorbar:
-            axis.colorbar()
+            plt.colorbar()
         if show:
             plt.show()
     
-    def plot_hist_grid(self, par_names = None, burn_in = None, parameters_disp = None, chains_disp = None, bins1d = 20, bins2d = 20, scale=None):
+    def plot_hist_grid(self, burn_in = None, parameters_disp = None, chains_disp = None, bins1d = 20, bins2d = 20, scale=None):
         if parameters_disp == None:
             parameters_disp = range(self.no_parameters)
         if chains_disp == None:
@@ -905,37 +733,32 @@ class Samples:
         if scale is None:
             scale = [None] * len(parameters_disp)
         n = len(parameters_disp)
-        fig, axes = plt.subplots(n, n, sharex=False, sharey=False, figsize=(15,15))
-        plt.subplots_adjust(wspace=0.5, hspace=0.3)
+        idx = 1
+        fig, axes = plt.subplots(n, n, sharex=False, sharey=False, figsize=(12,12))
         for idi,i in enumerate(parameters_disp):
             for idj,j in enumerate(parameters_disp):
-                axis = axes[idi,idj]
+                plt.subplot(n, n, idx)
                 if idi==idj:
                     if scale[i] == 'log':
                         log = True
                     else:
                         log = False
-                    self.plot_hist_1d(axis=axis, param_no = i, burn_in = burn_in, chains_disp=chains_disp, bins=bins1d, show = False, log=log)
+                    self.plot_hist_1d(dimension = i, burn_in = burn_in, chains_disp=chains_disp, bins=bins1d, show = False, log=log)
                 else:
                     log = [scale[j]=="log", scale[i]=="log"]
                     # if idi<2 and idj<2:
                     #     self.plot_hist_2d(dimensions = [j,i],  burn_in = burn_in, chains_disp=chains_disp, bins=30, show = False, log=log)
                     # else:
-                    self.plot_hist_2d(axis=axis, param_no = [j,i],  burn_in = burn_in, chains_disp=chains_disp, bins=bins2d, show = False, log=log)
-                if idi==0:
-                    # determine parameter name
-                    if par_names is not None:
-                        par_name = par_names[j].replace('_', '\_')
-                        label = "${0}$".format(par_name)
-                    else:
-                        label = "$par. {0}$".format(j)
+                    self.plot_hist_2d(dimensions = [j,i],  burn_in = burn_in, chains_disp=chains_disp, bins=bins2d, show = False, log=log)
+                if idx<=n:
+                    label = "$par. {0}$".format(j)
                     if scale[idj] == "log":
-                        label += "\n(log)"
-                    axis.set_title(label, x=1.05, rotation=45, multialignment='center')
-        return fig, axes
+                        label += " (log scale)"
+                    plt.title(label)
+                idx = idx + 1
+        #plt.show()
         
-    def plot_hist_grid_add(self, axes, settings, estimated_distributions,
-                           burn_in = None, parameters_disp = None, chains_disp = None, scale=None):
+    def plot_hist_grid_add(self, settings, burn_in = None, parameters_disp = None, chains_disp = None, scale=None):
         if parameters_disp == None:
             parameters_disp = range(self.no_parameters)
         if chains_disp == None:
@@ -943,86 +766,34 @@ class Samples:
         if scale is None:
             scale = [None] * len(parameters_disp)
         n = len(parameters_disp)
+        idx = 1
+        # fig, axes = plt.subplots(n, n, sharex=False, sharey=False) # figsize=(12,12)
         import scipy.stats
         for idi,i in enumerate(parameters_disp):
             for idj,j in enumerate(parameters_disp):
-                axis = axes[idi, idj]
+                plt.subplot(n, n, idx)
                 if idi==idj:
-                    major_ticks = None
-                    minor_ticks = None
                     if settings[idi] is None:
                         pass
                     else:
                         trans_type = settings[idi]["type"]
                         trans_options = settings[idi]["options"]
-                        # TODO add posterior
                         if trans_type == "normal_to_lognormal":
-                            # mu = trans_options["mu"]
-                            # sigma = trans_options["sigma"]
-                            # x = np.linspace(mu - 3*sigma, mu + 3*sigma, 100)
-                            # y = scipy.stats.norm.pdf(x, mu, sigma)
-                            # axis.plot(np.log10(np.exp(x)),y*np.log(100)/np.log10(100))
-                            mu = np.log10(np.exp(trans_options["mu"]))
-                            sigma = trans_options["sigma"]*np.log10(np.e)
-                            print("mu,sigma:", mu, sigma)
-                            x = np.linspace(mu - 3 * sigma, mu + 3 * sigma, 100)
+                            mu = trans_options["mu"]
+                            sigma = trans_options["sigma"]
+                            x = np.linspace(mu - 3*sigma, mu + 3*sigma, 100)
                             y = scipy.stats.norm.pdf(x, mu, sigma)
-                            axis.plot(x, y)
-
-                            est = estimated_distributions[idi]
-                            est_mu = est["mu_log10"]
-                            est_sigma = est["sigma_log10"]
-                            x = np.linspace(est_mu - 3 * est_sigma, est_mu + 3 * est_sigma, 100)
-                            y = scipy.stats.norm.pdf(x, est_mu, est_sigma)
-                            axis.plot(x, y, color='red')
-
-                            major_ticks = np.array([mu - 3*sigma, mu, mu + 3*sigma])
-                            minor_ticks = np.array([mu - 2*sigma, mu - sigma, mu, mu + sigma, mu + 2*sigma])
+                            plt.plot(np.log10(np.exp(x)),y*np.log(100)/np.log10(100))
                         elif trans_type == "normal_to_uniform":
                             a = trans_options["a"]
                             b = trans_options["b"]
-                            axis.plot([a,b],[1/(b-a)]*2)
+                            plt.plot([a,b],[1/(b-a)]*2)
                         elif trans_type == "normal_to_beta":
                             alfa = trans_options["alfa"]
                             beta = trans_options["beta"]
                             x=np.linspace(0,1,100)
                             y=scipy.stats.beta.pdf(x,alfa,beta)
-                            # possibly cut the x-axis width for reasonable values
-                            cut = np.argwhere(y>1e-3)
-                            axis.plot(x[cut],y[cut])
-                            # equivalent normal dist.
-                            mu = alfa / (alfa + beta)
-                            sigma = np.sqrt(alfa*beta / ((alfa+beta)**2*(alfa+beta+1)))
-                            major_ticks = np.array([mu - 3 * sigma, mu, mu + 3 * sigma])
-                            minor_ticks = np.array([mu - 2 * sigma, mu - sigma, mu, mu + sigma, mu + 2 * sigma])
-
-                            est = estimated_distributions[idi]
-                            est_mu = est["mu"]
-                            est_var = est["sigma"]*est["sigma"]
-                            s = est_mu*(1-est_mu)/est_var - 1
-                            est_alpha = est_mu * s
-                            est_beta = s - est_alpha
-                            x = np.linspace(0, 1, 100)
-                            y = scipy.stats.beta.pdf(x, est_alpha, est_beta)
-                            # possibly cut the x-axis width for reasonable values
-                            cut = np.argwhere(y > 1e-3)
-                            axis.plot(x[cut], y[cut], color='red')
-
-                    if major_ticks is not None:
-                        axis.set_xticks(major_ticks)
-                        axis.set_xticks(minor_ticks, minor=True)
-                        nd = np.log(np.mean(major_ticks))
-                        # axis.xaxis.set_major_formatter('{x:.'+str(nd)+'}')
-                        if nd < 0:
-                            axis.xaxis.set_major_formatter('{x:.1}')
-                        else:
-                            axis.xaxis.set_major_formatter('{x:.0f}')
-                        # axis.set_yticks(major_ticks)
-                        # axis.set_yticks(minor_ticks, minor=True)
-                        axis.grid(which='minor', alpha=0.2)
-                        axis.grid(which='major', alpha=0.5)
-                    else:
-                        axis.grid(which='both')
+                            plt.plot(x,y)
                 else:
                     if scale[idi]=="log":
                         x=np.log10(self.modus[idi])
@@ -1032,24 +803,26 @@ class Samples:
                         y=np.log10(self.modus[idj])
                     else:
                         y=self.modus[idj]
-                    axis.plot(y,x,'.r')
+                    plt.plot(y,x,'.r')
                     # if idi==0:
                     #     mu=-35
                     #     sigma=3
                     #     x = np.linspace(mu - 3*sigma, mu + 3*sigma, 100)
                     #     y = scipy.stats.norm.pdf(x, mu, sigma)
-                    #     axis.plot(np.log10(np.exp(x)),y*np.log(100)/np.log10(100))
+                    #     plt.plot(np.log10(np.exp(x)),y*np.log(100)/np.log10(100))
+                    #     plt.show()
                     # if idi==1:
                     #     alfa=5
                     #     beta=5
                     #     x=np.linspace(0,1,100)
                     #     y=scipy.stats.beta.pdf(x,alfa,beta)
-                    #     axis.plot(x,y)
+                    #     plt.plot(x,y)
                 # elif idi>idj:
-                #     axis.plot(np.log10(self.modus[idj]),self.modus[idi],'.')
+                #     plt.plot(np.log10(self.modus[idj]),self.modus[idi],'.')
                 # else:
-                #     axis.plot(self.modus[1],np.log10(self.modus[0]),'.')
-        return axes
+                #     plt.plot(self.modus[1],np.log10(self.modus[0]),'.')
+                idx = idx + 1
+        #plt.show()
 
 ### DAMH ANALYSIS:
     
@@ -1222,119 +995,120 @@ class Samples:
 # The samples in one chain form a numpy array of shape (l_i, n).
 # All samples form a python list of length N.
 
-    # def calculate_autocorr_function(self,begin=None,end=None,chains_range=None):
+    def calculate_autocorr_function(self,begin=None,end=None,chains_range=None):
+        if chains_range==None:
+            chains_range = range(self.no_chains)
+        no_chains = len(chains_range)
+        self.autocorr_function = [None] * (1+max(chains_range))
+        if end == None:
+            end = self.length[chains_range]
+        else:
+            end = [int(end)] * no_chains
+        if begin == None:
+            begin = [0] * no_chains
+        else:
+            begin = [int(begin)] * no_chains
+        for idx,i in enumerate(chains_range):
+            tmp = np.zeros((end[idx]-begin[idx],self.no_parameters))
+            for j in range(self.no_parameters):
+                tmp[:,j] = emcee.autocorr.function_1d(self.x[i][begin[idx]:end[idx],j])
+            self.autocorr_function[i] = tmp
+            
+    def calculate_autocorr_function_mean(self,length=None,chains_range=None):
+        if chains_range==None:
+            chains_range = range(len(self.autocorr_function))
+        no_chains = len(chains_range)
+        if length==None:
+            length = self.length[chains_range]
+            max_length = max(self.length[chains_range])
+        else:
+            max_length = int(length)
+            length = [int(length)] * no_chains
+        autocorr_function_mean = np.zeros((max_length, self.no_parameters))
+        for j in range(self.no_parameters):
+            tmp = np.zeros(max_length)
+            count = np.zeros(max_length)
+            for idx,i in enumerate(chains_range):
+                tmp[:length[idx]] += self.autocorr_function[i][:,j]
+                count[:length[idx]] += 1
+            autocorr_function_mean[:,j] = tmp/count
+        return autocorr_function_mean
+
+    # def calculate_autocorr_time(self, c=5, tol=50, quiet=True):
+    #     self.autocorr_time = [None] * self.no_chains
+    #     for i in range(self.no_chains):
+    #         tmp = np.zeros((self.no_parameters))
+    #         for j in range(self.no_parameters):
+    #             tmp[j] = emcee.autocorr.integrated_time(self.x[i][:,j], c=c, tol=tol, quiet=quiet)
+    #         self.autocorr_time[i] = tmp
+        
+    def calculate_autocorr_time_mean(self, c=5, length=None, chains_range=None):
+        if chains_range==None:
+            chains_range = range(len(self.autocorr_function))
+        autocorr_time_mean = [None] * self.no_parameters
+        autocorr_time_mean_beta = [None] * self.no_parameters
+        if length==None:
+            length = min(self.length[chains_range])
+        else:
+            length = int(length)
+        autocorr_function_mean = self.calculate_autocorr_function_mean(None,chains_range)
+        for j in range(self.no_parameters):
+            f = autocorr_function_mean[:length,j]
+            autocorr_time_mean[j] = autocorr_FM(f, c)
+            f = autocorr_function_mean[:,j]
+            autocorr_time_mean_beta[j] = autocorr_FM(f, c)
+        return autocorr_time_mean, autocorr_time_mean_beta
+
+    # def calculate_autocorr_time_sliding(self,no_sw=4,window_length=None,chains_range=None):
     #     if chains_range==None:
     #         chains_range = range(self.no_chains)
-    #     no_chains = len(chains_range)
-    #     self.autocorr_function = [None] * (1+max(chains_range))
-    #     if end == None:
-    #         end = self.length[chains_range]
+    #     min_length = min(self.length[list(chains_range)])
+    #     if window_length == None:
+    #         sw_step = np.floor(min_length/(no_sw+1))
+    #         window_length = sw_step*2
     #     else:
-    #         end = [int(end)] * no_chains
-    #     if begin == None:
-    #         begin = [0] * no_chains
-    #     else:
-    #         begin = [int(begin)] * no_chains
-    #     for idx,i in enumerate(chains_range):
-    #         tmp = np.zeros((end[idx]-begin[idx],self.no_parameters))
-    #         for j in range(self.no_parameters):
-    #             tmp[:,j] = emcee.autocorr.function_1d(self.x[i][begin[idx]:end[idx],j])
-    #         self.autocorr_function[i] = tmp
-            
-    # def calculate_autocorr_function_mean(self,length=None,chains_range=None):
-    #     if chains_range==None:
-    #         chains_range = range(len(self.autocorr_function))
-    #     no_chains = len(chains_range)
-    #     if length==None:
-    #         length = self.length[chains_range]
-    #         max_length = max(self.length[chains_range])
-    #     else:
-    #         max_length = int(length)
-    #         length = [int(length)] * no_chains
-    #     autocorr_function_mean = np.zeros((max_length, self.no_parameters))
-    #     for j in range(self.no_parameters):
-    #         tmp = np.zeros(max_length)
-    #         count = np.zeros(max_length)
-    #         for idx,i in enumerate(chains_range):
-    #             tmp[:length[idx]] += self.autocorr_function[i][:,j]
-    #             count[:length[idx]] += 1
-    #         autocorr_function_mean[:,j] = tmp/count
-    #     return autocorr_function_mean
+    #         sw_step = np.floor((min_length-window_length)/no_sw)
+    #     print("window length:",window_length)
+    #     self.tau_sliding_mean = [None] * no_sw
+    #     self.tau_sliding_max = [None] * no_sw
+    #     self.tau_sliding_min = [None] * no_sw
+    #     for i in range(no_sw):
+    #         begin=i*sw_step
+    #         end=i*sw_step+window_length
+    #         self.calculate_autocorr_function(begin, end, chains_range=chains_range)
+    #         self.calculate_autocorr_function_mean(length=end-begin)
+    #         self.calculate_autocorr_time_mean(length=end-begin)
+    #         self.tau_sliding_mean[i] = np.mean(self.autocorr_time_mean)
+    #         self.tau_sliding_max[i] = np.max(self.autocorr_time_mean)
+    #         self.tau_sliding_min[i] = np.min(self.autocorr_time_mean)
+    #         print("i, mean, min, max:", i, self.tau_sliding_mean[i], self.tau_sliding_min[i], self.tau_sliding_max[i])
 
-    # # def calculate_autocorr_time(self, c=5, tol=50, quiet=True):
-    # #     self.autocorr_time = [None] * self.no_chains
-    # #     for i in range(self.no_chains):
-    # #         tmp = np.zeros((self.no_parameters))
-    # #         for j in range(self.no_parameters):
-    # #             tmp[j] = emcee.autocorr.integrated_time(self.x[i][:,j], c=c, tol=tol, quiet=quiet)
-    # #         self.autocorr_time[i] = tmp
+    def plot_autocorr_function(self, length_disp, plot_mean=False, parameters_disp = None, chains_disp = None, show_legend = False):
+        if parameters_disp == None:
+            parameters_disp = range(self.no_parameters)
+        no_parameters_disp = len(parameters_disp)
+        if chains_disp == None:
+            chains_disp = range(self.no_chains)
+        fig, axes = plt.subplots(1, no_parameters_disp, figsize=(12, 3), sharey=True)
+        for idj,j in enumerate(parameters_disp):
+            length_disp[idj] = min(max(self.length),length_disp[idj])
+        for idj,j in enumerate(parameters_disp):
+            for idi,i in enumerate(chains_disp):
+                axes[idj].plot(self.autocorr_function[i][:length_disp[idj],j], label=i)
+            if plot_mean:
+                axes[idj].plot(self.autocorr_function_mean[:,j],label="mean")
+            axes[idj].set_xlim(0, length_disp[idj]-1)
+            if show_legend:
+                axes[idj].legend(loc=1)
+            axes[idj].set_xlabel("$par. {0}$".format(j))
+            axes[idj].grid(True)
+            if self.known_autocorr_time:
+                axes[idj].set_title("$\\tau_\mathrm{{true}} = {0:.0f}$".format(self.autocorr_time_true[j]));
+        axes[0].set_ylabel("autocorr. function")
+        plt.show()
         
-    # def calculate_autocorr_time_mean(self, c=5, length=None, chains_range=None):
-    #     if chains_range==None:
-    #         chains_range = range(len(self.autocorr_function))
-    #     autocorr_time_mean = [None] * self.no_parameters
-    #     autocorr_time_mean_beta = [None] * self.no_parameters
-    #     if length==None:
-    #         length = min(self.length[chains_range])
-    #     else:
-    #         length = int(length)
-    #     autocorr_function_mean = self.calculate_autocorr_function_mean(None,chains_range)
-    #     for j in range(self.no_parameters):
-    #         f = autocorr_function_mean[:length,j]
-    #         autocorr_time_mean[j] = autocorr_FM(f, c)
-    #         f = autocorr_function_mean[:,j]
-    #         autocorr_time_mean_beta[j] = autocorr_FM(f, c)
-    #     return autocorr_time_mean, autocorr_time_mean_beta
-
-    # # def calculate_autocorr_time_sliding(self,no_sw=4,window_length=None,chains_range=None):
-    # #     if chains_range==None:
-    # #         chains_range = range(self.no_chains)
-    # #     min_length = min(self.length[list(chains_range)])
-    # #     if window_length == None:
-    # #         sw_step = np.floor(min_length/(no_sw+1))
-    # #         window_length = sw_step*2
-    # #     else:
-    # #         sw_step = np.floor((min_length-window_length)/no_sw)
-    # #     print("window length:",window_length)
-    # #     self.tau_sliding_mean = [None] * no_sw
-    # #     self.tau_sliding_max = [None] * no_sw
-    # #     self.tau_sliding_min = [None] * no_sw
-    # #     for i in range(no_sw):
-    # #         begin=i*sw_step
-    # #         end=i*sw_step+window_length
-    # #         self.calculate_autocorr_function(begin, end, chains_range=chains_range)
-    # #         self.calculate_autocorr_function_mean(length=end-begin)
-    # #         self.calculate_autocorr_time_mean(length=end-begin)
-    # #         self.tau_sliding_mean[i] = np.mean(self.autocorr_time_mean)
-    # #         self.tau_sliding_max[i] = np.max(self.autocorr_time_mean)
-    # #         self.tau_sliding_min[i] = np.min(self.autocorr_time_mean)
-    # #         print("i, mean, min, max:", i, self.tau_sliding_mean[i], self.tau_sliding_min[i], self.tau_sliding_max[i])
-
-    # def plot_autocorr_function(self, length_disp, plot_mean=False, parameters_disp = None, chains_disp = None, show_legend = False):
-    #     if parameters_disp == None:
-    #         parameters_disp = range(self.no_parameters)
-    #     no_parameters_disp = len(parameters_disp)
-    #     if chains_disp == None:
-    #         chains_disp = range(self.no_chains)
-    #     fig, axes = plt.subplots(1, no_parameters_disp, figsize=(12, 3), sharey=True)
-    #     for idj,j in enumerate(parameters_disp):
-    #         length_disp[idj] = min(max(self.length),length_disp[idj])
-    #     for idj,j in enumerate(parameters_disp):
-    #         for idi,i in enumerate(chains_disp):
-    #             axes[idj].plot(self.autocorr_function[i][:length_disp[idj],j], label=i)
-    #         if plot_mean:
-    #             axes[idj].plot(self.autocorr_function_mean[:,j],label="mean")
-    #         axes[idj].set_xlim(0, length_disp[idj]-1)
-    #         if show_legend:
-    #             axes[idj].legend(loc=1)
-    #         axes[idj].set_xlabel("$par. {0}$".format(j))
-    #         axes[idj].grid(True)
-    #         if self.known_autocorr_time:
-    #             axes[idj].set_title("$\\tau_\mathrm{{true}} = {0:.0f}$".format(self.autocorr_time_true[j]));
-    #     axes[0].set_ylabel("autocorr. function")
-    #     plt.show()
-
-### GAUSSIAN RANDOM FIELDS:        
+### GAUSSIAN RANDOM FIELDS:
+        
     def plot_grf(self, eta, grf_path = None):
         if grf_path == None:
             grf_path = 'modules/unit50.pckl'
