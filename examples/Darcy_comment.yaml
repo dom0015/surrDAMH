@@ -1,0 +1,62 @@
+
+no_observations: 3
+no_parameters: 4
+no_solvers: 3
+
+# comment 1 debug
+debug: false
+
+paths_to_append:
+- /home/simona/GIT/Simple_Python_PETSc_FEM
+problem_name: Darcy
+  
+samplers_list:
+- max_samples: 200
+  proposal_std: 0.2
+  surrogate_is_updated: true
+  time_limit: 60
+  type: MH
+- max_samples: 2000
+  proposal_std: 0.2
+  surrogate_is_updated: true
+  time_limit: 60
+  type: DAMH
+- max_samples: 10000
+  proposal_std: 0.2
+  surrogate_is_updated: false
+  time_limit: 60
+  type: DAMH
+  
+#comment 2 problem
+problem_parameters:
+  noise_std:
+  - 0.2
+  - 0.1
+  - 0.1
+  observations:
+  - 10.24925199
+  - -6.07103574
+  - -4.17821625
+  prior_mean: 0.0
+  prior_std: 1.0 # comment 3 prior std
+  
+solver_init_name: FEM
+solver_module_name: MyFEM_wrapper
+solver_module_path: examples/solvers/MyFEM_wrapper.py
+solver_parameters: # comment 4 solver parameters
+  PC: icc
+  deflation_imp: 0.01
+  n: 50
+  no_configurations: 1
+  no_observations: 3
+  no_parameters: 4
+  quiet: true
+  tolerance: 1e-08
+  use_deflation: false
+surr_solver_parameters:
+  kernel_type: 1
+surr_updater_parameters:
+  expensive: false
+  kernel_type: 1
+  no_keep: 500
+surrogate_type: rbf

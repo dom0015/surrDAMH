@@ -1,5 +1,5 @@
 {
-    "problem_name": "simple",
+    "problem_name": "simple_tag",
     "no_parameters": 2,
     "no_observations": 1,
     "problem_parameters": {
@@ -10,7 +10,9 @@
     },
     "solver_module_path": "examples/solvers/solver_examples.py",
     "solver_module_name": "solver_examples",
-    "solver_init_name": "Solver_linela2exp_local",
+    "solver_init_name": "Solver_linela2exp_local_tag",
+    "solver_returns_tag": true,
+    "save_raw_data": true,
     "solver_parameters": {
     },
     "no_solvers": 3,

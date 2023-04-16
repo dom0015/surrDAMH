@@ -1,0 +1,60 @@
+{
+    "no_parameters": 2,
+    "no_observations": 64,
+    "problem_parameters": {
+        "prior_mean": [6e-15, 0.17],
+        "prior_std": [1e-15,0.1],
+        "observations": [300.0,         341.34553975, 382.75151478, 424.21594379, 465.73968269,
+ 507.32209564, 548.96110416, 590.65339194, 632.39455056, 653.27673246,
+ 674.1698432,  674.49131253, 674.80378951, 675.10466339, 675.42407289,
+ 675.72011912, 300.0,         324.4027981,  348.89259483, 373.44480444,
+ 398.04460712, 422.68100233, 447.34558358, 472.03182287, 496.73460106,
+ 509.08956092, 521.44759665, 521.67870252, 521.86911913, 522.02673939,
+ 522.17066091, 522.28732725, 300.0,         257.2956216,  215.30345196,
+ 173.90547196, 133.00484176,  92.5207652,   52.38637165,  12.54656518,
+ -27.04386198, -46.78182062, -66.46710184, -63.99644932, -61.80116562,
+ -59.84910349, -57.91921533, -56.21847513, 300.0,         281.75754789,
+ 263.54915145, 245.37523974, 227.2367926,  209.13314233, 191.06276169,
+ 173.02368157, 155.01374403, 146.01578444, 137.02455527, 137.21307639,
+ 137.40057944, 137.58387996, 137.7821862, 137.97115256],
+        "noise_std": 10.0
+    },
+    "paths_to_append": [
+        "/home/domesova/GIT/Endorse-2Dtest-Bayes",
+        "/home/domesova/GIT/MCMC-Bayes-python/surrDAMH"
+    ],
+    "solver_module_path": "examples/solvers/flow_wrapper.py",
+    "solver_module_name": "flow_wrapper",
+    "solver_init_name": "Wrapper",
+    "solver_returns_tag": true,
+    "solver_parameters": {
+    },
+    "no_solvers": 1,
+    "samplers_list": [
+        {
+            "type": "MH",
+            "max_samples": 200,
+            "time_limit": 3600,
+            "proposal_std": [2e-15,0.2],
+            "surrogate_is_updated": true
+        },
+        {
+            "type": "DAMH",
+            "max_samples": 100000,
+            "time_limit": 7200,
+            "proposal_std": [2e-15,0.2],
+            "surrogate_is_updated": true
+        },
+        {
+            "type": "DAMH",
+            "max_samples": 100000,
+            "time_limit": 7200,
+            "proposal_std": [2e-15,0.2],
+            "surrogate_is_updated": false
+        }
+    ],
+    "surrogate_type": "poly",
+    "surr_updater_parameters": {
+        "max_degree": 8
+    }
+}

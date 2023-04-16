@@ -122,4 +122,12 @@ Path and constructor arguments of the spawed solver (wrapper) class are specifie
 `        "max_centers": 500,`<br>
 `        "expensive": false`<br>
 `    }`<br>
+
+alternatively for polynomial surrogate: <br>
+--------------------------------------- <br>
+`    "surrogate_type": "poly", ` <br>
+`    "surr_updater_parameters": { ` <br>
+`        "max_degree": 8`<br>
+`    }`<br>
+--------------------------------------- <br>
 `}`<br>

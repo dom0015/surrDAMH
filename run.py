@@ -2,6 +2,7 @@
 
 import os
 import sys
+import json
 
 """
 python3 run.py problem_name N (oversubscribe) (visualize)
@@ -31,17 +32,41 @@ if len_argv>3:
     else:
         visualize = False
 
+problem_path = None
+basename = os.path.basename(problem_name)
+fname, fext = os.path.splitext(basename)
+if fext == ".json":
+    problem_path = os.path.abspath(problem_name)
+    problem_name = fname
+elif fext == "":
+    problem_path = os.path.abspath(os.path.join("examples", problem_name + ".json"))
+else:
+    os.error("Specify configuration json file or example testcase name.")
+
+with open(problem_path) as f:
+    conf = json.load(f)
+
 if visualize:
-    command = "python3 examples/visualization/" + problem_name + ".py " + str(N)
+    visualization_path = os.path.abspath(os.path.join("examples/visualization/", problem_name + ".py"))
+    if os.path.exists(visualization_path):
+        command = "python3 " + visualization_path + " " + str(N)
+    else:
+        visualization_path = os.path.abspath(os.path.join("examples/visualization/general_visualization.py"))
+        command = "python3 " + visualization_path + " " + str(N) + " " + problem_name
 else:
     if oversubscribe:
-        opt = " --oversubscribe "
+        opt = " --oversubscribe " 
     else:
         opt = " "
+    # opt = opt + "--mca opal_warn_on_missing_libcuda 0 "
+    # opt = opt + "--mca orte_base_help_aggregate 0 "
     sampler = " -n " + str(N) + opt + "python3 -m mpi4py surrDAMH/process_SAMPLER.py "
-    solver = " -n 1" + opt + "python3 -m mpi4py surrDAMH/process_SOLVER.py " + problem_name + " "
+    solver = " -n 1" + opt + "python3 -m mpi4py surrDAMH/process_SOLVER.py " + problem_path + " "
     collector = " -n 1" + opt + "python3 -m mpi4py surrDAMH/process_COLLECTOR.py "
-    command = "mpirun" + sampler + ":" + solver + ":" + collector
+    if "surrogate_type" in conf.keys():
+        command = "mpirun" + sampler + ":" + solver + ":" + collector
+    else:
+        command = "mpirun" + sampler + ":" + solver
 
 # path = os.path.abspath(os.path.dirname(__file__)) # file directory 
 # sys.path.append(path)
