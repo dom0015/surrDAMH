@@ -12,6 +12,7 @@ import ruamel.yaml as yaml
 
 sys.path.append(os.path.dirname(os.path.realpath(__file__)) + "/../..")
 from surrDAMH.modules import visualization_and_analysis as va
+from surrDAMH.modules import analysis as ape
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -32,6 +33,9 @@ chains_disp = range(no_samplers, no_samplers * no_stages)
 print("chains_disp", chains_disp)
 
 observations = np.array(conf["problem_parameters"]["observations"])
+
+par_names = [p["name"] for p in conf["transformations"]]
+print("parameters:", par_names)
 
 if not os.path.exists(visualization_dir):
     os.makedirs(visualization_dir)
@@ -69,20 +73,56 @@ for idx,d in enumerate(output_dict["samplers_list"]):
 mode = S.find_modus()
 output_dict["mode"] = mode[0].tolist()
 
-fit_L2_x, fit_L2_G, fit_L2_norm = S.find_best_fit(raw_data_dir, no_parameters, observations)
-output_dict["best_fit_L2"] = {"parameters": fit_L2_x.tolist(),
-                              "parameters_log": np.log(fit_L2_x).tolist(),
-                              "parameters_log10": np.log10(fit_L2_x).tolist()}
+
+raw_data = ape.RawData()
+raw_data.load(output_dir, no_parameters, len(observations))
+# type: 0-accepted, 1-prerejected, 2-rejected
+raw_data_filtered = raw_data.filter(types=[0,2], stages=[0,1])
+bestfit_L2, bestfit_L2_norm = raw_data_filtered.find_best_fit(observations, norm="L2")
+# fit_L2_x, fit_L2_G, fit_L2_norm = S.find_best_fit(raw_data_dir, no_parameters, observations)
+output_dict["best_fit_L2"] = {"parameters": bestfit_L2.parameters().tolist(),
+                              "parameters_log": np.log(bestfit_L2.parameters()).tolist(),
+                              "parameters_log10": np.log10(bestfit_L2.parameters()).tolist()}
+print("-----")
+print('BEST FIT (L2)')
+print(" - NORM:", bestfit_L2_norm)
+print(" - PARAMETERS:", bestfit_L2.parameters())
+print(" - OBSERVATIONS:", bestfit_L2.observations())
+
+# fits, norms = raw_data_filtered.find_n_best_fits(observations, count=10, norm="L2")
+# print(norms)
+
+from surrDAMH.modules import Gaussian_process
+noise_cov = Gaussian_process.assemble_covariance_matrix(conf["noise_model"])
+
+bestfit_LH, bestfit_LH_norm = raw_data_filtered.find_best_fit(observations, norm="likelihood", noise_cov=noise_cov)
+output_dict["best_fit_L2"] = {"parameters": bestfit_LH.parameters().tolist(),
+                              "parameters_log": np.log(bestfit_LH.parameters()).tolist(),
+                              "parameters_log10": np.log10(bestfit_LH.parameters()).tolist()}
+print("-----")
+print('BEST FIT (LikelyHood)')
+print(" - NORM:", bestfit_LH_norm)
+print(" - PARAMETERS:", bestfit_LH.parameters())
+print(" - OBSERVATIONS:", bestfit_LH.observations())
+
+# fits, norms = raw_data_filtered.find_n_best_fits(observations, count=10, norm="likelihood", noise_cov=noise_cov)
+# print(norms)
+
+visual = ape.Visualization(conf, raw_data_filtered)
+# fig, axes = plt.subplots(1,1)
+# visual.plot_likelihood_ij(axes, 0, 1)
+# # fig.colorbar(extend="min")
+# fig.savefig(os.path.join(visualization_dir, "likelihood_" + str(0) + "_" + str(1) + ".pdf"))
+fig, axes = plt.subplots(no_parameters, no_parameters, figsize=(25,25))
+plt.subplots_adjust(wspace=0.5, hspace=0.3)
+visual.plot_likelihood(fig, axes)
+fig.savefig(os.path.join(visualization_dir, "likelihood_all" + ".jpg"))
 
 # grid=np.array(conf["noise_grid"])
 # grid_max = max(grid)+35
-# from surrDAMH.surrDAMH.modules import Gaussian_process
-# cov_type = None
-# if "noise_cov_type" in conf.keys():
-#     cov_type = conf["noise_cov_type"]
-# noise_cov = Gaussian_process.assemble_covariance_matrix(grid, conf["noise_parameters"], cov_type)
-# fit_likelihood = S.find_max_likelihood(output_dir,no_parameters,conf["problem_parameters"]["observations"],noise_cov=noise_cov,scale=scale,disp_parameters=[0,1])
-# plt.savefig(output_dir + "/img_Bayes/log_likelihood.pdf",bbox_inches="tight")
+# fit_likelihood = S.find_max_likelihood(output_dir, no_parameters, conf["problem_parameters"]["observations"],
+#                                        noise_cov=noise_cov, scale=scale, disp_parameters=[0,1])
+# plt.savefig(visualization_dir + "/log_likelihood.pdf", bbox_inches="tight")
 # print("-----")
 # print("BEST FIT (likelihood)")
 # print(" - PARAMETERS:", list(fit_likelihood[0]))
@@ -149,8 +189,6 @@ estimated_distributions = S.estimate_distributions(raw_data_dir, transformations
 print(estimated_distributions)
 
 ### SAMPLES VISUALIZATION:
-par_names = [p["name"] for p in conf["transformations"]]
-print("parameters:", par_names)
 for i in range(no_stages):
     chains_disp=range(i*no_samplers,(i+1)*no_samplers)
 
