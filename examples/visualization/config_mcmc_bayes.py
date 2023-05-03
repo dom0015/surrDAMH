@@ -186,12 +186,17 @@ fig.savefig(os.path.join(visualization_dir, "likelihood_all" + ".jpg"))
 # plt.grid()
 # plt.savefig(visualization_dir + "/observations.pdf",bbox_inches="tight")
 
-# collecting samples in the same way as SB does in hist_G_TSX
-estimated_distributions = S.estimate_distributions(raw_data_dir, transformations,
-                                                   chains_disp=chains_disp,
-                                                   output_file=os.path.join(visualization_dir, "parameters.csv"))
+raw_data_accepted = raw_data.filter(types=[0], stages=range(1,no_stages+1))
+analysis_pe_accepted = ape.Analysis(config=conf, raw_data=raw_data_accepted)
+estimated_distributions = analysis_pe_accepted.estimate_distributions(transformations,
+                output_file=os.path.join(visualization_dir, "parameters2.csv"))
 print(estimated_distributions)
 
+# collecting samples in the same way as SB does in hist_G_TSX
+# estimated_distributions = S.estimate_distributions(raw_data_dir, transformations,
+#                                                    chains_disp=chains_disp,
+#                                                    output_file=os.path.join(visualization_dir, "parameters.csv"))
+# print(estimated_distributions)
 ### SAMPLES VISUALIZATION:
 for i in range(no_stages):
     chains_disp=range(i*no_samplers,(i+1)*no_samplers)

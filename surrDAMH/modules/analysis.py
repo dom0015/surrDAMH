@@ -180,6 +180,34 @@ class Analysis:
 
         return samples, G_norm[sorted_idx[:count]]
 
+    def estimate_distributions(self, transformations, output_file = None):
+        if output_file is not None:
+            with open(output_file, 'w') as file:
+                header ='N,' + ','.join([s["name"] for s in transformations])
+                file.write(header + "\n")
+                for idx in range(self.raw_data.len()):
+                    s = Sample(self.raw_data, idx)
+                    line = str(s.weight()) + ',' + ','.join([str(p) for p in s.parameters()])
+                    file.write(line + "\n")
+
+        print(np.shape(self.raw_data.parameters))
+        param_all_log = np.log10(self.raw_data.parameters)
+        mean = np.mean(self.raw_data.parameters, axis=0).tolist()
+        mean_log = np.mean(param_all_log, axis=0).tolist()
+        std = np.std(self.raw_data.parameters, axis=0).tolist()
+        std_log = np.std(param_all_log, axis=0).tolist()
+
+        output_list = []
+        for i in range(self.raw_data.no_parameters()):
+            d = dict()
+            d["name"] = transformations[i]["name"]
+            d["mu"] = mean[i]
+            d["mu_log10"] = mean_log[i]
+            d["sigma"] = std[i]
+            d["sigma_log10"] = std_log[i]
+            output_list.append(d)
+
+        return output_list
 
 class Visualization:
     def __init__(self, config, raw_data):
