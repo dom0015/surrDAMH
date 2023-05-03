@@ -80,37 +80,43 @@ raw_data.load(output_dir, no_parameters, len(observations))
 raw_data_filtered = raw_data.filter(types=[0,2], stages=range(no_stages+1))
 
 analysis_pe = ape.Analysis(config=conf, raw_data=raw_data_filtered)
-bestfit_L2, bestfit_L2_norm = analysis_pe.find_best_fit(observations, norm="L2")
 # fit_L2_x, fit_L2_G, fit_L2_norm = S.find_best_fit(raw_data_dir, no_parameters, observations)
+# bestfit_L2, bestfit_L2_norm = analysis_pe.find_best_fit(observations, norm="L2")
+fits, norms = analysis_pe.find_n_best_fits(observations, count=20, norm="L2")
+bestfit_L2 = fits[0]
+bestfit_L2_norm = norms[0]
 output_dict["best_fit_L2"] = {"type": bestfit_L2.type_name(),
                               "parameters": bestfit_L2.parameters().tolist(),
                               "parameters_log": np.log(bestfit_L2.parameters()).tolist(),
                               "parameters_log10": np.log10(bestfit_L2.parameters()).tolist()}
+bfs = [{"t": f.type_name(), "n": float(n)} for f,n in zip(fits, norms)]
+print(bfs)
+output_dict["best_fits_L2"] = bfs
 print("-----")
 print('BEST FIT (L2)')
 print(" - NORM:", bestfit_L2_norm)
 print(" - PARAMETERS:", bestfit_L2.parameters())
 print(" - OBSERVATIONS:", bestfit_L2.observations())
 
-# fits, norms = raw_data_filtered.find_n_best_fits(observations, count=10, norm="L2")
-# print(norms)
-
 from surrDAMH.modules import Gaussian_process
 noise_cov = Gaussian_process.assemble_covariance_matrix(conf["noise_model"])
 
-bestfit_LH, bestfit_LH_norm = analysis_pe.find_best_fit(observations, norm="likelihood", noise_cov=noise_cov)
+# bestfit_LH, bestfit_LH_norm = analysis_pe.find_best_fit(observations, norm="likelihood", noise_cov=noise_cov)
+fits, norms = analysis_pe.find_n_best_fits(observations, count=20, norm="likelihood", noise_cov=noise_cov)
+bestfit_LH = fits[0]
+bestfit_LH_norm = norms[0]
 output_dict["best_fit_LH"] = {"type": bestfit_LH.type_name(),
                               "parameters": bestfit_LH.parameters().tolist(),
                               "parameters_log": np.log(bestfit_LH.parameters()).tolist(),
                               "parameters_log10": np.log10(bestfit_LH.parameters()).tolist()}
+bfs = [{"t": f.type_name(), "n": float(n)} for f,n in zip(fits, norms)]
+print(bfs)
+output_dict["best_fits_LH"] = bfs
 print("-----")
 print('BEST FIT (LikelyHood)')
 print(" - NORM:", bestfit_LH_norm)
 print(" - PARAMETERS:", bestfit_LH.parameters())
 print(" - OBSERVATIONS:", bestfit_LH.observations())
-
-# fits, norms = raw_data_filtered.find_n_best_fits(observations, count=10, norm="likelihood", noise_cov=noise_cov)
-# print(norms)
 
 visual = ape.Visualization(conf, raw_data_filtered)
 # fig, axes = plt.subplots(1,1)

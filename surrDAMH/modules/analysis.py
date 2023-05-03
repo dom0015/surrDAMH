@@ -176,7 +176,7 @@ class Analysis:
 
         samples = []
         for idx in sorted_idx[:count]:
-            samples.append(idx)
+            samples.append(Sample(self.raw_data, idx))
 
         return samples, G_norm[sorted_idx[:count]]
 
