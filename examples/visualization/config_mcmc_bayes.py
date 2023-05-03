@@ -77,10 +77,13 @@ output_dict["mode"] = mode[0].tolist()
 raw_data = ape.RawData()
 raw_data.load(output_dir, no_parameters, len(observations))
 # type: 0-accepted, 1-prerejected, 2-rejected
-raw_data_filtered = raw_data.filter(types=[0,2], stages=[0,1])
-bestfit_L2, bestfit_L2_norm = raw_data_filtered.find_best_fit(observations, norm="L2")
+raw_data_filtered = raw_data.filter(types=[0,2], stages=range(no_stages+1))
+
+analysis_pe = ape.Analysis(config=conf, raw_data=raw_data_filtered)
+bestfit_L2, bestfit_L2_norm = analysis_pe.find_best_fit(observations, norm="L2")
 # fit_L2_x, fit_L2_G, fit_L2_norm = S.find_best_fit(raw_data_dir, no_parameters, observations)
-output_dict["best_fit_L2"] = {"parameters": bestfit_L2.parameters().tolist(),
+output_dict["best_fit_L2"] = {"type": bestfit_L2.type_name(),
+                              "parameters": bestfit_L2.parameters().tolist(),
                               "parameters_log": np.log(bestfit_L2.parameters()).tolist(),
                               "parameters_log10": np.log10(bestfit_L2.parameters()).tolist()}
 print("-----")
@@ -95,8 +98,9 @@ print(" - OBSERVATIONS:", bestfit_L2.observations())
 from surrDAMH.modules import Gaussian_process
 noise_cov = Gaussian_process.assemble_covariance_matrix(conf["noise_model"])
 
-bestfit_LH, bestfit_LH_norm = raw_data_filtered.find_best_fit(observations, norm="likelihood", noise_cov=noise_cov)
-output_dict["best_fit_L2"] = {"parameters": bestfit_LH.parameters().tolist(),
+bestfit_LH, bestfit_LH_norm = analysis_pe.find_best_fit(observations, norm="likelihood", noise_cov=noise_cov)
+output_dict["best_fit_LH"] = {"type": bestfit_LH.type_name(),
+                              "parameters": bestfit_LH.parameters().tolist(),
                               "parameters_log": np.log(bestfit_LH.parameters()).tolist(),
                               "parameters_log10": np.log10(bestfit_LH.parameters()).tolist()}
 print("-----")

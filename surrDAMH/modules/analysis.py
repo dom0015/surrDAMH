@@ -131,13 +131,19 @@ class RawData:
         raw_data.weights = self.weights[idx]
         return raw_data
 
+
+class Analysis:
+    def __init__(self, config, raw_data):
+        self.config = config
+        self.raw_data = raw_data
+
     def compute_L2_norms(self, observations):
-        diff2 = np.square(self.observations - observations)
+        diff2 = np.square(self.raw_data.observations - observations)
         G_norm = np.sqrt(np.sum(diff2, axis=1))
         return G_norm
 
     def compute_likelihood_norms(self, observations, noise_cov):
-        diff = np.array(self.observations - observations)
+        diff = np.array(self.raw_data.observations - observations)
         invCv = np.linalg.solve(noise_cov, np.transpose(diff))
         # print(np.shape(diff), np.shape(invCv))
         G_norm = np.diag(-0.5 * np.matmul(diff, invCv))
@@ -154,7 +160,7 @@ class RawData:
             raise Exception("Unknown norm type: " + norm)
 
         G_norm = G_norms[idx]
-        return Sample(self, idx), G_norm
+        return Sample(self.raw_data, idx), G_norm
 
     def find_n_best_fits(self, observations, count, norm="L2", noise_cov=None):
         if norm == "L2":
@@ -183,10 +189,11 @@ class Visualization:
         self.par_names = [p["name"] for p in config["transformations"]]
         self.noise_cov = Gaussian_process.assemble_covariance_matrix(config["noise_model"])
         self.observations = np.array(config["problem_parameters"]["observations"])
+        self.analysis = Analysis(config, raw_data)
 
     def plot_likelihood_ij(self, axes, idp1, idp2, G_norm=None, vlimits=None):
         if G_norm is None:
-            G_norm = self.raw_data.compute_likelihood_norms(self.observations, self.noise_cov)
+            G_norm = self.analysis.compute_likelihood_norms(self.observations, self.noise_cov)
         xx = self.raw_data.parameters[:, idp1]
         yy = self.raw_data.parameters[:, idp2]
 
@@ -208,7 +215,7 @@ class Visualization:
         if parameters_disp == None:
             parameters_disp = range(self.no_parameters)
 
-        G_norm = self.raw_data.compute_likelihood_norms(self.observations, self.noise_cov)
+        G_norm = self.analysis.compute_likelihood_norms(self.observations, self.noise_cov)
         vlimits = [np.min(G_norm), np.max(G_norm)]
 
         n = len(parameters_disp)
