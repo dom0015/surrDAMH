@@ -53,6 +53,9 @@ class RawData:
         self.observations = None
         self.weights = None
 
+        self.no_chains = 0
+        self.no_stages = 0
+
     def load(self, folder_samples, no_parameters, no_observations):
         folder_samples = os.path.join(folder_samples, 'raw_data')
         file_samples = [f for f in listdir(folder_samples) if isfile(join(folder_samples, f))]
@@ -79,9 +82,11 @@ class RawData:
             # print(np.shape(idx))
 
             stg = int(file_samples[i][3])
+            self.no_stages = max(self.no_stages, stg)
             stages = stg * np.ones(len(types), dtype=np.int8)
 
             chain = int(file_samples[i][file_samples[i].find("rank")+4:file_samples[i].find(".")])
+            self.no_chains = max(self.no_chains, chain)
             chains = chain * np.ones(len(types), dtype=np.int8)
 
             parameters = np.array(df_samples.iloc[:, 1:1 + no_parameters])
@@ -137,6 +142,10 @@ class Analysis:
         self.config = config
         self.raw_data = raw_data
 
+        self.par_names = [p["name"] for p in config["transformations"]]
+        for i,p in enumerate(self.par_names):
+            self.par_names[i] = p.replace('_', '\_')
+
     def compute_L2_norms(self, observations):
         diff2 = np.square(self.raw_data.observations - observations)
         G_norm = np.sqrt(np.sum(diff2, axis=1))
@@ -180,10 +189,10 @@ class Analysis:
 
         return samples, G_norm[sorted_idx[:count]]
 
-    def estimate_distributions(self, transformations, output_file = None):
+    def estimate_distributions(self, output_file = None):
         if output_file is not None:
             with open(output_file, 'w') as file:
-                header ='N,' + ','.join([s["name"] for s in transformations])
+                header ='N,' + ','.join(self.par_names)
                 file.write(header + "\n")
                 for idx in range(self.raw_data.len()):
                     s = Sample(self.raw_data, idx)
@@ -200,7 +209,7 @@ class Analysis:
         output_list = []
         for i in range(self.raw_data.no_parameters()):
             d = dict()
-            d["name"] = transformations[i]["name"]
+            d["name"] = self.par_names[i]
             d["mu"] = mean[i]
             d["mu_log10"] = mean_log[i]
             d["sigma"] = std[i]
@@ -214,12 +223,11 @@ class Visualization:
         self.config = config
         self.raw_data = raw_data
         self.no_parameters = config["no_parameters"]
-        self.par_names = [p["name"] for p in config["transformations"]]
         self.noise_cov = Gaussian_process.assemble_covariance_matrix(config["noise_model"])
         self.observations = np.array(config["problem_parameters"]["observations"])
         self.analysis = Analysis(config, raw_data)
 
-    def plot_likelihood_ij(self, axes, idp1, idp2, G_norm=None, vlimits=None):
+    def plot_likelihood_ij(self, axis, idp1, idp2, G_norm=None, vlimits=None):
         if G_norm is None:
             G_norm = self.analysis.compute_likelihood_norms(self.observations, self.noise_cov)
         xx = self.raw_data.parameters[:, idp1]
@@ -233,9 +241,9 @@ class Visualization:
 
         if G_norm is None:
             vlimits = [np.min(G_norm), np.max(G_norm)]
-        im = axes.scatter(xx, yy, s=1, c=G_norm, vmin=max(vlimits[0], -100), vmax=vlimits[1], cmap="viridis")
+        im = axis.scatter(xx, yy, s=1, c=G_norm, vmin=max(vlimits[0], -100), vmax=vlimits[1], cmap="viridis")
         # axes.title = "log likelihood"
-        axes.grid()
+        axis.grid()
         # axes.colorbar(extend="min")
         return im
 
@@ -254,10 +262,9 @@ class Visualization:
                     ax.set_axis_off()
                     continue
                 else:
-                    im = self.plot_likelihood_ij(ax, idi, idj, G_norm=G_norm, vlimits=vlimits)
+                    im = self.plot_likelihood_ij(ax, idj, idi, G_norm=G_norm, vlimits=vlimits)
                 if idi==0:
-                    par_name = self.par_names[j].replace('_', '\_')
-                    label = "${0}$".format(par_name)
+                    label = "${0}$".format(self.analysis.par_names[j])
 
                     if self.config["transformations"][idj]["type"] == "normal_to_lognormal":
                         label += "\n(log)"
