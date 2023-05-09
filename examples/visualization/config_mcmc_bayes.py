@@ -194,8 +194,8 @@ fig.savefig(os.path.join(visualization_dir, "likelihood_all" + ".jpg"))
 
 raw_data_accepted = raw_data.filter(types=[0], stages=range(1,no_stages+1))
 analysis_pe_accepted = ape.Analysis(config=conf, raw_data=raw_data_accepted)
-estimated_distributions = analysis_pe_accepted.estimate_distributions(transformations,
-                output_file=os.path.join(visualization_dir, "parameters2.csv"))
+estimated_distributions = analysis_pe_accepted.estimate_distributions(
+            output_file=os.path.join(visualization_dir, "parameters2.csv"))
 print(estimated_distributions)
 
 # collecting samples in the same way as SB does in hist_G_TSX

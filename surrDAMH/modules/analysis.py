@@ -55,6 +55,7 @@ class RawData:
 
         self.no_chains = 0
         self.no_stages = 0
+        self.no_samples = 0
 
     def load(self, folder_samples, no_parameters, no_observations):
         folder_samples = os.path.join(folder_samples, 'raw_data')
@@ -82,11 +83,11 @@ class RawData:
             # print(np.shape(idx))
 
             stg = int(file_samples[i][3])
-            self.no_stages = max(self.no_stages, stg)
+            self.no_stages = max(self.no_stages, stg+1)
             stages = stg * np.ones(len(types), dtype=np.int8)
 
             chain = int(file_samples[i][file_samples[i].find("rank")+4:file_samples[i].find(".")])
-            self.no_chains = max(self.no_chains, chain)
+            self.no_chains = max(self.no_chains, chain+1)
             chains = chain * np.ones(len(types), dtype=np.int8)
 
             parameters = np.array(df_samples.iloc[:, 1:1 + no_parameters])
@@ -110,6 +111,11 @@ class RawData:
             # if sum(widx) > 0:
             weights = weights.reshape((-1, 1))
             self.weights = np.vstack((self.weights, weights)).astype(int)
+
+        self.no_samples = len(self.types)
+        print("no_stages", self.no_stages)
+        print("no_chains", self.no_chains)
+        print("no_samples", self.no_samples)
 
     def len(self):
         return len(self.types)
