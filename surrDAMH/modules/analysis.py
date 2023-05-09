@@ -49,6 +49,7 @@ class RawData:
         self.types = None
         self.stages = None
         self.chains = None
+        self.tags = None
         self.parameters = None
         self.observations = None
         self.weights = None
@@ -66,6 +67,7 @@ class RawData:
         self.types = np.empty((0, 1), dtype=np.int8)
         self.stages = np.empty((0, 1), dtype=np.int8)
         self.chains = np.empty((0, 1), dtype=np.int8)
+        self.tags = np.empty((0, 1), dtype=np.int8)
         self.parameters = np.empty((0, no_parameters))
         self.observations = np.empty((0, no_observations))
         self.weights = np.empty((0, 1), dtype=np.int)
@@ -91,11 +93,13 @@ class RawData:
             chains = chain * np.ones(len(types), dtype=np.int8)
 
             parameters = np.array(df_samples.iloc[:, 1:1 + no_parameters])
+            tags = np.array(df_samples.iloc[:, 1 + no_parameters])
             observation = np.array(df_samples.iloc[:, 2 + no_parameters:])
 
             self.types = np.append(self.types, idx)
             self.stages = np.append(self.stages, stages)
             self.chains = np.append(self.chains, chains)
+            self.tags = np.append(self.tags, tags)
             self.parameters = np.vstack((self.parameters, parameters))
             self.observations = np.vstack((self.observations, observation))
 
@@ -116,6 +120,7 @@ class RawData:
         print("no_stages", self.no_stages)
         print("no_chains", self.no_chains)
         print("no_samples", self.no_samples)
+        print("no_nonconverging", len(self.types[self.tags < 0]))
 
     def len(self):
         return len(self.types)
