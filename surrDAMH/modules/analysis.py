@@ -108,8 +108,11 @@ class RawData:
             widx = np.ones(len(types), dtype=bool)
             widx[types == "prerejected"] = False
             widx[types == "rejected"] = False
+            # not considering first sample
+            # TODO get rid of last value
             temp = np.arange(len(types))[widx]
-            temp[1:] = temp[1:] - temp[:-1]
+            temp = np.append(temp, len(types))
+            temp = np.diff(temp)
             weights = np.zeros(len(types))
             weights[widx] = temp
             # if sum(widx) > 0:
@@ -117,10 +120,17 @@ class RawData:
             self.weights = np.vstack((self.weights, weights)).astype(int)
 
         self.no_samples = len(self.types)
-        print("no_stages", self.no_stages)
-        print("no_chains", self.no_chains)
-        print("no_samples", self.no_samples)
-        print("no_nonconverging", len(self.types[self.tags < 0]))
+        print("raw data: no_stages", self.no_stages)
+        print("raw data: no_chains", self.no_chains)
+        print("raw data: no_samples", self.no_samples)
+        print("raw data: no_nonconverging", len(self.types[self.tags < 0]))
+
+        print("raw data: p", np.shape(self.parameters))
+        print("raw data: w", np.shape(self.weights))
+        # print(self.weights[:20])
+        # print(self.weights[-20:])
+        # print(self.weights[self.weights>0][:])
+        print("raw_data: np.sum(weights):", np.sum(self.weights))
 
     def len(self):
         return len(self.types)
@@ -145,6 +155,8 @@ class RawData:
         raw_data.parameters = self.parameters[idx]
         raw_data.observations = self.observations[idx]
         raw_data.weights = self.weights[idx]
+
+        print("filter raw data: p", np.shape(raw_data.parameters))
         return raw_data
 
 
