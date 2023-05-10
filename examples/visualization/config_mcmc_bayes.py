@@ -78,6 +78,7 @@ raw_data = ape.RawData()
 raw_data.load(output_dir, no_parameters, len(observations))
 # type: 0-accepted, 1-prerejected, 2-rejected
 raw_data_filtered = raw_data.filter(types=[0,2], stages=range(no_stages+1))
+raw_data_accepted = raw_data.filter(types=[0], stages=range(0,no_stages+1))
 
 analysis_pe = ape.Analysis(config=conf, raw_data=raw_data_filtered)
 # fit_L2_x, fit_L2_G, fit_L2_norm = S.find_best_fit(raw_data_dir, no_parameters, observations)
@@ -192,10 +193,11 @@ fig.savefig(os.path.join(visualization_dir, "likelihood_all" + ".jpg"))
 # plt.grid()
 # plt.savefig(visualization_dir + "/observations.pdf",bbox_inches="tight")
 
-raw_data_accepted = raw_data.filter(types=[0], stages=range(1,no_stages+1))
-analysis_pe_accepted = ape.Analysis(config=conf, raw_data=raw_data_accepted)
+raw_data_accepted_s1p = raw_data.filter(types=[0], stages=range(1,no_stages+1))
+# print(raw_data_accepted_s1p.weights)
+analysis_pe_accepted = ape.Analysis(config=conf, raw_data=raw_data_accepted_s1p)
 estimated_distributions = analysis_pe_accepted.estimate_distributions(
-            output_file=os.path.join(visualization_dir, "parameters2.csv"))
+                output_file=os.path.join(visualization_dir, "parameters2.csv"))
 print(estimated_distributions)
 
 # collecting samples in the same way as SB does in hist_G_TSX
@@ -203,6 +205,15 @@ print(estimated_distributions)
 #                                                    chains_disp=chains_disp,
 #                                                    output_file=os.path.join(visualization_dir, "parameters.csv"))
 # print(estimated_distributions)
+
+
+for i in range(no_stages):
+    raw_data_accepted = raw_data.filter(types=[0], stages=[i])
+    temp_vis = ape.Visualization(config=conf, raw_data=raw_data_accepted)
+    fig, axes = temp_vis.plot_hist_grid(bins1d=15, bins2d=20)
+    fig.savefig(visualization_dir + "/histograms_s" + str(i) + ".pdf", bbox_inches="tight")
+
+print("HISTOGRAMS")
 ### SAMPLES VISUALIZATION:
 for i in range(no_stages):
     chains_disp=range(i*no_samplers,(i+1)*no_samplers)

@@ -222,7 +222,7 @@ class Analysis:
                     line = str(s.weight()) + ',' + ','.join([str(p) for p in s.parameters()])
                     file.write(line + "\n")
 
-        print(np.shape(self.raw_data.parameters))
+        # print(np.shape(self.raw_data.parameters))
         param_all_log = np.log10(self.raw_data.parameters)
         mean = np.mean(self.raw_data.parameters, axis=0).tolist()
         mean_log = np.mean(param_all_log, axis=0).tolist()
@@ -296,4 +296,61 @@ class Visualization:
         fig.subplots_adjust(right=0.8)
         cbar_ax = fig.add_axes([0.85, 0.15, 0.05, 0.7])
         fig.colorbar(im, cax=cbar_ax)
+        return fig, axes
+
+    def plot_hist_1d(self, axis, burn_in=None, param_no=0, bins=20):
+        # TODO burn_in for each chain (select from raw_data by chains??)
+        # if burn_in == None:
+        #     burn_in = [0] * self.raw_data.no_chains
+
+        trans = self.config["transformations"]
+        xx = self.raw_data.parameters[:, param_no]
+        if trans[param_no]["type"] == "normal_to_lognormal":
+            xx = np.log10(xx)
+        axis.hist(xx, bins=bins, density=True, weights=self.raw_data.weights)
+
+    def plot_hist_2d(self, axis, burn_in=None, param_no=[0, 1], bins=20, colorbar=False):
+        # if burn_in == None:
+        #     burn_in = [0] * self.raw_data.no_chains
+
+        trans = self.config["transformations"]
+        xx = self.raw_data.parameters[:, param_no[0]]
+        yy = self.raw_data.parameters[:, param_no[1]]
+        if trans[param_no[0]]["type"] == "normal_to_lognormal":
+            xx = np.log10(xx)
+        if trans[param_no[1]]["type"] == "normal_to_lognormal":
+            yy = np.log10(yy)
+
+        # print(param_no[0], param_no[1], np.sum(self.raw_data.weights))
+        axis.hist2d(xx, yy, bins=bins, cmap="binary", weights=self.raw_data.weights.reshape((-1,)))  # , density = True)
+        axis.grid(True)
+        if colorbar:
+            axis.colorbar()
+
+    def plot_hist_grid(self, burn_in=None, parameters_disp=None, bins1d=20, bins2d=20):
+        if parameters_disp == None:
+            parameters_disp = range(self.no_parameters)
+        # if burn_in == None:
+        #     burn_in = [0] * self.raw_data.no_chains
+
+        trans = self.config["transformations"]
+        n = len(parameters_disp)
+        fig, axes = plt.subplots(n, n, sharex=False, sharey=False, figsize=(15, 15))
+        plt.subplots_adjust(wspace=0.5, hspace=0.3)
+        for idi, i in enumerate(parameters_disp):
+            for idj, j in enumerate(parameters_disp):
+                axis = axes[idi, idj]
+                if idi == idj:
+                    self.plot_hist_1d(axis=axis, param_no=i, burn_in=burn_in, bins=bins1d)
+                else:
+                    self.plot_hist_2d(axis=axis, param_no=[j, i], burn_in=burn_in, bins=bins2d)
+                if idi == 0:
+                    # determine parameter name
+                    if self.analysis.par_names is not None:
+                        label = "${0}$".format(self.analysis.par_names[j])
+                    else:
+                        label = "$par. {0}$".format(j)
+                    if trans[idj]["type"] == "normal_to_lognormal":
+                        label += "\n(log)"
+                    axis.set_title(label, x=1.05, rotation=45, multialignment='center')
         return fig, axes
