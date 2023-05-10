@@ -354,3 +354,49 @@ class Visualization:
                         label += "\n(log)"
                     axis.set_title(label, x=1.05, rotation=45, multialignment='center')
         return fig, axes
+
+    def plot_observe_slice_ij(self, axis, idp1, idp2, values=None):
+        xx = self.raw_data.parameters[:, idp1]
+        yy = self.raw_data.parameters[:, idp2]
+
+        trans = self.config["transformations"]
+        if trans[idp1]["type"] == "normal_to_lognormal":
+            xx = np.log10(xx)
+        if trans[idp2]["type"] == "normal_to_lognormal":
+            yy = np.log10(yy)
+
+        # vlimits = [np.min(values), np.max(values)]
+        vlimits = [0,150]
+        im = axis.scatter(xx, yy, s=1, c=values, vmin=vlimits[0], vmax=vlimits[1], cmap="viridis")
+        # im = axis.scatter(xx, yy, s=1, c=values, cmap="viridis")
+        # axes.title = "log likelihood"
+        axis.grid()
+        # axes.colorbar(extend="min")
+        return im
+
+    def plot_observe_slice(self, fig, axes, observe_idx, parameters_disp=None):
+        if parameters_disp == None:
+            parameters_disp = range(self.no_parameters)
+
+        obs_slice = self.raw_data.observations[:, observe_idx]
+
+        n = len(parameters_disp)
+        for idi,i in enumerate(parameters_disp):
+            for idj,j in enumerate(parameters_disp):
+                ax = axes[idi,idj]
+                if i==0:
+                    label = "${0}$".format(self.analysis.par_names[j])
+
+                    if self.config["transformations"][idj]["type"] == "normal_to_lognormal":
+                        label += "\n(log)"
+                    ax.set_title(label, x=1.05, rotation=45, multialignment='center')
+                if idi==idj:
+                    ax.set_axis_off()
+                    continue
+                else:
+                    im = self.plot_observe_slice_ij(ax, idj, idi, values=obs_slice)
+
+        fig.subplots_adjust(right=0.8)
+        cbar_ax = fig.add_axes([0.85, 0.15, 0.05, 0.7])
+        fig.colorbar(im, cax=cbar_ax)
+        return fig, axes

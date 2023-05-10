@@ -129,6 +129,16 @@ plt.subplots_adjust(wspace=0.5, hspace=0.3)
 visual.plot_likelihood(fig, axes)
 fig.savefig(os.path.join(visualization_dir, "likelihood_all" + ".jpg"))
 
+disp_pars = [0,1,4]
+time_axis = conf["noise_model"][0]["time_grid"]
+observe_slice_dir = os.path.join(visualization_dir, "observe_slices")
+os.makedirs(observe_slice_dir, mode=0o775, exist_ok=True)
+for obs_idx in range(10,14):
+    time = time_axis[obs_idx]
+    fig, axes = plt.subplots(len(disp_pars), len(disp_pars), figsize=(25, 25))
+    plt.subplots_adjust(wspace=0.5, hspace=0.3)
+    visual.plot_observe_slice(fig, axes, obs_idx, disp_pars)
+    fig.savefig(os.path.join(observe_slice_dir, "observe_slice_" + str(time) + ".jpg"))
 # grid=np.array(conf["noise_grid"])
 # grid_max = max(grid)+35
 # fit_likelihood = S.find_max_likelihood(output_dir, no_parameters, conf["problem_parameters"]["observations"],
