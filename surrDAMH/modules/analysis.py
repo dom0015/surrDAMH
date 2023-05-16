@@ -119,11 +119,11 @@ class RawData:
             weights = weights.reshape((-1, 1))
             self.weights = np.vstack((self.weights, weights)).astype(int)
 
-        self.no_samples = len(self.types)
+        self.no_samples = np.shape(self.types)[0]
         print("raw data: no_stages", self.no_stages)
         print("raw data: no_chains", self.no_chains)
         print("raw data: no_samples", self.no_samples)
-        print("raw data: no_nonconverging", len(self.types[self.tags < 0]))
+        print("raw data: no_nonconverging", np.shape(self.types[self.tags < 0])[0])
 
         print("raw data: p", np.shape(self.parameters))
         print("raw data: w", np.shape(self.weights))
@@ -155,6 +155,9 @@ class RawData:
         raw_data.parameters = self.parameters[idx]
         raw_data.observations = self.observations[idx]
         raw_data.weights = self.weights[idx]
+
+        raw_data.no_samples = np.shape(raw_data.types)[0]
+        raw_data.no_stages = len(stages)
 
         print("filter raw data: p", np.shape(raw_data.parameters))
         return raw_data
@@ -400,3 +403,15 @@ class Visualization:
         cbar_ax = fig.add_axes([0.85, 0.15, 0.05, 0.7])
         fig.colorbar(im, cax=cbar_ax)
         return fig, axes
+
+    def plot_observe_slice_1d(self, fig, axis, observe_idx, bins=None):
+        # TODO burn_in for each chain (select from raw_data by chains??)
+        # if burn_in == None:
+        #     burn_in = [0] * self.raw_data.no_chains
+
+        if bins is None:
+            bins = (np.sqrt(self.raw_data.no_samples)).astype(int)
+
+        obs_slice = self.raw_data.observations[:, observe_idx]
+        axis.hist(obs_slice, bins=bins)
+        # axis.hist(obs_slice, bins=bins, density=True, weights=self.raw_data.weights)
