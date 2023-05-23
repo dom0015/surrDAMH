@@ -8,6 +8,7 @@ Created on Fri Apr 28 11:41 2023
 
 import warnings
 import numpy as np
+import matplotlib
 import matplotlib.pyplot as plt
 import pandas as pd
 import os
@@ -376,8 +377,8 @@ class Visualization:
         if trans[idp2]["type"] == "normal_to_lognormal":
             yy = np.log10(yy)
 
-        # vlimits = [np.min(values), np.max(values)]
-        vlimits = [0,150]
+        vlimits = [np.min(values), np.max(values)]
+        # vlimits = [-50,150]
         im = axis.scatter(xx, yy, s=1, c=values, vmin=vlimits[0], vmax=vlimits[1], cmap="viridis")
         # im = axis.scatter(xx, yy, s=1, c=values, cmap="viridis")
         # axes.title = "log likelihood"
@@ -421,5 +422,11 @@ class Visualization:
             bins = (np.sqrt(self.raw_data.no_samples)).astype(int)
 
         obs_slice = self.raw_data.observations[:, observe_idx]
-        axis.hist(obs_slice, bins=bins)
-        # axis.hist(obs_slice, bins=bins, density=True, weights=self.raw_data.weights)
+        # axis.hist(obs_slice, bins=bins)
+        axis.hist(obs_slice, bins=bins, density=True, weights=self.raw_data.weights)
+
+        axis.set_title("Pressure observation data slice histogram - t" + str(observe_idx), fontsize=36)
+        # axis.set_xlabel(self.analysis.par_names[idp], fontsize=20)
+        axis.set_xlabel("pressure t" + str(observe_idx), fontsize=20)
+        axis.set_xlim(0,200)
+
