@@ -262,6 +262,9 @@ class Visualization:
         self.observations = np.array(config["problem_parameters"]["observations"])
         self.analysis = Analysis(config, raw_data)
 
+        # Flow123d dependent
+        self.time_axis = np.array(config["noise_model"][0]["time_grid"])
+
     def plot_likelihood_ij(self, axis, idp1, idp2, G_norm=None, vlimits=None):
         if G_norm is None:
             G_norm = self.analysis.compute_likelihood_norms(self.observations, self.noise_cov)
@@ -430,3 +433,228 @@ class Visualization:
         axis.set_xlabel("pressure t" + str(observe_idx), fontsize=20)
         axis.set_xlim(0,200)
 
+    def plot_observe_sensitivity(self, fig, axis, idp, observe_idx):
+        mean, std = self.analysis.estimate_statistics()
+
+        min_bin = mean[idp] - std[idp]
+        max_bin = mean[idp] + std[idp]
+        no_bins = 10
+        bin = (max_bin - min_bin)/no_bins
+        bins_mean = np.arange(min_bin + bin/2, max_bin, bin)
+        # print(min_bin, max_bin)
+        # print(bins_mean)
+
+        p = self.raw_data.parameters
+        samples = []
+        for i in range(no_bins):
+            ref = mean.copy()
+            ref[idp] = bins_mean[i]
+            # print(ref)
+            distance = (p[:,:] - ref[None,:]) / std[None,:]
+            distance = np.sum(distance**2, axis=1)
+            idx = np.argmin(distance)
+            # print(idx)
+            samples.append(Sample(self.raw_data, idx))
+
+        obs_slice = [s.observations()[observe_idx] for s in samples]
+        # print(obs_slice)
+        # print(obs_slice)
+        axis.bar(np.arange(no_bins), obs_slice, width=0.4)
+
+        bins_labels = [f'{s:5.2g}' for s in bins_mean]
+        axis.set_xticks(np.arange(no_bins))
+        axis.set_xticklabels(bins_labels, fontsize=20)
+        axis.yaxis.set_tick_params(labelsize=20)
+
+        axis.set_title(self.analysis.par_names[idp], fontsize=36)
+        axis.set_xlabel(self.analysis.par_names[idp], fontsize=20)
+        axis.set_ylabel("pressure - t" + str(observe_idx), fontsize=20)
+
+
+    def plot_obs_vs_par(self, fig, axis, idp, observe_idx, observations, norm="L2", noise_cov=None):
+        """
+        Scatter plot: parameter X observation(pressure at selected time)
+        @param fig:
+        @param axis:
+        @param idp: parameter index
+        @param observe_idx: observation index
+        @param observations: vector of observations
+        @param norm: norm type ('L2', 'likelihood')
+        @param noise_cov: noise covariance matrix
+        """
+        if norm == "L2":
+            G_norms = self.analysis.compute_L2_norms(observations)
+        elif norm == "likelihood":
+            G_norms = self.analysis.compute_likelihood_norms(observations, noise_cov)
+        else:
+            raise Exception("Unknown norm type: " + norm)
+
+        xx = self.raw_data.parameters[:, idp]
+        obs_slice = self.raw_data.observations[:, observe_idx]
+
+        trans = self.config["transformations"]
+        log = trans[idp]["type"] == "normal_to_lognormal"
+        xlabel = self.analysis.par_names[idp]
+        if log:
+            xx = np.log10(xx)
+            xlabel = xlabel + "(log)"
+
+        # vlimits = [np.min(G_norms), np.max(G_norms)]
+        vlimits = [0, 150]
+        # axis.scatter(xx, obs_slice)
+        # axis.scatter(xx, obs_slice, s=1, c=G_norms, vmin=vlimits[0], vmax=vlimits[1], cmap="viridis")
+        im = axis.scatter(xx, obs_slice, s=10, c=G_norms, cmap="viridis")
+                          # norm=matplotlib.colors.Normalize(vmin=0, vmax=1))
+                          # norm=matplotlib.colors.Normalize(vmin=vlimits[0], vmax=vlimits[1]))
+
+        fig.subplots_adjust(right=0.8)
+        cbar_ax = fig.add_axes([0.85, 0.15, 0.05, 0.7])
+        fig.colorbar(im, cax=cbar_ax)
+
+        axis.grid()
+        axis.set_title(xlabel, fontsize=36)
+        axis.set_xlabel(xlabel, fontsize=20)
+        axis.set_ylabel("pressure - t" + str(observe_idx), fontsize=20)
+
+        # axis.set_ylim(-50, 280)
+
+    def linear_regression_analysis(self, fig, axis, observe_idx, count=100):
+        """
+        Use linear regression model to approximate the model in neighborhood of selected point of parameter space.
+        - selected point is mean
+        - neighborhood is defined by the number (count) of samples closest to the selected point
+        - 'closest' is measured as: sqrt(sum((pars - mean) / stds)^2) / no_pars
+        @param fig:
+        @param axis:
+        @param observe_idx: observation index
+        @param count: number of samples
+        @return:
+        """
+        mean, std = self.analysis.estimate_statistics()
+
+        p = self.raw_data.parameters
+
+        distance_par = (p[:,:] - mean[None,:]) / std[None,:]
+        distance_par = np.sum(distance_par**2, axis=1)
+        mean_sample_idx = np.argmin(distance_par)
+        mean_sample = Sample(self.raw_data, mean_sample_idx)
+
+        sort_indices = np.argsort(distance_par)
+        sort_indices = sort_indices[:count]
+
+        pressure = self.raw_data.observations[sort_indices, observe_idx]
+        # params_samples = p[sort_indices]
+        params_samples = (p[sort_indices,:] - mean[None,:]) / std[None,:]
+        # params_samples = params_samples[:,[0,1,2,3,4,6]]
+
+        max_dist = np.max(np.sqrt(distance_par[sort_indices] / self.raw_data.no_parameters()))
+        # print("max of selected distances", max_dist)
+
+        # axis.scatter(distance_obs[sort_indices], pressure, s=10)
+        # axis.plot(distance_obs[mean_sample_idx], mean_sample_obs[observe_idx], marker=".", markersize=20, mfc='r')
+        # axis.grid()
+        # axis.set_title("Noise analysis", fontsize=36)
+        # axis.set_xlabel("distance by observation ||h_i-h_0||_2", fontsize=20)
+        # axis.set_ylabel("pressure - t" + str(observe_idx), fontsize=20)
+
+        import statsmodels.api as sm
+
+        # P1 model, linear depndency on parameters, tangent plane model
+        y = pressure
+        X = params_samples
+        X = sm.add_constant(X)
+        model_P1 = sm.OLS(y, X)
+        results = model_P1.fit()
+        # print(results.summary())
+
+        # print("Overall significance of parameters (P-value of F statistics): ", results.f_pvalue)
+
+        return results, max_dist
+        # fpvalue
+        # pvalues
+        # fittedvalues
+        # rsquared
+        # bse
+
+    def linear_regression_rsquared(self, fig, axis, observe_indices, counts):
+        """
+        Use function linear_regression_analysis() and plot R**2 over distance (or subsample count)
+        around a selected point (currently parameter mean)
+        @param fig:
+        @param axis:
+        @param observe_indices: list of selected observe indices
+        @param counts: list of sample counts (closest to selected point)
+        """
+        rsquared = np.zeros((len(observe_indices), len(counts)))
+        distances = np.zeros((len(observe_indices), len(counts)))
+        for i, observe_idx in enumerate(observe_indices):
+            for ci, count in enumerate(counts):
+                res, md = self.linear_regression_analysis(fig, axis, observe_idx, count=count)
+                rsquared[i,ci] = res.rsquared
+                distances[i,ci] = md
+
+        # self.time_axis[observe_indices]
+        for i in range(np.shape(rsquared)[0]):
+            # axis.plot(counts, rsquared[i,:], label="t = "+str(self.time_axis[i])+" d")
+            axis.plot(distances[i,:], rsquared[i,:], label="t = " + str(self.time_axis[i]) + " d")
+        axis.set_title("Linear regression analysis", fontsize=36)
+        # axis.set_xlabel("selected sample size", fontsize=20)
+
+        xticks = [0.3,0.5,0.8,1.0,1.5,2,3,4]
+        xticks_labels = [f'{s:1.1f}' for s in xticks]
+        axis.set_xscale("log")
+        axis.set_xticks(xticks)
+        axis.set_xticklabels(xticks_labels, fontsize=20)
+        axis.set_xlabel("sample distance to mean", fontsize=20)
+
+
+        axis.set_ylabel("rqsuared", fontsize=20)
+
+        # colormap = plt.cm.winter
+        colormap = plt.cm.gist_rainbow
+        colors = [colormap(i) for i in np.linspace(0, 1, len(axis.lines))]
+        for i, j in enumerate(axis.lines):
+            j.set_color(colors[i])
+
+        axis.legend()
+
+    def linear_regression_over_time(self, fig, axis, observe_indices, count=100):
+        """
+        Use function linear_regression_analysis() and plot R**2 and parameter p-values
+        over time around a selected point (currently parameter mean)
+        @param fig:
+        @param axis:
+        @param observe_indices: list of selected observe indices
+        @param count: sample count (closest to selected point)
+        """
+        rsquared = np.zeros(len(observe_indices))
+        pvalues = np.zeros((len(observe_indices), self.raw_data.no_parameters()))
+        bse = np.zeros((len(observe_indices), self.raw_data.no_parameters()))
+        for i, observe_idx in enumerate(observe_indices):
+            res, md = self.linear_regression_analysis(fig, axis, observe_idx, count=count)
+            rsquared[i] = res.rsquared
+            pvalues[i,:] = res.pvalues[1:]
+            bse[i, :] = res.bse[1:]
+
+        axis.plot(self.time_axis[observe_indices], rsquared, color='red', linestyle='dashed', label="rsquared")
+        axis.set_title("Linear regression analysis over time with N={}".format(count), fontsize=36)
+        axis.set_xlabel("time [d]", fontsize=20)
+        axis.set_ylabel("rqsuared", fontsize=20)
+        axis.legend()
+
+        ax2 = axis.twinx()
+        ax2.set_ylabel('Y2-axis', color='blue')
+        for i in range(np.shape(pvalues)[1]):
+            ax2.plot(self.time_axis[observe_indices], pvalues[:,i], color='blue', label=self.analysis.par_names[i])
+        ax2.tick_params(axis='y', labelcolor='blue')
+        ax2.set_yscale("log")
+        ax2.set_ylabel("pvalues", fontsize=20)
+        ax2.grid()
+
+        # colormap = plt.cm.winter
+        colormap = plt.cm.gist_rainbow
+        colors = [colormap(i) for i in np.linspace(0, 1, len(ax2.lines))]
+        for i, j in enumerate(ax2.lines):
+            j.set_color(colors[i])
+
+        ax2.legend()
