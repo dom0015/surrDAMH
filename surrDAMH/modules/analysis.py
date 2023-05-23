@@ -215,6 +215,13 @@ class Analysis:
 
         return samples, G_norm[sorted_idx[:count]]
 
+    def estimate_statistics(self):
+        weights = self.raw_data.weights.reshape(-1,)
+        average = np.average(self.raw_data.parameters, axis=0, weights=weights)
+        # Fast and numerically precise:
+        variance = np.average((self.raw_data.parameters - average) ** 2, axis=0, weights=weights)
+        return average, np.sqrt(variance)
+
     def estimate_distributions(self, output_file = None):
         if output_file is not None:
             with open(output_file, 'w') as file:
@@ -225,6 +232,7 @@ class Analysis:
                     line = str(s.weight()) + ',' + ','.join([str(p) for p in s.parameters()])
                     file.write(line + "\n")
 
+        # TODO weighted statistics!
         # print(np.shape(self.raw_data.parameters))
         param_all_log = np.log10(self.raw_data.parameters)
         mean = np.mean(self.raw_data.parameters, axis=0).tolist()
