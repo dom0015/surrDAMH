@@ -120,17 +120,55 @@ print(" - PARAMETERS:", bestfit_LH.parameters())
 print(" - OBSERVATIONS:", bestfit_LH.observations())
 
 visual = ape.Visualization(conf, raw_data_filtered)
+visual_accepted = ape.Visualization(conf, raw_data_accepted)
 # fig, axes = plt.subplots(1,1)
 # visual.plot_likelihood_ij(axes, 0, 1)
 # # fig.colorbar(extend="min")
 # fig.savefig(os.path.join(visualization_dir, "likelihood_" + str(0) + "_" + str(1) + ".pdf"))
-fig, axes = plt.subplots(no_parameters, no_parameters, figsize=(25,25))
-plt.subplots_adjust(wspace=0.5, hspace=0.3)
-visual.plot_likelihood(fig, axes)
-fig.savefig(os.path.join(visualization_dir, "likelihood_all" + ".jpg"))
+# fig, axes = plt.subplots(no_parameters, no_parameters, figsize=(50,50))
+# plt.subplots_adjust(wspace=0.5, hspace=0.3)
+# visual.plot_likelihood(fig, axes)
+# fig.savefig(os.path.join(visualization_dir, "likelihood_all" + ".jpg"))
+
+# slice plot of observe data
+time_axis = conf["noise_model"][0]["time_grid"]
+
+observe_noise_analysis_dir = os.path.join(visualization_dir, "observe_noise_analysis")
+os.makedirs(observe_noise_analysis_dir, mode=0o775, exist_ok=True)
+
+fig, axis = plt.subplots(1, 1, figsize=(15, 15))
+visual_accepted.linear_regression_over_time(fig, axis, list(range(1,len(time_axis))))
+fig.savefig(os.path.join(observe_noise_analysis_dir, "over_time.jpg"))
+plt.close(fig)
+
+fig, axis = plt.subplots(1, 1, figsize=(15, 15))
+counts = np.arange(10,200,10)
+visual_accepted.linear_regression_rsquared(fig, axis, list(range(1,len(time_axis))), counts)
+fig.savefig(os.path.join(observe_noise_analysis_dir, "rsquared.jpg"))
+plt.close(fig)
+
+# for obs_idx in range(len(time_axis)):
+# # for obs_idx in range(12,13):
+#     time = time_axis[obs_idx]
+#     print("time", time)
+#     fig, axis = plt.subplots(1, 1, figsize=(15, 15))
+#     visual_accepted.noise_analysis(fig, axis, obs_idx)
+#     fig.savefig(os.path.join(observe_noise_analysis_dir, "observe_distance_t_" + str(time) + ".jpg"))
+#     plt.close(fig)
+# exit(0)
+
+observe_vs_par_dir = os.path.join(visualization_dir, "observe_vs_par")
+os.makedirs(observe_vs_par_dir, mode=0o775, exist_ok=True)
+for par in range(no_parameters):
+    for obs_idx in range(len(time_axis)):
+        time = time_axis[obs_idx]
+        fig, axis = plt.subplots(1, 1, figsize=(15, 15))
+        visual_accepted.plot_obs_vs_par(fig, axis, par, obs_idx, observations, norm="likelihood", noise_cov=noise_cov)
+        fig.savefig(os.path.join(observe_vs_par_dir, "observe_vs_par_" + str(par) + "_t_" + str(time) + ".jpg"))
+        plt.close(fig)
+
 
 disp_pars = [0,1,4]
-time_axis = conf["noise_model"][0]["time_grid"]
 observe_slice_dir = os.path.join(visualization_dir, "observe_slices")
 os.makedirs(observe_slice_dir, mode=0o775, exist_ok=True)
 for obs_idx in range(10,14):
@@ -139,6 +177,29 @@ for obs_idx in range(10,14):
     plt.subplots_adjust(wspace=0.5, hspace=0.3)
     visual.plot_observe_slice(fig, axes, obs_idx, disp_pars)
     fig.savefig(os.path.join(observe_slice_dir, "observe_slice_" + str(time) + ".jpg"))
+    plt.close(fig)
+
+observe_sensitivity_dir = os.path.join(visualization_dir, "observe_sensitivity")
+os.makedirs(observe_sensitivity_dir, mode=0o775, exist_ok=True)
+for param in range(no_parameters):
+    fig, axis = plt.subplots(1, 1, figsize=(25, 25))
+    obs_idx = 12 # 20 # 6 # 12
+    time = time_axis[obs_idx]
+    visual_accepted.plot_observe_sensitivity(fig, axis, param, obs_idx)
+    fig.savefig(os.path.join(observe_sensitivity_dir, "observe_sensitivity_p" + str(param) + "_" + str(time) + ".jpg"))
+    plt.close(fig)
+
+observe_slice_1d_dir = os.path.join(visualization_dir, "observe_slices_1d")
+os.makedirs(observe_slice_1d_dir, mode=0o775, exist_ok=True)
+for obs_idx in range(len(time_axis)):
+    time = time_axis[obs_idx]
+    fig, axis = plt.subplots(1, 1, figsize=(25, 25))
+    visual.plot_observe_slice_1d(fig, axis, obs_idx)
+    fig.savefig(os.path.join(observe_slice_1d_dir, "observe_slice_1d_" + str(time) + ".jpg"))
+    plt.close(fig)
+
+# exit(0)
+
 # grid=np.array(conf["noise_grid"])
 # grid_max = max(grid)+35
 # fit_likelihood = S.find_max_likelihood(output_dir, no_parameters, conf["problem_parameters"]["observations"],

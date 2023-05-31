@@ -600,8 +600,9 @@ class Visualization:
         axis.set_title("Linear regression analysis", fontsize=36)
         # axis.set_xlabel("selected sample size", fontsize=20)
 
-        xticks = [0.3,0.5,0.8,1.0,1.5,2,3,4]
-        xticks_labels = [f'{s:1.1f}' for s in xticks]
+        # xticks = [0.2,0.3,0.5,0.8,1.0,1.5,2,3,4]
+        xticks = [0.2, 0.3, 0.5, 0.8, 1.0]
+        xticks_labels = [f'{s:1.2f}' for s in xticks]
         axis.set_xscale("log")
         axis.set_xticks(xticks)
         axis.set_xticklabels(xticks_labels, fontsize=20)
@@ -648,6 +649,7 @@ class Visualization:
             ax2.plot(self.time_axis[observe_indices], pvalues[:,i], color='blue', label=self.analysis.par_names[i])
         ax2.tick_params(axis='y', labelcolor='blue')
         ax2.set_yscale("log")
+        ax2.set_ylim([1e-3,1])
         ax2.set_ylabel("pvalues", fontsize=20)
         ax2.grid()
 
