@@ -196,6 +196,10 @@ class Analysis:
             raise Exception("Unknown norm type: " + norm)
 
         G_norm = G_norms[idx]
+
+        est_noise = np.std(G_norm - observations)
+        print("estimated noise std (best_fit-observations)", est_noise)
+
         return Sample(self.raw_data, idx), G_norm
 
     def find_n_best_fits(self, observations, count, norm="L2", noise_cov=None):
@@ -213,6 +217,9 @@ class Analysis:
         samples = []
         for idx in sorted_idx[:count]:
             samples.append(Sample(self.raw_data, idx))
+
+        est_noise = np.std(samples[0].observations() - observations)
+        print("estimated noise std (best_fit-observations)", est_noise)
 
         return samples, G_norm[sorted_idx[:count]]
 
