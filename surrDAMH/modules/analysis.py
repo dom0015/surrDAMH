@@ -320,7 +320,7 @@ class Visualization:
         fig.colorbar(im, cax=cbar_ax)
         return fig, axes
 
-    def plot_hist_1d(self, axis, burn_in=None, param_no=0, bins=20):
+    def plot_hist_1d(self, axis, burn_in=None, param_no=0, bins=20, color="lightblue"):
         # TODO burn_in for each chain (select from raw_data by chains??)
         # if burn_in == None:
         #     burn_in = [0] * self.raw_data.no_chains
@@ -329,11 +329,13 @@ class Visualization:
         xx = self.raw_data.parameters[:, param_no]
         if trans[param_no]["type"] == "normal_to_lognormal":
             xx = np.log10(xx)
-        axis.hist(xx, bins=bins, density=True, weights=self.raw_data.weights)
+        axis.hist(xx, bins=bins, density=True, weights=self.raw_data.weights, color=color)
 
-    def plot_hist_2d(self, axis, burn_in=None, param_no=[0, 1], bins=20, colorbar=False, cmap="binary"):
+    def plot_hist_2d(self, axis, burn_in=None, param_no=[0, 1], bins=20, colorbar=False, cmap=None):
         # if burn_in == None:
         #     burn_in = [0] * self.raw_data.no_chains
+        if cmap is None:
+            cmap = plt.cm.Binary
 
         trans = self.config["transformations"]
         xx = self.raw_data.parameters[:, param_no[0]]
@@ -344,7 +346,22 @@ class Visualization:
             yy = np.log10(yy)
 
         # print(param_no[0], param_no[1], np.sum(self.raw_data.weights))
-        axis.hist2d(xx, yy, bins=bins, cmap=cmap, weights=self.raw_data.weights.reshape((-1,)))  # , density = True)
+        xlim1 = axis.get_xlim()
+        ylim1 = axis.get_ylim()
+        # print(xlim1, ylim1)
+        data = self.raw_data.weights.reshape((-1,))
+        axis.hist2d(xx, yy, bins=bins, cmin=np.min(data), cmap=cmap, weights=data)  # , density = True)
+        xlim2 = axis.get_xlim()
+        ylim2 = axis.get_ylim()
+        # print(xlim2, ylim2)
+
+        xlim = [min([xlim1[0], xlim2[0]]), max([xlim1[1], xlim2[1]])]
+        ylim = [min([ylim1[0], ylim2[0]]), max([ylim1[1], ylim2[1]])]
+        # print(xlim, ylim)
+        if xlim1[0] != 0:
+            axis.set_xlim(xlim)
+            axis.set_ylim(ylim)
+
         axis.grid(True)
         if colorbar:
             axis.colorbar()
@@ -371,8 +388,8 @@ class Visualization:
 
         return fig, axes
 
-    def plot_hist_grid(self, fig, axes, burn_in=None, parameters_disp=None, bins1d=20, bins2d=20, cmap_2d="binary"):
-        if parameters_disp == None:
+    def plot_hist_grid(self, fig, axes, burn_in=None, parameters_disp=None, bins1d=20, bins2d=20, c_1d=None, cmap_2d=None):
+        if parameters_disp is None:
             parameters_disp = range(self.no_parameters)
         # if burn_in == None:
         #     burn_in = [0] * self.raw_data.no_chains
@@ -381,7 +398,7 @@ class Visualization:
             for idj, j in enumerate(parameters_disp):
                 axis = axes[idi, idj]
                 if idi == idj:
-                    self.plot_hist_1d(axis=axis, param_no=i, burn_in=burn_in, bins=bins1d)
+                    self.plot_hist_1d(axis=axis, param_no=i, burn_in=burn_in, bins=bins1d, color=c_1d)
                 else:
                     self.plot_hist_2d(axis=axis, param_no=[j, i], burn_in=burn_in, bins=bins2d, cmap=cmap_2d)
 
@@ -400,7 +417,7 @@ class Visualization:
                         y = np.log10(y)
                     if trans[idj]["type"] == "normal_to_lognormal":
                         x = np.log10(x)
-                    axis.plot(x, y, marker='.', mec=color, mfc=color)
+                    axis.plot(x, y, marker='.', ms=9, markeredgewidth=1.75, mec="LimeGreen", mfc=color)
 
     def plot_observe_slice_ij(self, axis, idp1, idp2, values=None):
         xx = self.raw_data.parameters[:, idp1]
