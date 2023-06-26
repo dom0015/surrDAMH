@@ -281,7 +281,9 @@ print(estimated_distributions)
 for i in range(no_stages):
     raw_data_accepted = raw_data.filter(types=[0], stages=[i])
     temp_vis = ape.Visualization(config=conf, raw_data=raw_data_accepted)
-    fig, axes = temp_vis.plot_hist_grid(bins1d=15, bins2d=20)
+    fig, axes = temp_vis.create_plot_grid()
+    temp_vis.plot_hist_grid(fig=fig, axes=axes, bins1d=15, bins2d=20, cmap_2d="Reds")
+    temp_vis.plot_hist_grid_add_sample(fig=fig, axes=axes, sample=bestfit_L2, color="LimeGreen")
     fig.savefig(visualization_dir + "/histograms_s" + str(i) + ".pdf", bbox_inches="tight")
 
 print("HISTOGRAMS")

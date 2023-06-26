@@ -331,7 +331,7 @@ class Visualization:
             xx = np.log10(xx)
         axis.hist(xx, bins=bins, density=True, weights=self.raw_data.weights)
 
-    def plot_hist_2d(self, axis, burn_in=None, param_no=[0, 1], bins=20, colorbar=False):
+    def plot_hist_2d(self, axis, burn_in=None, param_no=[0, 1], bins=20, colorbar=False, cmap="binary"):
         # if burn_in == None:
         #     burn_in = [0] * self.raw_data.no_chains
 
@@ -344,38 +344,63 @@ class Visualization:
             yy = np.log10(yy)
 
         # print(param_no[0], param_no[1], np.sum(self.raw_data.weights))
-        axis.hist2d(xx, yy, bins=bins, cmap="binary", weights=self.raw_data.weights.reshape((-1,)))  # , density = True)
+        axis.hist2d(xx, yy, bins=bins, cmap=cmap, weights=self.raw_data.weights.reshape((-1,)))  # , density = True)
         axis.grid(True)
         if colorbar:
             axis.colorbar()
 
-    def plot_hist_grid(self, burn_in=None, parameters_disp=None, bins1d=20, bins2d=20):
+    def create_plot_grid(self, parameters_disp=None):
+        if parameters_disp == None:
+            parameters_disp = range(self.no_parameters)
+
+        n = len(parameters_disp)
+        fig, axes = plt.subplots(n, n, sharex=False, sharey=False, figsize=(15, 15))
+        plt.subplots_adjust(wspace=0.5, hspace=0.3)
+
+        trans = self.config["transformations"]
+        for idj, j in enumerate(parameters_disp):
+            axis = axes[0,idj]
+            # determine parameter name
+            if self.analysis.par_names is not None:
+                label = "${0}$".format(self.analysis.par_names[j])
+            else:
+                label = "$par. {0}$".format(j)
+            if trans[idj]["type"] == "normal_to_lognormal":
+                label += "\n(log)"
+            axis.set_title(label, x=1.05, rotation=45, multialignment='center')
+
+        return fig, axes
+
+    def plot_hist_grid(self, fig, axes, burn_in=None, parameters_disp=None, bins1d=20, bins2d=20, cmap_2d="binary"):
         if parameters_disp == None:
             parameters_disp = range(self.no_parameters)
         # if burn_in == None:
         #     burn_in = [0] * self.raw_data.no_chains
 
-        trans = self.config["transformations"]
-        n = len(parameters_disp)
-        fig, axes = plt.subplots(n, n, sharex=False, sharey=False, figsize=(15, 15))
-        plt.subplots_adjust(wspace=0.5, hspace=0.3)
         for idi, i in enumerate(parameters_disp):
             for idj, j in enumerate(parameters_disp):
                 axis = axes[idi, idj]
                 if idi == idj:
                     self.plot_hist_1d(axis=axis, param_no=i, burn_in=burn_in, bins=bins1d)
                 else:
-                    self.plot_hist_2d(axis=axis, param_no=[j, i], burn_in=burn_in, bins=bins2d)
-                if idi == 0:
-                    # determine parameter name
-                    if self.analysis.par_names is not None:
-                        label = "${0}$".format(self.analysis.par_names[j])
-                    else:
-                        label = "$par. {0}$".format(j)
+                    self.plot_hist_2d(axis=axis, param_no=[j, i], burn_in=burn_in, bins=bins2d, cmap=cmap_2d)
+
+    def plot_hist_grid_add_sample(self, fig, axes, sample, parameters_disp=None, color="Red"):
+        if parameters_disp == None:
+            parameters_disp = range(self.no_parameters)
+
+        trans = self.config["transformations"]
+        for idi, i in enumerate(parameters_disp):
+            for idj, j in enumerate(parameters_disp):
+                axis = axes[idi, idj]
+                if idi != idj:
+                    y = sample.parameters()[idi]
+                    x = sample.parameters()[idj]
+                    if trans[idi]["type"] == "normal_to_lognormal":
+                        y = np.log10(y)
                     if trans[idj]["type"] == "normal_to_lognormal":
-                        label += "\n(log)"
-                    axis.set_title(label, x=1.05, rotation=45, multialignment='center')
-        return fig, axes
+                        x = np.log10(x)
+                    axis.plot(x, y, marker='.', mec=color, mfc=color)
 
     def plot_observe_slice_ij(self, axis, idp1, idp2, values=None):
         xx = self.raw_data.parameters[:, idp1]
