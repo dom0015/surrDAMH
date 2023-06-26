@@ -87,4 +87,23 @@ fading_blue[:, -1] = np.linspace(0, 1, cmap_blues.N) # modify alpha
 fading_blue = matplotlib.colors.ListedColormap(fading_blue) # convert to colormap
 vis_a_H1.plot_hist_grid(fig=fig, axes=axes, bins1d=15, bins2d=20, c_1d="DodgerBlue", cmap_2d=fading_blue)
 # vis_a_H1.plot_hist_grid_add_sample(fig=fig, axes=axes, sample=bestfit_L2_H1, color="Blue")
+
+
+for i in range(no_parameters):
+    for j in range(no_parameters):
+        if j != no_parameters - 1:
+            # axes[j, i].sharex(axes[no_parameters - 1, i])
+            axes[j, i].set_xticklabels([])
+        if i != j and i != 0 and i != no_parameters-1:
+            axes[j, i].set_yticklabels([])
+        if i != j and i == no_parameters - 1:
+            axes[j, i].tick_params(labelleft=False, labelright=True)
+
+        if i == j and 0 < j < no_parameters-1:
+            axes[j, i].tick_params(axis="y", direction="in", pad=-15)
+
+        if i == j and j == no_parameters-1:
+            axes[j, i].tick_params(labelleft=False, labelright=True)
+        # if j != 0:
+        #     axes[j, i].set_yticklabels([])
 fig.savefig(visualization_dir + "/histograms_s" + str(0) + ".pdf", bbox_inches="tight")
