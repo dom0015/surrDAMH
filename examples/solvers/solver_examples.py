@@ -9,8 +9,22 @@ Created on Wed Jan 22 10:00:23 2020
 import numpy as np
 from mpi4py import MPI
 
+class Solver_illustrative_local:
+    def __init__(self, solver_id=0, output_dir=None):
+        self.no_parameters = 2
+        self.no_observations = 1
+        
+    def set_parameters(self,data_par):
+        self.x = data_par[0]
+        self.y = data_par[1]
+        
+    def get_observations(self):
+        res = (self.x**2-self.y)*(np.log((self.x-self.y)**2+1))
+        return res
+        #return convergence_tag, res
+
 class Solver_linela2exp_local:
-    def __init__(self, solver_id=0, f=-0.1, L=1.0, M=0.5):
+    def __init__(self, solver_id=0, f=-0.1, L=1.0, M=0.5, output_dir=None):
         self.f = f
         self.L = L
         self.M = M
@@ -86,7 +100,7 @@ class Solver_linela2exp_local_tag:
         return convergence_tag, uL
     
 class Generic:
-    def __init__(self, solver_id=0, no_parameters=3, no_observations=3):
+    def __init__(self, solver_id=0, no_parameters=3, no_observations=3, output_dir=None):
         self.no_parameters = no_parameters
         self.no_observations = no_observations
         
@@ -99,4 +113,5 @@ class Generic:
             convergence_tag = 1
         else:
             convergence_tag = -1
-        return convergence_tag, res
+        #return convergence_tag, res
+        return res

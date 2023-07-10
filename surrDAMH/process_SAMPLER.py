@@ -17,7 +17,10 @@ comm_world = MPI.COMM_WORLD
 rank_world = comm_world.Get_rank()
 size_world = comm_world.Get_size()
 
+comm_sampler = comm_world.Split(color=0, key=rank_world)
 no_samplers, problem_path = comm_world.recv(source=MPI.ANY_SOURCE, tag=100)
+
+comm_world.Barrier()
 output_dir = sys.argv[1]
 # data = None
 # data = comm_world.bcast(data,root=MPI.ANY_SOURCE)
@@ -54,34 +57,81 @@ if C.initial_sample_type == "lhs":
 else:
     initial_sample = None # will be set to prior mean
 for i,d in enumerate(C.list_alg):
-    # TO DO: adaptive proposal if needed
-    my_Prop.set_covariance(proposal_std = d['proposal_std'])
+    if ("proposal_std" in d.keys()) and (d["proposal_std"] is not None):
+        my_Prop.set_covariance(proposal_std = d['proposal_std'])
     seed = seed0 + 2 + i
     if d['type'] == 'MH':
-        my_Alg = cS.Algorithm_MH(my_Prob, my_Prop, my_Sol,
-                         Surrogate = my_Surr,
-                         surrogate_is_updated = d['surrogate_is_updated'],
-                         initial_sample=initial_sample,
-                         max_samples=d['max_samples'],
-                         time_limit=d['time_limit'],
-                         save_raw_data=C.save_raw_data,
-                         transform_before_saving=C.transform_before_saving,
-                         name='alg' + str(i) + 'MH_rank' + str(rank_world),
-                         seed=seed, output_dir=output_dir)
-    else:
+        if "use_only_surrogate" in d.keys() and d["use_only_surrogate"]==True:
+            Solver = my_Surr
+            Surrogate = None
+            surrogate_is_updated = False
+        else:
+            Solver = my_Sol
+            Surrogate = my_Surr
+            surrogate_is_updated = d['surrogate_is_updated']
+        if "adaptive" in d.keys() and d["adaptive"]==True:
+            target_rate = None
+            if "target_rate" in d.keys():
+                target_rate = d["target_rate"]
+            corr_limit = None
+            if "corr_limit" in d.keys():
+                corr_limit = d["corr_limit"]
+            sample_limit = None
+            if "sample_limit" in d.keys():
+                sample_limit = d["sample_limit"]
+            my_Alg = cS.Algorithm_MH_adaptive(my_Prob, my_Prop,
+                             Solver = Solver,
+                             Surrogate = Surrogate,
+                             surrogate_is_updated = surrogate_is_updated,
+                             initial_sample=initial_sample,
+                             max_samples=d['max_samples'],
+                             max_evaluations=d['max_evaluations'],
+                             time_limit=d['time_limit'],
+                             target_rate=target_rate,
+                             corr_limit=corr_limit,
+                             sample_limit=sample_limit,
+                             save_raw_data=C.save_raw_data,
+                             transform_before_saving=C.transform_before_saving,
+                             name='alg' + str(i).zfill(4) + 'MH_adaptive_rank' + str(rank_world),
+                             seed=seed, output_dir=output_dir)
+        else:
+            my_Alg = cS.Algorithm_MH(my_Prob, my_Prop,
+                             Solver = Solver,
+                             Surrogate = Surrogate,
+                             surrogate_is_updated = surrogate_is_updated,
+                             initial_sample=initial_sample,
+                             max_samples=d['max_samples'],
+                             max_evaluations=d['max_evaluations'],
+                             time_limit=d['time_limit'],
+                             save_raw_data=C.save_raw_data,
+                             transform_before_saving=C.transform_before_saving,
+                             name='alg' + str(i).zfill(4) + 'MH_rank' + str(rank_world),
+                             seed=seed, output_dir=output_dir)
+    elif d['type'] == 'DAMH':
         my_Alg = cS.Algorithm_DAMH(my_Prob, my_Prop, my_Sol,
                         Surrogate = my_Surr,
                         surrogate_is_updated = d['surrogate_is_updated'],
                         initial_sample=initial_sample,
                         max_samples=d['max_samples'],
+                        max_evaluations=d['max_evaluations'],
                         time_limit=d['time_limit'],
                         save_raw_data=C.save_raw_data,
                         transform_before_saving=C.transform_before_saving,
-                        name='alg' + str(i) + 'DAMH_rank' + str(rank_world),
+                        name='alg' + str(i).zfill(4) + 'DAMH_rank' + str(rank_world),
                         seed=seed, output_dir=output_dir)
     print('--- SAMPLER ' + my_Alg.name + ' starts ---')
+    #print("RANK", rank_world, "INITIAL SAMPLE", initial_sample)
     my_Alg.run()
-    initial_sample = my_Alg.current_sample
+    #print("RANK", rank_world, "LAST SAMPLE", my_Alg.current_sample)
+    if "adaptive" in d.keys() and d["adaptive"]==True:
+        sendbuf = my_Prop.proposal_std
+        recvbuf = sendbuf.copy()
+        comm_sampler.Allreduce(sendbuf, recvbuf)
+        my_Prop.set_covariance(proposal_std = recvbuf/no_samplers)
+    if "excluded" in d.keys() and d["excluded"]==True:
+        pass
+    else:
+        initial_sample = my_Alg.current_sample
     print('--- SAMPLER ' + my_Alg.name + ' --- acc/rej/prerej:', my_Alg.no_accepted, my_Alg.no_rejected, my_Alg.no_prerejected)
 
 f = getattr(my_Sol,"terminate",None)

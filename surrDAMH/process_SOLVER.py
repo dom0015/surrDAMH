@@ -20,6 +20,8 @@ comm_world = MPI.COMM_WORLD
 rank_world = comm_world.Get_rank()
 size_world = comm_world.Get_size()
 
+comm_sampler = comm_world.Split(color=1, key=rank_world)
+
 no_samplers = rank_world
 
 assert(len(sys.argv) == 3)
@@ -32,6 +34,7 @@ for i in range(size_world):
         list_to_send = [no_samplers, problem_path]
         print("comm_world.send(dest=", i, ") params: ", list_to_send, flush=True)
         comm_world.send(list_to_send, dest=i, tag=100)
+comm_world.Barrier()
 C = Configuration(no_samplers, problem_path)
 
 solver_init = C.solver_parent_init

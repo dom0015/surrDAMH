@@ -13,11 +13,12 @@ import csv
 import time
 
 class Algorithm_PARENT:
-    def __init__(self, Problem, Proposal, Solver, max_samples, name, seed=0, initial_sample=None, G_initial_sample=None, Surrogate=None, is_saved=True, save_raw_data=False, transform_before_saving=None, surrogate_is_updated=True, time_limit=float('inf'), output_dir=""):
+    def __init__(self, Problem, Proposal, Solver, max_samples, max_evaluations, name, seed=0, initial_sample=None, G_initial_sample=None, Surrogate=None, is_saved=True, save_raw_data=False, transform_before_saving=None, surrogate_is_updated=True, time_limit=float('inf'), output_dir=""):
         self.Problem = Problem
         self.Proposal = Proposal
         self.Solver = Solver
         self.max_samples = max_samples
+        self.max_evaluations = max_evaluations
         self.name = name
         self.seed = seed
         self.output_dir = output_dir
@@ -71,6 +72,11 @@ class Algorithm_PARENT:
             os.makedirs(os.path.dirname(filename), exist_ok=True)
             self.__file_raw = open(filename, 'w')
             self.writer_raw = csv.writer(self.__file_raw)
+            """ temporary (4 lines, monitoring log_ratio): """
+            # filename = os.path.join(self.output_dir, "temp", self.Problem.name, "log_ratio", self.name + ".csv")
+            # os.makedirs(os.path.dirname(filename), exist_ok=True)
+            # self.__file_temp = open(filename, 'w')
+            # self.writer_temp = csv.writer(self.__file_temp)
         if self.G_current_sample is None:
             self.Solver.send_parameters(self.current_sample)
             self.convergence_tag, self.G_current_sample = self.Solver.recv_observations()
@@ -83,6 +89,9 @@ class Algorithm_PARENT:
         self.convergence_tag, self.G_proposed_sample = self.Solver.recv_observations()
         self.posterior_proposed_sample = self.compute_posterior(self.proposed_sample, self.G_proposed_sample, self.convergence_tag)
         self.log_ratio = self.posterior_proposed_sample - self.posterior_current_sample
+        """ temporary: (2 lines) """
+        # row = ["log_ratio", self.log_ratio, self.posterior_proposed_sample, self.posterior_current_sample]
+        # self.writer_temp.writerow(row)
         
     def if_accepted(self):
         self.__write_to_file()
@@ -94,9 +103,9 @@ class Algorithm_PARENT:
         self.posterior_current_sample = self.posterior_proposed_sample
         if self.save_raw_data:
             if self.save_transformed_data:
-                row = ['accepted'] + list(self.transform(self.proposed_sample)) + [self.convergence_tag] + list(self.G_current_sample)
+                row = ['accepted'] + list(self.transform(self.proposed_sample)) + [self.convergence_tag] + list(self.G_current_sample.flatten())
             else:
-                row = ['accepted'] + list(self.proposed_sample) + [self.convergence_tag] + list(self.G_current_sample)
+                row = ['accepted'] + list(self.proposed_sample) + [self.convergence_tag] + list(self.G_current_sample.flatten())
             self.writer_raw.writerow(row)
         
     def if_rejected(self):
@@ -106,9 +115,9 @@ class Algorithm_PARENT:
             self.__send_to_surrogate(sample=self.proposed_sample.copy(), G_sample=self.G_proposed_sample.copy(), weight=0)
         if self.save_raw_data:
             if self.save_transformed_data:
-                row = ['rejected'] + list(self.transform(self.proposed_sample)) + [self.convergence_tag] + list(self.G_proposed_sample)
+                row = ['rejected'] + list(self.transform(self.proposed_sample)) + [self.convergence_tag] + list(self.G_proposed_sample.flatten())
             else:
-                row = ['rejected'] + list(self.proposed_sample) + [self.convergence_tag] + list(self.G_proposed_sample)
+                row = ['rejected'] + list(self.proposed_sample) + [self.convergence_tag] + list(self.G_proposed_sample.flatten())
             self.writer_raw.writerow(row)
         
     def close_files(self):
@@ -127,6 +136,8 @@ class Algorithm_PARENT:
             file_notes.close()
         if self.save_raw_data:
             self.__file_raw.close()
+            """ temporary: """
+            # self.__file_temp.close()
 
     def _acceptance_log_symmetric(self,log_ratio):
         temp = self.__generator.uniform(0.0,1.0)
@@ -153,8 +164,9 @@ class Algorithm_PARENT:
         return
     
 class Algorithm_MH(Algorithm_PARENT): # initiated by SAMPLERs
-    def __init__(self, Problem, Proposal, Solver, max_samples, name, seed=0, initial_sample=None, G_initial_sample=None, Surrogate=None, is_saved=True, save_raw_data=False, transform_before_saving=None, surrogate_is_updated=True, time_limit=float('inf'), output_dir=""):
-        super().__init__(Problem, Proposal, Solver, max_samples, name, seed, initial_sample, G_initial_sample, Surrogate, is_saved, save_raw_data, transform_before_saving, surrogate_is_updated, time_limit, output_dir)
+    def __init__(self, Problem, Proposal, Solver, max_samples, max_evaluations, name, seed=0, initial_sample=None, G_initial_sample=None, Surrogate=None, is_saved=True, save_raw_data=False, transform_before_saving=None, surrogate_is_updated=True, time_limit=float('inf'), output_dir=""):
+        super().__init__(Problem, Proposal, Solver, max_samples, max_evaluations, name, seed, initial_sample, G_initial_sample, Surrogate, is_saved, save_raw_data, transform_before_saving, surrogate_is_updated, time_limit, output_dir)
+        self.max_samples = min(self.max_samples,self.max_evaluations)
 
     def run(self):
         self.prepare()
@@ -166,13 +178,98 @@ class Algorithm_MH(Algorithm_PARENT): # initiated by SAMPLERs
             else:
                 self.if_rejected()
             if time.time() - self.time_start > self.time_limit:
-                print("SAMPLER at RANK", MPI.COMM_WORLD.Get_rank(), "time limit reached - loop",i)
+                print("SAMPLER at RANK", MPI.COMM_WORLD.Get_rank(), "time limit ", self.time_limit, " reached - loop",i)
                 break
         self.close_files()
         
+class Algorithm_MH_adaptive(Algorithm_PARENT): # initiated by SAMPLERs
+    def __init__(self, Problem, Proposal, Solver, max_samples, max_evaluations, name, target_rate=None, corr_limit=None, sample_limit=None, seed=0, initial_sample=None, G_initial_sample=None, Surrogate=None, is_saved=True, save_raw_data=False, transform_before_saving=None, surrogate_is_updated=True, time_limit=float('inf'), output_dir=""):
+        super().__init__(Problem, Proposal, Solver, max_samples, max_evaluations, name, seed, initial_sample, G_initial_sample, Surrogate, is_saved, save_raw_data, transform_before_saving, surrogate_is_updated, time_limit, output_dir)
+        self.max_samples = min(self.max_samples,self.max_evaluations)
+        self.target_rate = target_rate # target acceptance rate
+        if self.target_rate==None:
+            self.target_rate = 0.25
+        self.corr_limit = corr_limit # maximal alowed correlation of proposal distribution
+        if self.corr_limit==None:
+            self.corr_limit = 0.3
+        self.sample_limit = sample_limit # minimal number of accepted/rejected samples to evaluate acceptance rate
+        if self.sample_limit==None:
+            self.sample_limit = 10
+        
+    def run(self):
+        self.prepare()
+        samples = np.empty((0,self.Problem.no_parameters))
+        fweights = np.empty((0,),dtype=int)
+        samples = np.vstack((samples,self.current_sample))
+        fweights = np.append(fweights,1)
+        #idx_accepted = np.empty((0,),dtype=bool)
+        counter_accepted = 0
+        counter_rejected = 0
+        init_flag = True
+        coef = 1
+        ## find initial proposal SD:
+        if self.Proposal.proposal_std.ndim == 1:
+            initial_SD = self.Proposal.proposal_std
+        else:
+            initial_SD = np.sqrt(np.diag(self.Proposal.proposal_std))
+        COV = initial_SD
+        for i in range(self.max_samples):
+            self.proposed_sample = self.Proposal.propose_sample(self.current_sample)
+            self.request_observations()
+            if self.is_accepted_sample(self.log_ratio):
+                self.if_accepted()
+                #idx_accepted = np.append(idx_accepted,True)
+                fweights = np.append(fweights,1)
+                samples = np.vstack((samples,self.current_sample))
+                counter_accepted += 1
+            else:
+                self.if_rejected()
+                #idx_accepted = np.append(idx_accepted,False)
+                fweights[-1] += 1
+                counter_rejected += 1
+            if counter_rejected>=self.sample_limit and counter_accepted>=self.sample_limit:
+                current_rate = counter_accepted/(counter_accepted+counter_rejected)
+                #print("ACCEPTED:", counter_accepted, "REJECTED", counter_rejected, "-> RATE", current_rate)
+                COV = np.cov(samples,fweights=fweights,rowvar=False)
+                SD = np.sqrt(np.diag(COV))
+                CORR = COV/SD.reshape((self.Problem.no_parameters,1))
+                CORR = CORR/SD.reshape((1,self.Problem.no_parameters))
+                #print(COV)
+                #print(CORR)
+                ## correction of covariance matrix (maximal alowed correlation):
+                CORR[CORR<-self.corr_limit]=-self.corr_limit
+                CORR[CORR>self.corr_limit]=self.corr_limit
+                np.fill_diagonal(CORR,1)
+                COV = CORR*SD.reshape((self.Problem.no_parameters,1))
+                COV = COV*SD.reshape((1,self.Problem.no_parameters))
+                #print(CORR)
+                if init_flag:
+                    init_flag = False
+                    coef = np.mean(initial_SD/SD)
+                ratio = current_rate/self.target_rate
+                if ratio>1.2: # acceptance rate is too high:
+                    coef = coef*min(ratio**(2/self.Problem.no_parameters),2.0)
+                    self.Proposal.set_covariance(coef*COV)
+                    # print("COVARIANCE CHANGED (rate too high):", ratio, self.Proposal.proposal_std)
+                elif (1/ratio)>1.2: # acceptance rate is too low:
+                    coef = coef*max(ratio**(2/self.Problem.no_parameters),0.5)
+                    self.Proposal.set_covariance(coef*COV)
+                #     print("COVARIANCE CHANGED (rate too low):", ratio, self.Proposal.proposal_std)
+                # else:
+                #     print("COVARIANCE NOT CHANGED:", ratio)
+                #print("RANK", MPI.COMM_WORLD.Get_rank(), "acceptance rate:",counter_accepted,"/",counter_rejected+counter_accepted,"=", np.round(current_rate,4), "coef:",coef)
+                counter_accepted = 0
+                counter_rejected = 0
+
+            if time.time() - self.time_start > self.time_limit:
+                print("SAMPLER at RANK", MPI.COMM_WORLD.Get_rank(), "time limit ", self.time_limit, " reached - loop",i)
+                break
+        print("RANK", MPI.COMM_WORLD.Get_rank(), "FINAL COV", coef*COV)
+        self.close_files()
+        
 class Algorithm_DAMH(Algorithm_PARENT): # initiated by SAMPLERs
-    def __init__(self, Problem, Proposal, Solver, max_samples, name, seed=0, initial_sample=None, G_initial_sample=None, Surrogate=None, is_saved=True, save_raw_data=False, transform_before_saving=None, surrogate_is_updated=True, time_limit=float('inf'), output_dir=""):
-        super().__init__(Problem, Proposal, Solver, max_samples, name, seed, initial_sample, G_initial_sample, Surrogate, is_saved, save_raw_data, transform_before_saving, surrogate_is_updated, time_limit, output_dir)
+    def __init__(self, Problem, Proposal, Solver, max_samples, max_evaluations, name, seed=0, initial_sample=None, G_initial_sample=None, Surrogate=None, is_saved=True, save_raw_data=False, transform_before_saving=None, surrogate_is_updated=True, time_limit=float('inf'), output_dir=""):
+        super().__init__(Problem, Proposal, Solver, max_samples, max_evaluations, name, seed, initial_sample, G_initial_sample, Surrogate, is_saved, save_raw_data, transform_before_saving, surrogate_is_updated, time_limit, output_dir)
 
     def run(self):
         self.prepare()
@@ -188,20 +285,24 @@ class Algorithm_DAMH(Algorithm_PARENT): # initiated by SAMPLERs
             self.__file_accepted = open(filename, 'w')
             self.__writer_accepted = csv.writer(self.__file_accepted)
         self.Surrogate.send_parameters(self.current_sample)
-        GS_current_sample = self.Surrogate.recv_observations()
+        tag,GS_current_sample = self.Surrogate.recv_observations()
         self.pre_posterior_current_sample = self.compute_posterior(self.current_sample, GS_current_sample)
         for i in range(self.max_samples):
             self.proposed_sample = self.Proposal.propose_sample(self.current_sample)
             # it is necessary to recalculate GS_current_cample,
             # because the surrogate model may have changed
             self.Surrogate.send_parameters(np.array([self.current_sample,self.proposed_sample]))
-            tmp = self.Surrogate.recv_observations()
+            tag,tmp = self.Surrogate.recv_observations()
             GS_current_sample = tmp[0,:]
             # TO DO: do not recalculate posterior if GS_current_sample did not change
             self.pre_posterior_current_sample = self.compute_posterior(self.current_sample, GS_current_sample)
             GS_proposed_sample = tmp[1,:]
             pre_posterior_proposed_sample = self.compute_posterior(self.proposed_sample, GS_proposed_sample)
             pre_log_ratio = pre_posterior_proposed_sample - self.pre_posterior_current_sample
+            """ temporary: (2 lines) """
+            # row = ["pre_log_ratio", pre_log_ratio, pre_posterior_proposed_sample, self.pre_posterior_current_sample]
+            # self.writer_temp.writerow(row)
+            
             if self.is_accepted_sample(pre_log_ratio):
                 self.request_observations()
                 if self.is_accepted_sample(self.log_ratio - pre_log_ratio):
@@ -223,12 +324,15 @@ class Algorithm_DAMH(Algorithm_PARENT): # initiated by SAMPLERs
                 self.no_rejected_current += 1
                 if self.save_raw_data:
                     if self.save_transformed_data:
-                        row = ['prerejected'] + list(self.transform(self.proposed_sample)) + [0] + list(GS_proposed_sample)
+                        row = ['prerejected'] + list(self.transform(self.proposed_sample)) + [0] + list(GS_proposed_sample.flatten())
                     else:
-                        row = ['prerejected'] + list(self.proposed_sample) + [0] + list(GS_proposed_sample)
+                        row = ['prerejected'] + list(self.proposed_sample) + [0] + list(GS_proposed_sample.flatten())
                     self.writer_raw.writerow(row)
             if time.time() - self.time_start > self.time_limit:
-                print("SAMPLER at RANK", MPI.COMM_WORLD.Get_rank(), "time limit reached - loop",i)
+                print("SAMPLER at RANK", MPI.COMM_WORLD.Get_rank(), "time limit ", self.time_limit, " reached - loop",i)
+                break
+            if (self.no_rejected + self.no_accepted)>=self.max_evaluations:
+                print("SAMPLER at RANK", MPI.COMM_WORLD.Get_rank(), "evaluations limit ", self.max_evaluations, " reached - loop",i)
                 break
         self.close_files()
         self.__file_rejected.close()
