@@ -320,20 +320,24 @@ class Visualization:
         fig.colorbar(im, cax=cbar_ax)
         return fig, axes
 
-    def plot_hist_1d(self, axis, burn_in=None, param_no=0, bins=20):
+    def plot_hist_1d(self, axis, burn_in=None, param_no=0, bins=20, color=None):
         # TODO burn_in for each chain (select from raw_data by chains??)
         # if burn_in == None:
         #     burn_in = [0] * self.raw_data.no_chains
+        if color is None:
+            color = "lightblue"
 
         trans = self.config["transformations"]
         xx = self.raw_data.parameters[:, param_no]
         if trans[param_no]["type"] == "normal_to_lognormal":
             xx = np.log10(xx)
-        axis.hist(xx, bins=bins, density=True, weights=self.raw_data.weights)
+        axis.hist(xx, bins=bins, density=True, weights=self.raw_data.weights, color=color)
 
-    def plot_hist_2d(self, axis, burn_in=None, param_no=[0, 1], bins=20, colorbar=False, cmap="binary"):
+    def plot_hist_2d(self, axis, burn_in=None, param_no=[0, 1], bins=20, colorbar=False, cmap=None):
         # if burn_in == None:
         #     burn_in = [0] * self.raw_data.no_chains
+        if cmap is None:
+            cmap = plt.cm.Binary
 
         trans = self.config["transformations"]
         xx = self.raw_data.parameters[:, param_no[0]]
@@ -344,7 +348,21 @@ class Visualization:
             yy = np.log10(yy)
 
         # print(param_no[0], param_no[1], np.sum(self.raw_data.weights))
-        axis.hist2d(xx, yy, bins=bins, cmap=cmap, weights=self.raw_data.weights.reshape((-1,)))  # , density = True)
+        # this keeps the maximal axis limits
+        # when plotting multiple histograms
+        # (otherwise hist2d sets limits according to last call)
+        xlim1 = axis.get_xlim()
+        ylim1 = axis.get_ylim()
+        data = self.raw_data.weights.reshape((-1,))
+        axis.hist2d(xx, yy, bins=bins, cmin=np.min(data), cmap=cmap, weights=data)  # , density = True)
+        xlim2 = axis.get_xlim()
+        ylim2 = axis.get_ylim()
+        xlim = [min([xlim1[0], xlim2[0]]), max([xlim1[1], xlim2[1]])]
+        ylim = [min([ylim1[0], ylim2[0]]), max([ylim1[1], ylim2[1]])]
+        if xlim1[0] != 0:
+            axis.set_xlim(xlim)
+            axis.set_ylim(ylim)
+
         axis.grid(True)
         if colorbar:
             axis.colorbar()
@@ -355,7 +373,7 @@ class Visualization:
 
         n = len(parameters_disp)
         fig, axes = plt.subplots(n, n, sharex=False, sharey=False, figsize=(15, 15))
-        plt.subplots_adjust(wspace=0.5, hspace=0.3)
+        plt.subplots_adjust(wspace=0.1, hspace=0.1)
 
         trans = self.config["transformations"]
         for idj, j in enumerate(parameters_disp):
@@ -367,11 +385,33 @@ class Visualization:
                 label = "$par. {0}$".format(j)
             if trans[idj]["type"] == "normal_to_lognormal":
                 label += "\n(log)"
-            axis.set_title(label, x=1.05, rotation=45, multialignment='center')
+            axis.set_title(label, x=0.5, rotation=45, multialignment='center')
 
         return fig, axes
 
-    def plot_hist_grid(self, fig, axes, burn_in=None, parameters_disp=None, bins1d=20, bins2d=20, cmap_2d="binary"):
+    def adjust_plot_grid_axes(self, no_parameters, axes):
+        """
+        Moves common ticks and ticklabels to the outside of the grid.
+        """
+        for i in range(no_parameters):
+            for j in range(no_parameters):
+                if j != no_parameters - 1:
+                    # axes[j, i].sharex(axes[no_parameters - 1, i])
+                    axes[j, i].set_xticklabels([])
+                if i != j and i != 0 and i != no_parameters - 1:
+                    axes[j, i].set_yticklabels([])
+                if i != j and i == no_parameters - 1:
+                    axes[j, i].tick_params(labelleft=False, labelright=True)
+
+                if i == j and 0 < j < no_parameters - 1:
+                    axes[j, i].tick_params(axis="y", direction="in", pad=-15)
+                if i == j and j == no_parameters - 1:
+                    axes[j, i].tick_params(labelleft=False, labelright=True)
+                # if j != 0:
+                #     axes[j, i].set_yticklabels([])
+
+    def plot_hist_grid(self, fig, axes, burn_in=None, parameters_disp=None, bins1d=20, bins2d=20,
+                       c_1d=None, cmap_2d=None):
         if parameters_disp == None:
             parameters_disp = range(self.no_parameters)
         # if burn_in == None:
@@ -381,13 +421,15 @@ class Visualization:
             for idj, j in enumerate(parameters_disp):
                 axis = axes[idi, idj]
                 if idi == idj:
-                    self.plot_hist_1d(axis=axis, param_no=i, burn_in=burn_in, bins=bins1d)
+                    self.plot_hist_1d(axis=axis, param_no=i, burn_in=burn_in, bins=bins1d, color=c_1d)
                 else:
                     self.plot_hist_2d(axis=axis, param_no=[j, i], burn_in=burn_in, bins=bins2d, cmap=cmap_2d)
 
-    def plot_hist_grid_add_sample(self, fig, axes, sample, parameters_disp=None, color="Red"):
+    def plot_hist_grid_add_sample(self, fig, axes, sample, parameters_disp=None, color=None):
         if parameters_disp == None:
             parameters_disp = range(self.no_parameters)
+        if color is None:
+            color = "Red"
 
         trans = self.config["transformations"]
         for idi, i in enumerate(parameters_disp):
@@ -400,7 +442,8 @@ class Visualization:
                         y = np.log10(y)
                     if trans[idj]["type"] == "normal_to_lognormal":
                         x = np.log10(x)
-                    axis.plot(x, y, marker='.', mec=color, mfc=color)
+                    # axis.plot(x, y, marker='.', mec=color, mfc=color)
+                    axis.plot(x, y, marker='.', ms=11, markeredgewidth=2, mec="LimeGreen", mfc=color)
 
     def plot_observe_slice_ij(self, axis, idp1, idp2, values=None):
         xx = self.raw_data.parameters[:, idp1]
