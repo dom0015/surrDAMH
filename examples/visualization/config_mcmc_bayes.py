@@ -12,7 +12,9 @@ import ruamel.yaml as yaml
 
 sys.path.append(os.path.dirname(os.path.realpath(__file__)) + "/../..")
 from surrDAMH.modules import visualization_and_analysis as va
-from surrDAMH.modules import analysis as ape
+from surrDAMH.modules.analysis import Analysis
+from surrDAMH.modules.visualization import Visualization
+from surrDAMH.modules.raw_data import Sample, RawData
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -74,13 +76,13 @@ mode = S.find_modus()
 output_dict["mode"] = mode[0].tolist()
 
 
-raw_data = ape.RawData()
+raw_data = RawData()
 raw_data.load(output_dir, no_parameters, len(observations))
 # type: 0-accepted, 1-prerejected, 2-rejected
 raw_data_filtered = raw_data.filter(types=[0,2], stages=range(no_stages+1))
 raw_data_accepted = raw_data.filter(types=[0], stages=range(0,no_stages+1))
 
-analysis_pe = ape.Analysis(config=conf, raw_data=raw_data_filtered)
+analysis_pe = Analysis(config=conf, raw_data=raw_data_filtered)
 # fit_L2_x, fit_L2_G, fit_L2_norm = S.find_best_fit(raw_data_dir, no_parameters, observations)
 # bestfit_L2, bestfit_L2_norm = analysis_pe.find_best_fit(observations, norm="L2")
 fits, norms = analysis_pe.find_n_best_fits(observations, count=20, norm="L2")
@@ -119,8 +121,8 @@ print(" - NORM:", bestfit_LH_norm)
 print(" - PARAMETERS:", bestfit_LH.parameters())
 print(" - OBSERVATIONS:", bestfit_LH.observations())
 
-visual = ape.Visualization(conf, raw_data_filtered)
-visual_accepted = ape.Visualization(conf, raw_data_accepted)
+visual = Visualization(conf, raw_data_filtered)
+visual_accepted = Visualization(conf, raw_data_accepted)
 # fig, axes = plt.subplots(1,1)
 # visual.plot_likelihood_ij(axes, 0, 1)
 # # fig.colorbar(extend="min")
@@ -266,7 +268,7 @@ for obs_idx in range(len(time_axis)):
 
 raw_data_accepted_s1p = raw_data.filter(types=[0], stages=range(1,no_stages+1))
 # print(raw_data_accepted_s1p.weights)
-analysis_pe_accepted = ape.Analysis(config=conf, raw_data=raw_data_accepted_s1p)
+analysis_pe_accepted = Analysis(config=conf, raw_data=raw_data_accepted_s1p)
 estimated_distributions = analysis_pe_accepted.estimate_distributions(
                 output_file=os.path.join(visualization_dir, "parameters2.csv"))
 print(estimated_distributions)
@@ -280,7 +282,7 @@ print(estimated_distributions)
 
 for i in range(no_stages):
     raw_data_accepted = raw_data.filter(types=[0], stages=[i])
-    temp_vis = ape.Visualization(config=conf, raw_data=raw_data_accepted)
+    temp_vis = Visualization(config=conf, raw_data=raw_data_accepted)
     fig, axes = temp_vis.create_plot_grid()
     temp_vis.plot_hist_grid(fig=fig, axes=axes, bins1d=15, bins2d=20, c_1d="tab:blue", cmap_2d=plt.cm.binary)
     temp_vis.plot_hist_grid_add_sample(fig=fig, axes=axes, sample=bestfit_L2, color="Red")
