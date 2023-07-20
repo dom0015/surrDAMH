@@ -16,8 +16,9 @@ class Analysis:
         self.raw_data = raw_data
 
         self.par_names = [p["name"] for p in config["transformations"]]
-        for i,p in enumerate(self.par_names):
-            self.par_names[i] = p.replace('_', '\_')
+        self.par_names_latex = [p["name"] for p in config["transformations"]]
+        for i,p in enumerate(self.par_names_latex):
+            self.par_names_latex[i] = p.replace('_', '\_')
 
     def compute_L2_norms(self, observations):
         diff2 = np.square(self.raw_data.observations - observations)
