@@ -62,7 +62,7 @@ class Visualization:
                 else:
                     im = self.plot_likelihood_ij(ax, idj, idi, G_norm=G_norm, vlimits=vlimits)
                 if idi==0:
-                    label = "${0}$".format(self.analysis.par_names[j])
+                    label = "${0}$".format(self.analysis.par_names_latex[j])
 
                     if self.config["transformations"][idj]["type"] == "normal_to_lognormal":
                         label += "\n(log)"
@@ -132,8 +132,8 @@ class Visualization:
         for idj, j in enumerate(parameters_disp):
             axis = axes[0,idj]
             # determine parameter name
-            if self.analysis.par_names is not None:
-                label = "${0}$".format(self.analysis.par_names[j])
+            if self.analysis.par_names_latex is not None:
+                label = "${0}$".format(self.analysis.par_names_latex[j])
             else:
                 label = "$par. {0}$".format(j)
             if trans[idj]["type"] == "normal_to_lognormal":
@@ -228,7 +228,7 @@ class Visualization:
             for idj,j in enumerate(parameters_disp):
                 ax = axes[idi,idj]
                 if i==0:
-                    label = "${0}$".format(self.analysis.par_names[j])
+                    label = "${0}$".format(self.analysis.par_names_latex[j])
 
                     if self.config["transformations"][idj]["type"] == "normal_to_lognormal":
                         label += "\n(log)"
@@ -294,8 +294,8 @@ class Visualization:
         axis.set_xticklabels(bins_labels, fontsize=20)
         axis.yaxis.set_tick_params(labelsize=20)
 
-        axis.set_title(self.analysis.par_names[idp], fontsize=36)
-        axis.set_xlabel(self.analysis.par_names[idp], fontsize=20)
+        axis.set_title(self.analysis.par_names_latex[idp], fontsize=36)
+        axis.set_xlabel(self.analysis.par_names_latex[idp], fontsize=20)
         axis.set_ylabel("pressure - t" + str(observe_idx), fontsize=20)
 
 
@@ -322,7 +322,7 @@ class Visualization:
 
         trans = self.config["transformations"]
         log = trans[idp]["type"] == "normal_to_lognormal"
-        xlabel = self.analysis.par_names[idp]
+        xlabel = self.analysis.par_names_latex[idp]
         if log:
             xx = np.log10(xx)
             xlabel = xlabel + "(log)"
@@ -474,7 +474,7 @@ class Visualization:
         ax2 = axis.twinx()
         ax2.set_ylabel('Y2-axis', color='blue')
         for i in range(np.shape(pvalues)[1]):
-            ax2.plot(self.time_axis[observe_indices], pvalues[:,i], color='blue', label=self.analysis.par_names[i])
+            ax2.plot(self.time_axis[observe_indices], pvalues[:,i], color='blue', label=self.analysis.par_names_latex[i])
         ax2.tick_params(axis='y', labelcolor='blue')
         ax2.set_yscale("log")
         ax2.set_ylim([1e-3,1])
