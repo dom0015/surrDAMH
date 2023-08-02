@@ -71,7 +71,11 @@ class RawData:
 
         for i in range(N):
             path_samples = folder_samples + "/" + file_samples[i]
-            df_samples = pd.read_csv(path_samples, header=None)
+            try:
+                df_samples = pd.read_csv(path_samples, header=None)
+            except:
+                print("Empty chain")
+                continue
 
             types = df_samples.iloc[:, 0]
             idx = np.zeros(len(types), dtype=np.int8)
