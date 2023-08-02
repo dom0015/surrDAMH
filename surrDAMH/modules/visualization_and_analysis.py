@@ -838,6 +838,7 @@ class Samples:
         for i, chain in enumerate(chains_disp):
             no_unique_samples += self.unique_samples[chain] # burn-in not excluded
             try:
+                xx = self.x[chain][burn_in[i]:, param_no]
             except:
                 print("HISTOGRAM 1D: CHAIN", chain, "NOT AVAILABLE")
                 continue

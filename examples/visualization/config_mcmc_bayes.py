@@ -51,29 +51,35 @@ if "transformations" in conf.keys():
     for i in range(no_parameters):
         if transformations[i]["type"] == "normal_to_lognormal":
             scale[i] = "log"
-S.load_notes(output_dir,no_samplers)
-S.load_MH(output_dir,no_parameters)
-S.calculate_properties()
-S.load_MH_with_posterior(output_dir,no_parameters)
+try:
+    S.load_notes(output_dir,no_samplers)
+    S.load_MH(output_dir,no_parameters)
+    S.calculate_properties()
+    S.load_MH_with_posterior(output_dir,no_parameters)
+    output_dict = S.get_properties(no_samplers)
+    title = ",".join([str(i) for i in S.notes[0].columns.values])
+    for idx, d in enumerate(output_dict["samplers_list"]):
+        count_list = np.array(S.notes[idx].values.tolist())
+        count_list = count_list.sum(axis=0)
+
+        d[title] = S.notes[idx].values.tolist()
+        d["acceptance ratio [a/r, a/all]"] = np.array(
+            [count_list[0] / count_list[1], count_list[0] / count_list[3]]).tolist()
+        d["N samples [a, r, pr, all]"] = np.array(
+            [count_list[0], count_list[1], count_list[2], count_list[3]]).tolist()
+        d.update(conf["samplers_list"][idx])
+
+    mode = S.find_modus()
+    output_dict["mode"] = mode[0].tolist()
+except Exception as err:
+    output_dict={}
+    print(err)
 
 # output_file = os.path.join(output_dir, "output.txt")
 # sys.stdout = open(output_file, "w")
 
-output_dict = S.get_properties(no_samplers)
 #samplers_list = conf["samplers_list"]
-title = ",".join([str(i) for i in S.notes[0].columns.values])
-for idx,d in enumerate(output_dict["samplers_list"]):
-    count_list = np.array(S.notes[idx].values.tolist())
-    count_list = count_list.sum(axis=0)
 
-    d[title] = S.notes[idx].values.tolist()
-    d["acceptance ratio [a/r, a/all]"] = np.array([count_list[0]/count_list[1], count_list[0]/count_list[3]]).tolist()
-    d["N samples [a, r, pr, all]"] = np.array(
-        [count_list[0], count_list[1], count_list[2], count_list[3]]).tolist()
-    d.update(conf["samplers_list"][idx])
-
-mode = S.find_modus()
-output_dict["mode"] = mode[0].tolist()
 
 
 raw_data = RawData()
