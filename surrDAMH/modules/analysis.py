@@ -26,11 +26,32 @@ class Analysis:
         return G_norm
 
     def compute_likelihood_norms(self, observations, noise_cov):
-        diff = np.array(self.raw_data.observations - observations)
-        invCv = np.linalg.solve(noise_cov, np.transpose(diff))
-        # print(np.shape(diff), np.shape(invCv))
-        G_norm = np.diag(-0.5 * np.matmul(diff, invCv))
-        return G_norm
+        # transform samples to N(0,1)
+        trans_mean = np.array([p["options"]["mu"] for p in self.config["transformations"]])
+        trans_std = np.array([p["options"]["sigma"] for p in self.config["transformations"]])
+        import surrDAMH.modules.transformations as trs
+        trans_params = trs.lognormal_to_normal(self.raw_data.parameters, trans_mean, trans_std)
+        # get prior covariance matrix
+        prior_mean = np.array(self.config["problem_parameters"]["prior_mean"])
+        prior_std = np.array(self.config["problem_parameters"]["prior_std"])
+        prior_cov = prior_std ** 2 * np.eye(np.shape(prior_std)[0])
+
+        Pdiff = trans_params - prior_mean
+        Gdiff = np.array(self.raw_data.observations - observations)
+
+        lhnorm = np.zeros((self.raw_data.len(),1))
+        for i in range(self.raw_data.len()):
+            # observations log likelihood
+            invCv = np.linalg.solve(noise_cov, Gdiff[i].transpose())
+            G_norm = -0.5 * np.dot(Gdiff[i], invCv)
+            # prior log likelihood
+            invCv = np.linalg.solve(prior_cov, Pdiff[i].transpose())
+            p_norm = -0.5 * np.dot(Pdiff[i], invCv)
+            # final posterior log likelihood
+            lhnorm[i] = G_norm + p_norm
+
+        lhnorm = lhnorm.flatten()
+        return lhnorm
 
     def find_best_fit(self, observations, norm="L2", noise_cov=None):
         if norm == "L2":

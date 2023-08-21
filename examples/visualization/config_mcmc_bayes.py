@@ -70,6 +70,7 @@ try:
         d.update(conf["samplers_list"][idx])
 
     mode = S.find_modus()
+    print("Mode:", *mode)
     output_dict["mode"] = mode[0].tolist()
 except Exception as err:
     output_dict={}
@@ -292,6 +293,7 @@ for i in range(no_stages):
     fig, axes = temp_vis.create_plot_grid()
     temp_vis.plot_hist_grid(fig=fig, axes=axes, bins1d=15, bins2d=20, c_1d="tab:blue", cmap_2d=plt.cm.binary)
     temp_vis.plot_hist_grid_add_sample(fig=fig, axes=axes, sample=bestfit_L2, color="Red")
+    temp_vis.plot_hist_grid_add_sample(fig=fig, axes=axes, sample=bestfit_LH, color="DeepSkyBlue")
     temp_vis.adjust_plot_grid_axes(no_parameters, axes)
     fig.savefig(visualization_dir + "/histograms_s" + str(i) + ".pdf", bbox_inches="tight")
 
