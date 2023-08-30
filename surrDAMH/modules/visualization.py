@@ -198,6 +198,51 @@ class Visualization:
                     # axis.plot(x, y, marker='.', mec=color, mfc=color)
                     axis.plot(x, y, marker='.', ms=11, markeredgewidth=2, mec="LimeGreen", mfc=color)
 
+    def plot_temporal_hist(self, fig, axis, grid, chosen_observations, axis_range=None, burn_in=None):
+
+        n_samples = self.raw_data.no_samples
+        MAX = 366
+        grid_interp = np.arange(MAX)
+
+        if axis_range is None:
+            axis_range = [[0, MAX], [-100, 1000]]
+
+        obs_vec = np.empty((n_samples,MAX))
+        for i in range(n_samples):
+            obs_vec[i, :] = np.interp(grid_interp, grid, self.raw_data.observations[i, chosen_observations])
+
+        x = np.arange(MAX).reshape((1, -1))
+        x_all = np.repeat(x, n_samples, 0)
+        weights = self.raw_data.weights.reshape((-1, 1))
+        weights = np.repeat(weights, MAX, 1)
+
+        quartiles = np.percentile(obs_vec, [5, 95], axis=0, method='midpoint')
+        # print(quartiles)
+        # https://www.statisticshowto.com/choose-bin-sizes-statistics/
+        # nbins = (1+ 3.322*np.log10(G_all.shape[0])).astype(int) # too small
+
+        nbins = (np.sqrt(n_samples)).astype(int)
+        # print(n_samples, nbins)
+        h2d = plt.hist2d(x_all.flatten(), obs_vec.flatten(), bins=[MAX, nbins], range=axis_range,
+                         weights=weights.flatten(), cmin=1e-10, cmap="viridis_r", vmin=1, vmax=n_samples / 3)
+        fig.colorbar(h2d[3])
+
+        axis.grid(True)
+        axis.set_xlabel("time [d]")
+        axis.set_ylabel("pressure head [m]")
+        axis.plot(grid, self.observations, color="cyan", label="measurement")
+        axis.plot(x_all[0], quartiles.take([0, 1], axis=0).transpose(), color="black", linestyle='dashed',
+                 linewidth=0.75, label="0.05,0.95 quantile")
+
+    def plot_temporal_hist_add_sample(self, fig, axis, grid, sample, label, color=None):
+
+        if color is None:
+            color = "red"
+        MAX = 366
+        grid_interp = np.arange(MAX)
+        obs_vec = np.interp(grid_interp, grid, sample.observations())
+        axis.plot(grid_interp, obs_vec, color=color, linestyle='solid', linewidth=1, label=label)
+
     def plot_observe_slice_ij(self, axis, idp1, idp2, values=None):
         xx = self.raw_data.parameters[:, idp1]
         yy = self.raw_data.parameters[:, idp2]

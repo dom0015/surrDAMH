@@ -334,6 +334,8 @@ for i in range(no_stages):
 # plt.colorbar()
 # plt.savefig(visualization_dir + "/noise_cov.pdf",bbox_inches="tight")
 
+axis_range = {"V1": [[0, 366], [200, 900]],
+              "H1": [[0, 366], [-50, 300]]}
 pressure_boreholes = conf["observe_points"]
 print("observe points:", pressure_boreholes)
 N = len(pressure_boreholes)
@@ -343,9 +345,23 @@ for i in range(N):
     noise_model = noise_model_list[i]
     time_grid = np.array(noise_model["time_grid"])
     offsets = noise_model["range"]
-    S.hist_G_TSX(raw_data_dir, no_parameters, time_grid, observations, np.arange(*offsets), chains_disp)
-    plt.title(pressure_boreholes[i])
-    plt.savefig(visualization_dir + "/hist_G" + str(i+1) + ".pdf",bbox_inches="tight")
+
+    fig, axis = plt.subplots(1, 1, figsize=(6, 6))
+    visual_accepted.plot_temporal_hist(fig, axis, time_grid, np.arange(*offsets), axis_range[pressure_boreholes[i]])
+    visual_accepted.plot_temporal_hist_add_sample(fig, axis, time_grid,
+                                                  bestfit_L2, "best fit ($L^2$)", color="red")
+    visual_accepted.plot_temporal_hist_add_sample(fig, axis, time_grid,
+                                                  bestfit_LH, "best fit (likelihood)", color="pink")
+    axis.set_title(pressure_boreholes[i])
+
+    handles, labels = plt.gca().get_legend_handles_labels()
+    by_label = dict(zip(labels, handles))
+    plt.legend(by_label.values(), by_label.keys(), loc='upper right')
+    fig.savefig(os.path.join(visualization_dir, "hist_" + pressure_boreholes[i] + ".pdf"), bbox_inches="tight")
+
+    # S.hist_G_TSX(raw_data_dir, no_parameters, time_grid, observations, np.arange(*offsets), chains_disp)
+    # plt.title(pressure_boreholes[i])
+    # plt.savefig(visualization_dir + "/hist_G" + str(i+1) + ".pdf",bbox_inches="tight")
 
 S.show_non_converging(raw_data_dir, no_parameters)
 plt.savefig(visualization_dir + "/non_converging.png",bbox_inches="tight")
