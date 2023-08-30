@@ -18,6 +18,17 @@ from surrDAMH.modules.raw_data import Sample, RawData
 import matplotlib.pyplot as plt
 import numpy as np
 
+#
+import matplotlib.pylab as pylab
+params = {'font.size': 12,
+         'legend.fontsize': 'large',
+         'axes.labelsize': 'large',
+         'axes.titlesize':'x-large',
+         'xtick.labelsize':'medium',
+         'ytick.labelsize':'medium'}
+pylab.rcParams.update(params)
+
+
 no_samplers = int(sys.argv[1]) # number of MH/DAMH chains
 conf_path = sys.argv[2]
 basename = os.path.basename(conf_path)
