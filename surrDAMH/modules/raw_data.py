@@ -94,7 +94,9 @@ class RawData:
             chains = chain * np.ones(len(types), dtype=np.int8)
 
             parameters = np.array(df_samples.iloc[:, 1:1 + no_parameters])
-            tags = np.array(df_samples.iloc[:, 1 + no_parameters])
+            # tags = np.array(df_samples.iloc[:, 1 + no_parameters])
+            # fix problem with -1 saved as max(uint)
+            tags = np.array(df_samples.iloc[:, 1 + no_parameters].map({0: 0, 1: 1}).fillna(-1), dtype=np.int8)
             observation = np.array(df_samples.iloc[:, 2 + no_parameters:])
 
             self.types = np.append(self.types, idx)
@@ -125,6 +127,7 @@ class RawData:
         print("raw data: no_chains", self.no_chains)
         print("raw data: no_samples", self.no_samples)
         print("raw data: no_nonconverging", np.shape(self.types[self.tags < 0])[0])
+        print("raw data: present tags", np.unique(self.tags))
 
         print("raw data: p", np.shape(self.parameters))
         print("raw data: w", np.shape(self.weights))
@@ -142,23 +145,25 @@ class RawData:
     def no_observations(self):
         return np.shape(self.observations)[1]
 
-    def filter(self, types, stages):
+    def filter(self, types, stages, tags):
         idx = np.zeros(len(self.types), dtype=bool)
 
         for t in types:
             for s in stages:
-                idx[(self.types == t)*(self.stages == s)] = 1
+                idx[(self.types == t)*(self.stages == s)*(self.tags == tags)] = 1
 
         raw_data = RawData()
         raw_data.types = self.types[idx]
         raw_data.stages = self.stages[idx]
         raw_data.chains = self.chains[idx]
+        raw_data.tags = self.tags[idx]
         raw_data.parameters = self.parameters[idx]
         raw_data.observations = self.observations[idx]
         raw_data.weights = self.weights[idx]
 
         raw_data.no_samples = np.shape(raw_data.types)[0]
         raw_data.no_stages = len(stages)
+        raw_data.no_chains = self.no_chains
 
         print("filter raw data: p", np.shape(raw_data.parameters))
         return raw_data

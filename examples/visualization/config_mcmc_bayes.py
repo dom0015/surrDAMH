@@ -111,8 +111,8 @@ except Exception as err:
 raw_data = RawData()
 raw_data.load(output_dir, no_parameters, len(observations))
 # type: 0-accepted, 1-prerejected, 2-rejected
-raw_data_filtered = raw_data.filter(types=[0,2], stages=range(no_stages+1))
-raw_data_accepted = raw_data.filter(types=[0], stages=range(0,no_stages+1))
+raw_data_filtered = raw_data.filter(types=[0,2], stages=range(no_stages+1), tags=[1])
+raw_data_accepted = raw_data.filter(types=[0], stages=range(0,no_stages+1), tags=[1])
 
 analysis_pe = Analysis(config=conf, raw_data=raw_data_filtered)
 # bestfit_L2, bestfit_L2_norm = analysis_pe.find_best_fit(observations, norm="L2")
@@ -301,7 +301,7 @@ time_axis = conf["noise_model"][0]["time_grid"]
 # plt.grid()
 # plt.savefig(visualization_dir + "/observations.pdf",bbox_inches="tight")
 
-raw_data_accepted_s1p = raw_data.filter(types=[0], stages=range(1,no_stages+1))
+raw_data_accepted_s1p = raw_data.filter(types=[0], stages=range(1,no_stages+1), tags=[1])
 # print(raw_data_accepted_s1p.weights)
 analysis_pe_accepted = Analysis(config=conf, raw_data=raw_data_accepted_s1p)
 estimated_distributions = analysis_pe_accepted.estimate_distributions(
@@ -313,7 +313,7 @@ with open(os.path.join(output_dir, "output.yaml"), 'w') as f:
 
 print("2D parameter space histograms...")
 for i in range(no_stages):
-    raw_data_accepted = raw_data.filter(types=[0], stages=[i])
+    raw_data_accepted = raw_data.filter(types=[0], stages=[i], tags=[1])
     temp_vis = Visualization(config=conf, raw_data=raw_data_accepted)
     fig, axes = temp_vis.create_plot_grid()
     temp_vis.plot_hist_grid(fig=fig, axes=axes, bins1d=15, bins2d=20, c_1d="tab:blue", cmap_2d=plt.cm.binary)
