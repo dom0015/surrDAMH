@@ -20,6 +20,16 @@ class Analysis:
         for i,p in enumerate(self.par_names_latex):
             self.par_names_latex[i] = p.replace('_', '\_')
 
+    def sampling_count(self):
+        counts = np.zeros((self.raw_data.no_stages, self.raw_data.no_chains, 3), dtype=int)
+        for i in range(self.raw_data.no_stages):
+            for j in range(self.raw_data.no_chains):
+                N_acc = np.sum((self.raw_data.types == 0)*(self.raw_data.stages == i)*(self.raw_data.chains == j))
+                N_pr = np.sum((self.raw_data.types == 1)*(self.raw_data.stages == i)*(self.raw_data.chains == j))
+                N_r = np.sum((self.raw_data.types == 2)*(self.raw_data.stages == i)*(self.raw_data.chains == j))
+                counts[i,j,:] = [N_acc, N_pr, N_r]
+        return counts
+
     def compute_L2_norms(self, observations):
         diff2 = np.square(self.raw_data.observations - observations)
         G_norm = np.sqrt(np.sum(diff2, axis=1))

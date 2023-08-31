@@ -68,17 +68,6 @@ try:
     S.calculate_properties()
     S.load_MH_with_posterior(output_dir,no_parameters)
     output_dict = S.get_properties(no_samplers)
-    title = ",".join([str(i) for i in S.notes[0].columns.values])
-    for idx, d in enumerate(output_dict["samplers_list"]):
-        count_list = np.array(S.notes[idx].values.tolist())
-        count_list = count_list.sum(axis=0)
-
-        d[title] = S.notes[idx].values.tolist()
-        d["acceptance ratio [a/r, a/all]"] = np.array(
-            [count_list[0] / count_list[1], count_list[0] / count_list[3]]).tolist()
-        d["N samples [a, r, pr, all]"] = np.array(
-            [count_list[0], count_list[1], count_list[2], count_list[3]]).tolist()
-        d.update(conf["samplers_list"][idx])
 
     mode = S.find_modus()
     print("Mode:", *mode)
@@ -101,15 +90,22 @@ except Exception as err:
     output_dict={}
     print(err)
 
-# output_file = os.path.join(output_dir, "output.txt")
-# sys.stdout = open(output_file, "w")
-
-#samplers_list = conf["samplers_list"]
-
 
 
 raw_data = RawData()
 raw_data.load(output_dir, no_parameters, len(observations))
+
+analysis_all = Analysis(config=conf, raw_data=raw_data)
+count_list = analysis_all.sampling_count()
+Ns = count_list.sum(axis=1)
+for idx, d in enumerate(output_dict["samplers_list"]):
+    d["a, pr, r"] = count_list[idx].tolist()
+    d["acceptance ratio [a/r, a/all]"] = np.array(
+        [Ns[idx,0] / Ns[idx,2], Ns[idx,0] / np.sum(Ns[idx])]).tolist()
+    d["N samples [a, r, pr, all]"] = np.array(
+        [Ns[idx,0], Ns[idx,2], Ns[idx,1], np.sum(Ns[idx])]).tolist()
+    d.update(conf["samplers_list"][idx])
+
 # type: 0-accepted, 1-prerejected, 2-rejected
 raw_data_filtered = raw_data.filter(types=[0,2], stages=range(no_stages+1), tags=[1])
 raw_data_accepted = raw_data.filter(types=[0], stages=range(0,no_stages+1), tags=[1])
