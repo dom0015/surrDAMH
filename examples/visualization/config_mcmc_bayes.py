@@ -83,6 +83,20 @@ try:
     mode = S.find_modus()
     print("Mode:", *mode)
     output_dict["mode"] = mode[0].tolist()
+
+    S.show_non_converging(raw_data_dir, no_parameters)
+    plt.savefig(visualization_dir + "/non_converging.png", bbox_inches="tight")
+
+    ### SAMPLES VISUALIZATION:
+    for i in range(no_stages):
+        chains_disp = range(i * no_samplers, (i + 1) * no_samplers)
+
+        S.plot_segment(chains_disp=chains_disp, scale=scale)
+        plt.savefig(visualization_dir + "/chains" + str(i) + ".pdf", bbox_inches="tight")
+        S.plot_average(chains_disp=chains_disp, scale=scale)
+        plt.savefig(visualization_dir + "/average" + str(i) + ".pdf", bbox_inches="tight")
+        # S.plot_dots(chains_disp=chains_disp, scale=scale)
+        # plt.savefig(visualization_dir + "/dots" +str(i)+ ".pdf",bbox_inches="tight")
 except Exception as err:
     output_dict={}
     print(err)
@@ -101,7 +115,6 @@ raw_data_filtered = raw_data.filter(types=[0,2], stages=range(no_stages+1))
 raw_data_accepted = raw_data.filter(types=[0], stages=range(0,no_stages+1))
 
 analysis_pe = Analysis(config=conf, raw_data=raw_data_filtered)
-# fit_L2_x, fit_L2_G, fit_L2_norm = S.find_best_fit(raw_data_dir, no_parameters, observations)
 # bestfit_L2, bestfit_L2_norm = analysis_pe.find_best_fit(observations, norm="L2")
 fits, norms = analysis_pe.find_n_best_fits(observations, count=20, norm="L2")
 bestfit_L2 = fits[0]
@@ -121,6 +134,10 @@ print(" - OBSERVATIONS:", bestfit_L2.observations())
 
 from surrDAMH.modules import Gaussian_process
 noise_cov = Gaussian_process.assemble_covariance_matrix(conf["noise_model"])
+# plt.figure()
+# plt.imshow(noise_cov)
+# plt.colorbar()
+# plt.savefig(visualization_dir + "/noise_cov.pdf",bbox_inches="tight")
 
 # bestfit_LH, bestfit_LH_norm = analysis_pe.find_best_fit(observations, norm="likelihood", noise_cov=noise_cov)
 fits, norms = analysis_pe.find_n_best_fits(observations, count=20, norm="likelihood", noise_cov=noise_cov)
@@ -138,7 +155,7 @@ print('BEST FIT (LikelyHood)')
 print(" - NORM:", bestfit_LH_norm)
 print(" - PARAMETERS:", bestfit_LH.parameters())
 print(" - OBSERVATIONS:", bestfit_LH.observations())
-
+# exit(0)
 visual = Visualization(conf, raw_data_filtered)
 visual_accepted = Visualization(conf, raw_data_accepted)
 # fig, axes = plt.subplots(1,1)
@@ -153,19 +170,19 @@ visual_accepted = Visualization(conf, raw_data_accepted)
 # slice plot of observe data
 time_axis = conf["noise_model"][0]["time_grid"]
 
-observe_noise_analysis_dir = os.path.join(visualization_dir, "observe_noise_analysis")
-os.makedirs(observe_noise_analysis_dir, mode=0o775, exist_ok=True)
-
-fig, axis = plt.subplots(1, 1, figsize=(15, 15))
-visual_accepted.linear_regression_over_time(fig, axis, list(range(1,len(time_axis))))
-fig.savefig(os.path.join(observe_noise_analysis_dir, "over_time.jpg"))
-plt.close(fig)
-
-fig, axis = plt.subplots(1, 1, figsize=(15, 15))
-counts = np.arange(10,200,10)
-visual_accepted.linear_regression_rsquared(fig, axis, list(range(1,len(time_axis))), counts)
-fig.savefig(os.path.join(observe_noise_analysis_dir, "rsquared.jpg"))
-plt.close(fig)
+# observe_noise_analysis_dir = os.path.join(visualization_dir, "observe_noise_analysis")
+# os.makedirs(observe_noise_analysis_dir, mode=0o775, exist_ok=True)
+#
+# fig, axis = plt.subplots(1, 1, figsize=(15, 15))
+# visual_accepted.linear_regression_over_time(fig, axis, list(range(1,len(time_axis))))
+# fig.savefig(os.path.join(observe_noise_analysis_dir, "over_time.jpg"))
+# plt.close(fig)
+#
+# fig, axis = plt.subplots(1, 1, figsize=(15, 15))
+# counts = np.arange(10,200,10)
+# visual_accepted.linear_regression_rsquared(fig, axis, list(range(1,len(time_axis))), counts)
+# fig.savefig(os.path.join(observe_noise_analysis_dir, "rsquared.jpg"))
+# plt.close(fig)
 
 # for obs_idx in range(len(time_axis)):
 # # for obs_idx in range(12,13):
@@ -177,46 +194,46 @@ plt.close(fig)
 #     plt.close(fig)
 # exit(0)
 
-observe_vs_par_dir = os.path.join(visualization_dir, "observe_vs_par")
-os.makedirs(observe_vs_par_dir, mode=0o775, exist_ok=True)
-for par in range(no_parameters):
-    for obs_idx in range(len(time_axis)):
-        time = time_axis[obs_idx]
-        fig, axis = plt.subplots(1, 1, figsize=(15, 15))
-        visual_accepted.plot_obs_vs_par(fig, axis, par, obs_idx, observations, norm="likelihood", noise_cov=noise_cov)
-        fig.savefig(os.path.join(observe_vs_par_dir, "observe_vs_par_" + str(par) + "_t_" + str(time) + ".jpg"))
-        plt.close(fig)
-
-
-disp_pars = [0,1,4]
-observe_slice_dir = os.path.join(visualization_dir, "observe_slices")
-os.makedirs(observe_slice_dir, mode=0o775, exist_ok=True)
-for obs_idx in range(10,14):
-    time = time_axis[obs_idx]
-    fig, axes = plt.subplots(len(disp_pars), len(disp_pars), figsize=(25, 25))
-    plt.subplots_adjust(wspace=0.5, hspace=0.3)
-    visual.plot_observe_slice(fig, axes, obs_idx, disp_pars)
-    fig.savefig(os.path.join(observe_slice_dir, "observe_slice_" + str(time) + ".jpg"))
-    plt.close(fig)
-
-observe_sensitivity_dir = os.path.join(visualization_dir, "observe_sensitivity")
-os.makedirs(observe_sensitivity_dir, mode=0o775, exist_ok=True)
-for param in range(no_parameters):
-    fig, axis = plt.subplots(1, 1, figsize=(25, 25))
-    obs_idx = 12 # 20 # 6 # 12
-    time = time_axis[obs_idx]
-    visual_accepted.plot_observe_sensitivity(fig, axis, param, obs_idx)
-    fig.savefig(os.path.join(observe_sensitivity_dir, "observe_sensitivity_p" + str(param) + "_" + str(time) + ".jpg"))
-    plt.close(fig)
-
-observe_slice_1d_dir = os.path.join(visualization_dir, "observe_slices_1d")
-os.makedirs(observe_slice_1d_dir, mode=0o775, exist_ok=True)
-for obs_idx in range(len(time_axis)):
-    time = time_axis[obs_idx]
-    fig, axis = plt.subplots(1, 1, figsize=(25, 25))
-    visual.plot_observe_slice_1d(fig, axis, obs_idx)
-    fig.savefig(os.path.join(observe_slice_1d_dir, "observe_slice_1d_" + str(time) + ".jpg"))
-    plt.close(fig)
+# observe_vs_par_dir = os.path.join(visualization_dir, "observe_vs_par")
+# os.makedirs(observe_vs_par_dir, mode=0o775, exist_ok=True)
+# for par in range(no_parameters):
+#     for obs_idx in range(len(time_axis)):
+#         time = time_axis[obs_idx]
+#         fig, axis = plt.subplots(1, 1, figsize=(15, 15))
+#         visual_accepted.plot_obs_vs_par(fig, axis, par, obs_idx, observations, norm="likelihood", noise_cov=noise_cov)
+#         fig.savefig(os.path.join(observe_vs_par_dir, "observe_vs_par_" + str(par) + "_t_" + str(time) + ".jpg"))
+#         plt.close(fig)
+#
+#
+# disp_pars = [0,1,4]
+# observe_slice_dir = os.path.join(visualization_dir, "observe_slices")
+# os.makedirs(observe_slice_dir, mode=0o775, exist_ok=True)
+# for obs_idx in range(10,14):
+#     time = time_axis[obs_idx]
+#     fig, axes = plt.subplots(len(disp_pars), len(disp_pars), figsize=(25, 25))
+#     plt.subplots_adjust(wspace=0.5, hspace=0.3)
+#     visual.plot_observe_slice(fig, axes, obs_idx, disp_pars)
+#     fig.savefig(os.path.join(observe_slice_dir, "observe_slice_" + str(time) + ".jpg"))
+#     plt.close(fig)
+#
+# observe_sensitivity_dir = os.path.join(visualization_dir, "observe_sensitivity")
+# os.makedirs(observe_sensitivity_dir, mode=0o775, exist_ok=True)
+# for param in range(no_parameters):
+#     fig, axis = plt.subplots(1, 1, figsize=(25, 25))
+#     obs_idx = 12 # 20 # 6 # 12
+#     time = time_axis[obs_idx]
+#     visual_accepted.plot_observe_sensitivity(fig, axis, param, obs_idx)
+#     fig.savefig(os.path.join(observe_sensitivity_dir, "observe_sensitivity_p" + str(param) + "_" + str(time) + ".jpg"))
+#     plt.close(fig)
+#
+# observe_slice_1d_dir = os.path.join(visualization_dir, "observe_slices_1d")
+# os.makedirs(observe_slice_1d_dir, mode=0o775, exist_ok=True)
+# for obs_idx in range(len(time_axis)):
+#     time = time_axis[obs_idx]
+#     fig, axis = plt.subplots(1, 1, figsize=(25, 25))
+#     visual.plot_observe_slice_1d(fig, axis, obs_idx)
+#     fig.savefig(os.path.join(observe_slice_1d_dir, "observe_slice_1d_" + str(time) + ".jpg"))
+#     plt.close(fig)
 
 # exit(0)
 
@@ -290,52 +307,27 @@ analysis_pe_accepted = Analysis(config=conf, raw_data=raw_data_accepted_s1p)
 estimated_distributions = analysis_pe_accepted.estimate_distributions(
                 output_file=os.path.join(visualization_dir, "parameters2.csv"))
 print(estimated_distributions)
+output_dict["estimated_distributions"] = estimated_distributions
+with open(os.path.join(output_dir, "output.yaml"), 'w') as f:
+    yaml.dump(output_dict, f, default_flow_style=None)
 
-# collecting samples in the same way as SB does in hist_G_TSX
-# estimated_distributions = S.estimate_distributions(raw_data_dir, transformations,
-#                                                    chains_disp=chains_disp,
-#                                                    output_file=os.path.join(visualization_dir, "parameters.csv"))
-# print(estimated_distributions)
-
-
+print("2D parameter space histograms...")
 for i in range(no_stages):
     raw_data_accepted = raw_data.filter(types=[0], stages=[i])
     temp_vis = Visualization(config=conf, raw_data=raw_data_accepted)
     fig, axes = temp_vis.create_plot_grid()
     temp_vis.plot_hist_grid(fig=fig, axes=axes, bins1d=15, bins2d=20, c_1d="tab:blue", cmap_2d=plt.cm.binary)
-    temp_vis.plot_hist_grid_add_sample(fig=fig, axes=axes, sample=bestfit_L2, color="Red")
-    temp_vis.plot_hist_grid_add_sample(fig=fig, axes=axes, sample=bestfit_LH, color="DeepSkyBlue")
+    # temp_vis.plot_hist_grid_add_sample(fig=fig, axes=axes, sample=bestfit_L2, color="Red")
+    # temp_vis.plot_hist_grid_add_sample(fig=fig, axes=axes, sample=bestfit_LH, color="DeepSkyBlue")
+    # temp_vis.plot_hist_grid_add_sample(fig=fig, axes=axes, sample=bestfit_LH, color="Red")
     temp_vis.adjust_plot_grid_axes(no_parameters, axes)
     fig.savefig(visualization_dir + "/histograms_s" + str(i) + ".pdf", bbox_inches="tight")
 
-print("HISTOGRAMS")
-### SAMPLES VISUALIZATION:
-for i in range(no_stages):
-    chains_disp=range(i*no_samplers,(i+1)*no_samplers)
-
-    fig, axes = S.plot_hist_grid(par_names=par_names, chains_disp=chains_disp, bins1d=15, bins2d=20, scale=scale)
-    S.plot_hist_grid_add(axes, transformations, estimated_distributions, chains_disp=chains_disp, scale=scale)
-    fig.savefig(visualization_dir + "/histograms" +str(i)+ ".pdf",bbox_inches="tight")
-
-    S.plot_segment(chains_disp=chains_disp,scale=scale)
-    plt.savefig(visualization_dir + "/chains" +str(i)+ ".pdf",bbox_inches="tight")
-    S.plot_average(chains_disp=chains_disp,scale=scale)
-    plt.savefig(visualization_dir + "/average" +str(i)+ ".pdf",bbox_inches="tight")
-    # S.plot_dots(chains_disp=chains_disp, scale=scale)
-    # plt.savefig(visualization_dir + "/dots" +str(i)+ ".pdf",bbox_inches="tight")
-
-# chains_disp=range(20,60)
-# S.plot_hist_grid(chains_disp=chains_disp, bins1d=10, bins2d=20, scale=scale)
-# S.plot_hist_grid_add(transformations,chains_disp=chains_disp, scale=scale)
-# plt.savefig(visualization_dir + "/histograms2_3.pdf",bbox_inches="tight")
-
-# plt.figure()
-# plt.imshow(noise_cov)
-# plt.colorbar()
-# plt.savefig(visualization_dir + "/noise_cov.pdf",bbox_inches="tight")
-
+print("temporal histograms...")
 axis_range = {"V1": [[0, 366], [200, 900]],
-              "H1": [[0, 366], [-50, 300]]}
+              "V2": [[0, 366], [200, 900]],
+              "H1": [[0, 366], [-50, 300]],
+              "H2": [[0, 366], [100, 400]]}
 pressure_boreholes = conf["observe_points"]
 print("observe points:", pressure_boreholes)
 N = len(pressure_boreholes)
@@ -358,14 +350,3 @@ for i in range(N):
     by_label = dict(zip(labels, handles))
     plt.legend(by_label.values(), by_label.keys(), loc='upper right')
     fig.savefig(os.path.join(visualization_dir, "hist_" + pressure_boreholes[i] + ".pdf"), bbox_inches="tight")
-
-    # S.hist_G_TSX(raw_data_dir, no_parameters, time_grid, observations, np.arange(*offsets), chains_disp)
-    # plt.title(pressure_boreholes[i])
-    # plt.savefig(visualization_dir + "/hist_G" + str(i+1) + ".pdf",bbox_inches="tight")
-
-S.show_non_converging(raw_data_dir, no_parameters)
-plt.savefig(visualization_dir + "/non_converging.png",bbox_inches="tight")
-
-output_dict["estimated_distributions"] = estimated_distributions
-with open(os.path.join(output_dir, "output.yaml"), 'w') as f:
-    yaml.dump(output_dict, f, default_flow_style=None)
