@@ -78,7 +78,7 @@ else:
 # print(sys.path)
 
 import sys
-sys.path.append("/home/domesova/GIT/Endorse-2Dtest-Bayes/surrDAMH")
+# sys.path.append("/home/domesova/GIT/Endorse-2Dtest-Bayes/surrDAMH")
 print(command)
 os.system(command)
 

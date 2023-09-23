@@ -19,7 +19,7 @@ comm_world = MPI.COMM_WORLD
 rank_world = comm_world.Get_rank()
 size_world = comm_world.Get_size()
 
-comm_sampler = comm_world.Split(color=2, key=rank_world)
+# comm_sampler = comm_world.Split(color=2, key=rank_world)
 
 # print(rank_world,size_world)
 no_samplers, problem_path = comm_world.recv(source=MPI.ANY_SOURCE, tag=100)

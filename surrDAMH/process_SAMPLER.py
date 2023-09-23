@@ -17,7 +17,7 @@ comm_world = MPI.COMM_WORLD
 rank_world = comm_world.Get_rank()
 size_world = comm_world.Get_size()
 
-comm_sampler = comm_world.Split(color=0, key=rank_world)
+# comm_sampler = comm_world.Split(color=0, key=rank_world)
 
 no_samplers, problem_path = comm_world.recv(source=MPI.ANY_SOURCE, tag=100)
 comm_world.Barrier() # barrier probably not necessary when send/recv paired by tag=100

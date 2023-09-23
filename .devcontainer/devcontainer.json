@@ -1,0 +1,30 @@
+{
+    "name": "MPI4PY env",
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-python.python",
+                "ms-toolsai.jupyter",
+                "mhutchie.git-graph",
+                "oderwat.indent-rainbow",
+                "visualstudioexptteam.vscodeintellicode",
+                "grapecity.gc-excelviewer",
+                "tomoki1207.pdf",
+                "ms-toolsai.jupyter-keymap"
+            ]
+        },
+        "codespaces": {
+            // "openFiles": [""]
+        }
+    },
+    "build": {
+        "dockerfile": "Dockerfile"
+        // Update VARIANT to pick a specific R version: 4, 4.1, 4.0
+        // More info: https://github.com/rocker-org/devcontainer-images/pkgs/container/devcontainer%2Ftidyverse
+    }
+    // Install Dev Container Features. More info: https://containers.dev/features
+    // Forward Jupyter and RStudio ports
+    // Use 'postAttachCommand' to run commands after the container is started.
+    // Uncomment to connect as root instead. More info: https://aka.ms/dev-containers-non-root
+    // "remoteUser": "root"
+}
