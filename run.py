@@ -12,7 +12,7 @@ Args:
     N (int): number of SAMPLERs (MPI processes running MH algorithms)
     output_dir: path to folder for storing output data (samples etc.)
 Example:
-    python3 run.py examples/simple.json 4 test_dir oversubscribe
+    python3 run.py examples/simple.json 4 output_dir oversubscribe
 """
 
 # DEFAULT PARAMETERS:

@@ -7,121 +7,117 @@ Created on Wed Jan 22 10:15:50 2020
 """
 
 import numpy as np
+import numpy.typing as npt
+from surrDAMH.modules.surrogate import Trainer, Evaluator
 
 
-class Surrogate_apply:  # initiated by all SAMPLERs
-    def __init__(self, no_parameters, no_observations):
+class PolynomialEvaluator(Evaluator):
+    def __init__(self, no_parameters: int, hermite_coefs: npt.NDArray, poly: npt.NDArray, no_poly: int, system_result: npt.NDArray) -> None:
         self.no_parameters = no_parameters
-        self.no_observations = no_observations
-        self.current_degree = 1
-        self.on_degree_change()
+        self.hermite_coefs = hermite_coefs
+        self.poly = poly
+        self.no_poly = no_poly
+        self.coefficients_matrix = system_result
 
-    def apply(self, SOL, datapoints):
-        MAT, degree = SOL  # current surr. model to be evaluated in datapoints
+    def __call__(self, datapoints):
+        # evaluates the surrogate model in datapoints
         datapoints = datapoints.reshape(-1, self.no_parameters)
         no_datapoints = datapoints.shape[0]
-        if degree > self.current_degree:
-            self.current_degree = degree
-            self.on_degree_change()
-        hermite_eval = poly_eval_multi(self.hermite, datapoints)
-        PHI = np.ones((no_datapoints, self.no_poly))
+        hermite_evaluations = evaluate_polynomials(self.hermite_coefs, datapoints)
+        products = np.ones((no_datapoints, self.no_poly))
         for j in range(self.no_parameters):
-            PHI *= hermite_eval[:, j, self.poly[:, j]]
-        GS_datapoints = np.matmul(PHI, MAT)
-        return GS_datapoints
-
-    def on_degree_change(self):
-        self.poly = generate_polynomials_degree(
-            self.no_parameters, self.current_degree)
-        self.no_poly = self.poly.shape[0]
-        self.hermite = hermite_poly_normalized(self.current_degree)
+            products *= hermite_evaluations[:, j, self.poly[:, j]]
+        evaluations = np.matmul(products, self.coefficients_matrix)
+        return evaluations
 
 
-class Surrogate_update:  # initiated by COLLECTOR
-    def __init__(self, no_parameters, no_observations, max_degree=5):
+class PolynomialTrainer(Trainer):  # initiated by COLLECTOR
+    def __init__(self, no_parameters, no_observations, max_degree=5, solver="pinv"):
         self.no_parameters = no_parameters
         self.no_observations = no_observations
         self.max_degree = max_degree
-        # all processed data (used for surrogate construction):
+        self.solver = solver
+        # processed data (used for surrogate model construction):
         self.processed_par = np.empty((0, self.no_parameters))
         self.processed_obs = np.empty((0, self.no_observations))
         self.processed_wei = np.empty((0, 1))
-        self.no_processed = self.processed_par.shape[0]
-        # all data not yet used for surrogate construction:
-        self.non_processed_par = np.empty((0, self.no_parameters))
-        self.non_processed_obs = np.empty((0, self.no_observations))
-        self.non_processed_wei = np.empty((0, 1))
+        # self.no_processed = self.processed_par.shape[0]
+        # data not yet used for surrogate construction:
+        self.new_par = np.empty((0, self.no_parameters))
+        self.new_obs = np.empty((0, self.no_observations))
+        self.new_wei = np.empty((0, 1))
+        self.no_processed = 0
+        self.no_snapshots = 0
         self.current_degree = 1
         self.on_degree_change()
 
-    def add_data(self, snapshots):
-        # add new data to a matrix of non-processed data
-        L = len(snapshots)
-        new_par = np.empty((L, self.no_parameters))
-        new_obs = np.empty((L, self.no_observations))
-        new_wei = np.empty((L, 1))
-        for i in range(L):
-            new_par[i, :] = snapshots[i].sample
-            new_obs[i, :] = snapshots[i].G_sample
-            new_wei[i, :] = 1
-        self.non_processed_par = np.vstack((self.non_processed_par, new_par))
-        self.non_processed_obs = np.vstack((self.non_processed_obs, new_obs))
-        self.non_processed_wei = np.vstack((self.non_processed_wei, new_wei))
+    def add_data(self, parameters, observations, weights=None):
+        # add new data to matrices of non-processed data
+        # TODO: polynomial surrogate weights
+        weights = None  # ALL WEIGHTS WILL BE SET TO ONES
+        parameters = parameters.reshape(-1, self.no_parameters)
+        observations = observations.reshape(-1, self.no_observations)
 
-    def update(self):
-        no_non_processed = self.non_processed_par.shape[0]
+        if weights is None:
+            no_new_snapshots = parameters.shape[0]
+            weights = np.ones((no_new_snapshots, 1))
+        self.new_par = np.vstack((self.new_par, parameters))
+        self.new_obs = np.vstack((self.new_obs, observations))
+        self.new_wei = np.vstack((self.new_wei, weights))
+
+    def get_evaluator(self):
+        no_non_processed = self.new_par.shape[0]
         # both processed and non-processed
-        no_snapshots = self.no_processed + no_non_processed
-        degree = int(np.floor(np.log(no_snapshots)/np.log(self.no_parameters)))
+        self.no_snapshots += no_non_processed
+        # TODO: polynomial degree formula
+        degree = int(np.floor(np.log(self.no_snapshots)/np.log(self.no_parameters)))
         degree = min(degree, self.max_degree)
         if degree > self.current_degree:
             self.current_degree = degree
-            self.on_degree_change()
-        PHI_non_processed = np.ones((no_non_processed, self.no_poly))
-        hermite_eval = poly_eval_multi(self.hermite, self.non_processed_par)
+            self.on_degree_change()  # recalculates self.products_weighted
+        products_new = np.ones((no_non_processed, self.no_poly))
+        hermite_eval = evaluate_polynomials(self.hermite_coefs, self.new_par)
         for j in range(self.no_parameters):
-            PHI_non_processed *= hermite_eval[:, j, self.poly[:, j]]
-        PHI_non_processed_wei = PHI_non_processed * self.non_processed_wei
+            products_new *= hermite_eval[:, j, self.poly[:, j]]
+        products_new_weighted = products_new * self.new_wei
 
-        self.processed_par = np.vstack(
-            (self.processed_par, self.non_processed_par))
-        self.processed_obs = np.vstack(
-            (self.processed_obs, self.non_processed_obs))
-        self.processed_wei = np.vstack(
-            (self.processed_wei, self.non_processed_wei))
-        self.PHI_processed = np.vstack((self.PHI_processed, PHI_non_processed))
-        self.PHI_processed_wei = np.vstack(
-            (self.PHI_processed_wei, PHI_non_processed_wei))
         self.no_processed += no_non_processed
+        self.processed_par = np.vstack((self.processed_par, self.new_par))
+        self.processed_obs = np.vstack((self.processed_obs, self.new_obs))
+        self.processed_wei = np.vstack((self.processed_wei, self.new_wei))
+        self.products = np.vstack((self.products, products_new))
+        self.products_weighted = np.vstack((self.products_weighted, products_new_weighted))
 
-        self.non_processed_par = np.empty((0, self.no_parameters))
-        self.non_processed_obs = np.empty((0, self.no_observations))
-        self.non_processed_wei = np.empty((0, 1))
+        self.new_par = np.empty((0, self.no_parameters))
+        self.new_obs = np.empty((0, self.no_observations))
+        self.new_wei = np.empty((0, 1))
 
-        A = np.matmul(self.PHI_processed_wei.transpose(), self.PHI_processed)
-        RHS = np.matmul(self.PHI_processed_wei.transpose(), self.processed_obs)
+        system_matrix = np.matmul(self.products_weighted.transpose(), self.products)
+        system_rhs = np.matmul(self.products_weighted.transpose(), self.processed_obs)
         # shape (no_poly,no_observations)
-        MAT = np.matmul(np.linalg.pinv(A), RHS)
-        SOL = [MAT, self.current_degree]
-        return SOL, no_snapshots
+        if self.solver == "pinv":
+            system_result = np.matmul(np.linalg.pinv(system_matrix), system_rhs)
+        else:
+            system_result = np.linalg.solve(system_matrix, system_rhs)
+        return PolynomialEvaluator(self.no_parameters, self.hermite_coefs.copy(), self.poly.copy(), self.no_poly, system_result)
 
     def on_degree_change(self):
-        self.poly = generate_polynomials_degree(
-            self.no_parameters, self.current_degree)
+        # TODO: reuse previous degree (old self.products)
+        self.poly = generate_polynomials(self.no_parameters, self.current_degree)
         self.no_poly = self.poly.shape[0]
-        self.hermite = hermite_poly_normalized(self.current_degree)
+        self.hermite_coefs = calculate_hermite_coefs(self.current_degree)
 
-        self.PHI_processed = np.ones((self.no_processed, self.no_poly))
-        hermite_eval = poly_eval_multi(self.hermite, self.processed_par)
+        self.products = np.ones((self.no_processed, self.no_poly))
+        hermite_eval = evaluate_polynomials(self.hermite_coefs, self.processed_par)
         for j in range(self.no_parameters):
-            self.PHI_processed *= hermite_eval[:, j, self.poly[:, j]]
+            self.products *= hermite_eval[:, j, self.poly[:, j]]
 
-        self.PHI_processed_wei = (self.PHI_processed * self.processed_wei)
-        print("SURROGATE polynomial degree increased to:",
-              self.current_degree, "- no poly:", self.no_poly)
+        self.products_weighted = (self.products * self.processed_wei)
+        print("SURROGATE: polynomial degree increased to",
+              self.current_degree, "i.e.", self.no_poly, "polynomials")
 
 
-def generate_polynomials_degree(dim, degree):
+def generate_polynomials(dim, degree):
     poly = np.zeros([1, dim], dtype=int)
 
     if degree == 0:
@@ -145,36 +141,24 @@ def generate_polynomials_degree(dim, degree):
     return poly
 
 
-def hermite_poly_normalized(degree):
+def calculate_hermite_coefs(degree):
+    # coefficients of normalized Hermite polynomials
     n = degree + 1
-    H = np.zeros((n, n))
-    H[0, 0] = 1
+    coefs = np.zeros((n, n))
+    coefs[0, 0] = 1
     if degree == 0:
-        return H
-    H[1, 1] = 1
+        return coefs
+    coefs[1, 1] = 1
     diff = np.arange(1, n)
     for i in range(2, n):
-        H[i, 1:] += H[i-1, :-1]
-        H[i, :-1] -= diff*H[i-1, 1:]
+        coefs[i, 1:] += coefs[i-1, :-1]
+        coefs[i, :-1] -= diff*coefs[i-1, 1:]
     for i in range(n):
-        H[i, :] = np.divide(H[i, :], np.sqrt(np.math.factorial(i)))
-    return H
+        coefs[i, :] = np.divide(coefs[i, :], np.sqrt(np.math.factorial(i)))
+    return coefs
 
 
-def poly_eval(p, points):
-    # p ... coefficients of univariate polynomial
-    # points ... points of evaluation, shape (n,)
-    n = p.size
-    values = np.zeros(points.size)
-    temp = np.ones(points.shape)
-    values += p[0]
-    for i in range(1, n):
-        temp = temp*points
-        values += temp*p[i]
-    return values
-
-
-def poly_eval_multi(p, points):
+def evaluate_polynomials(p, points):
     # p ... each row = coefficients of univariate polynomial
     # points ... points of evaluation, shape (n1,n2)
     no_polynomials, n = p.shape

@@ -1,0 +1,22 @@
+TODO
+
+Spuštění pomocí "python3 run.py simple_MPI 4 test_dir oversubscribe"
+- podívat se na spouštění v Endorse
+- počet samplerů do konfiguračního souboru?
+- oversubscribe - taky do konfiguračního souboru? yes/no
+- visualize? - nazvat spíše post-processing
+- umožnit samplování a vizualizaci dohromady, nebo úplně oddělit
+    - lepší oddělit, zachovat pouze vizualizaci do souboru
+
+Testování:
+- seznam příkladů typu "python3 run.py simple  4 test_dir oversubscribe"
+- dílčí testovací skripty
+- funkčnost zvenčí jako knihovna
+
+Obecné:
+- komentovat!
+- type hints
+- doc string
+- zrušit např.:
+    sys.path.append(os.getcwd())
+    sys.path.append(os.path.dirname(os.path.abspath(__file__)))

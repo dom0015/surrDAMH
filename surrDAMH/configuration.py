@@ -8,16 +8,14 @@ Created on Sun Feb 28 12:32:40 2021
 
 import os
 import sys
-sys.path.append(os.getcwd())
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+# sys.path.append(os.getcwd())
+# sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 import ruamel.yaml as yaml
 import importlib.util as iu
 from modules import classes_communication
 from modules import Gaussian_process
 from modules import transformations as trans
 import numpy as np
-
-
 
 
 class Configuration:
@@ -27,7 +25,6 @@ class Configuration:
         conf_name, fext = os.path.splitext(basename)
         with open(conf_path) as f:
             conf = yaml.safe_load(f)
-            print(conf)
 
 # PROBLEM PARAMETERS:
         if "problem_name" in conf.keys():
@@ -103,8 +100,8 @@ class Configuration:
                     conf["surrogate_module_name"], conf["surrogate_module_path"])
                 surr = iu.module_from_spec(spec)
                 spec.loader.exec_module(surr)
-            self.surr_solver_init = surr.Surrogate_apply
-            self.surr_updater_init = surr.Surrogate_update
+            # self.surr_solver_init = surr.PolynomialEvaluator
+            self.surr_updater_init = surr.PolynomialTrainer
             self.surr_solver_parameters = {"no_parameters": self.no_parameters,
                                            "no_observations": self.no_observations
                                            }

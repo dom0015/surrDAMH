@@ -157,8 +157,8 @@ class Algorithm_PARENT:
         self.__writer_G.writerow(row)
     
     def __send_to_surrogate__(self, sample, G_sample, weight):
-        snapshot = Snapshot(sample=sample, G_sample=G_sample, weight=weight)
-        self.Surrogate.send_to_data_collector(snapshot)
+        # snapshot = Snapshot(sample=sample, G_sample=G_sample, weight=weight)
+        self.Surrogate.send_to_data_collector([sample, G_sample, weight])
         
     def _empty_function(self,**kw):
         return
@@ -285,7 +285,7 @@ class Algorithm_DAMH(Algorithm_PARENT): # initiated by SAMPLERs
             self.__file_accepted = open(filename, 'w')
             self.__writer_accepted = csv.writer(self.__file_accepted)
         self.Surrogate.send_parameters(self.current_sample)
-        tag,GS_current_sample = self.Surrogate.recv_observations()
+        tag,GS_current_sample = self.Surrogate.recv_observations()        
         self.pre_posterior_current_sample = self.compute_posterior(self.current_sample, GS_current_sample)
         for i in range(self.max_samples):
             self.proposed_sample = self.Proposal.propose_sample(self.current_sample)
@@ -297,6 +297,14 @@ class Algorithm_DAMH(Algorithm_PARENT): # initiated by SAMPLERs
             # TO DO: do not recalculate posterior if GS_current_sample did not change
             self.pre_posterior_current_sample = self.compute_posterior(self.current_sample, GS_current_sample)
             GS_proposed_sample = tmp[1,:]
+
+            """ temporary_ (5 lines) """
+            # self.Solver.send_parameters(self.proposed_sample)
+            # tag, G_proposed_sample = self.Solver.recv_observations()
+            # v = (GS_proposed_sample-G_proposed_sample)/G_proposed_sample
+            # if np.abs(v)>1:
+            #     print("!!!!!!!! TEMP !!!!!!!!", GS_proposed_sample, G_proposed_sample, v)
+
             pre_posterior_proposed_sample = self.compute_posterior(self.proposed_sample, GS_proposed_sample)
             pre_log_ratio = pre_posterior_proposed_sample - self.pre_posterior_current_sample
             """ temporary: (2 lines) """
@@ -436,11 +444,11 @@ class Problem_Gauss: # initiated by SAMPLERs
             return -np.inf
         return self.get_log_likelihood(G_sample) + self.get_log_prior(sample)
     
-class Snapshot:
-    def __init__(self, sample=None, G_sample=None, weight=None):
-        self.sample = sample
-        self.G_sample = G_sample
-        self.weight = weight
+# class Snapshot:
+#     def __init__(self, sample=None, G_sample=None, weight=None):
+#         self.sample = sample
+#         self.G_sample = G_sample
+#         self.weight = weight
         
-    def print(self):
-        print("W:", self.weight, "S:", self.sample, "G:", self.G_sample)
+#     def print(self):
+#         print("W:", self.weight, "S:", self.sample, "G:", self.G_sample)

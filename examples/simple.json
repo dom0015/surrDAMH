@@ -24,14 +24,14 @@
         },
         {
             "type": "DAMH",
-            "max_samples": 1000,
+            "max_samples": 200,
             "time_limit": 60,
             "proposal_std": 1.0,
             "surrogate_is_updated": true
         },
         {
             "type": "DAMH",
-            "max_samples": 50000,
+            "max_samples": 2000,
             "time_limit": 60,
             "proposal_std": 1.0,
             "surrogate_is_updated": false
@@ -39,6 +39,6 @@
     ],
     "surrogate_type": "poly",
     "surr_updater_parameters": {
-        "max_degree": 5
+        "max_degree": 10
     }
 }
