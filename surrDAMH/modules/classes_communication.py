@@ -140,7 +140,7 @@ class Solver_local_collector_MPI:  # initiated by SAMPLERs
         # self.computation_in_progress_ = True
 
     def recv_observations(self, ):
-        # if self.solver_data[self.solver_data_idx] == None:
+        # if self.solver_data[self.solver_data_idx] is None:
         #     r = self.request_recv.wait()
         #     self.solver_data_iterator += 1
         #     self.solver_data[1 - self.solver_data_idx] = r

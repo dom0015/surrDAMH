@@ -11,7 +11,7 @@ import numpy as np
 import sys
 from configuration import Configuration
 
-assert(len(sys.argv) == 5)
+assert (len(sys.argv) == 5)
 no_samplers = int(sys.argv[1])
 problem_path = sys.argv[2]
 solver_id = int(sys.argv[3])
@@ -33,16 +33,16 @@ solver_instance = C.child_solver_init(**constructor_parameters)
 # parameters are broadcasted by parent
 # methods "set_parameters" and "get_observations" are called by all ranks
 # observation are sent to parent by rank 0
-#received_data = np.empty((solver_instance.no_parameters,),dtype='float64')
-received_data = np.empty(C.no_parameters,dtype='d')
-#tag = np.empty((1,),dtype=int);
+# received_data = np.empty((solver_instance.no_parameters,),dtype='float64')
+received_data = np.empty(C.no_parameters, dtype='d')
+# tag = np.empty((1,),dtype=int);
 tag = np.array(0, dtype='i')
 solver_is_active = True
 counter = 0
 while solver_is_active:
-    #parent_comm.Barrier()
+    # parent_comm.Barrier()
     parent_comm.Bcast([tag, MPI.INT], root=0)
-    #if tag[0] == 0:
+    # if tag[0] == 0:
     if tag == 0:
         parent_comm.Barrier()
         parent_comm.Disconnect()
@@ -54,16 +54,16 @@ while solver_is_active:
         # print("TRANS: ", transformed_data)
         solver_instance.set_parameters(transformed_data.reshape((C.no_parameters,)))
         if C.solver_returns_tag:
-            [convergence_tag,sent_data] = solver_instance.get_observations()
-            if convergence_tag<0:
-                sent_data=np.zeros((C.no_observations,))
+            [convergence_tag, sent_data] = solver_instance.get_observations()
+            if convergence_tag < 0:
+                sent_data = np.zeros((C.no_observations,))
         else:
             sent_data = solver_instance.get_observations()
             convergence_tag = 0
         counter += 1
-        if rank==0:
+        if rank == 0:
             if C.pickled_observations:
-                parent_comm.send([convergence_tag,sent_data], dest=0, tag=tag)
+                parent_comm.send([convergence_tag, sent_data], dest=0, tag=tag)
             else:
                 parent_comm.Send(sent_data, dest=0, tag=convergence_tag)
 print("CHILD: ", counter)

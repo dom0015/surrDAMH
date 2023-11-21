@@ -17,7 +17,7 @@ class Evaluator:
         Evaluates the surrogate model in datapoints.
 
         datapoints shape: (number of datapoints, no_parameters)
-        
+
         output NDArray shape: (number of datapoints, no_observations)
         """
         pass

@@ -1,6 +1,6 @@
 import setuptools
 from setuptools import find_packages
-__version__="0.1.0"
+__version__ = "0.1.0"
 
 with open("README.md", "r") as fh:
     long_description = fh.read()
@@ -51,9 +51,3 @@ setuptools.setup(
     #     'console_scripts': ['endorse_gui=endorse.gui.app:main', 'endorse_mlmc=endorse.scripts.endorse_mlmc:main']
     # }
 )
-
-
-
-        
-
-        

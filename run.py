@@ -41,15 +41,15 @@ if len_argv > 4:
     else:
         visualize = False
 
-#problem_path = None
-#basename = os.path.basename(problem_name)
-#fname, fext = os.path.splitext(basename)
-#if fext == ".json":
+# problem_path = None
+# basename = os.path.basename(problem_name)
+# fname, fext = os.path.splitext(basename)
+# if fext == ".json":
 #    problem_path = os.path.abspath(problem_name)
 #    problem_name = fname
-#elif fext == "":
+# elif fext == "":
 #    problem_path = os.path.abspath(os.path.join("examples", problem_name + ".json"))
-#else:
+# else:
 #    os.error("Specify configuration json file or example testcase name.")
 
 with open(problem_path) as f:
@@ -90,7 +90,6 @@ else:
 # print("path append:", path)
 # print(sys.path)
 
-import sys
 # sys.path.append("/home/domesova/GIT/Endorse-2Dtest-Bayes/surrDAMH")
 print(command)
 os.system(command)

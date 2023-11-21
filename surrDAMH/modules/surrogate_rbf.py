@@ -44,7 +44,8 @@ class Surrogate_apply:  # initiated by all SAMPLERs
 
 
 class Surrogate_update:  # initiated by COLLECTOR
-    def __init__(self, no_parameters, no_observations, initial_iteration=None, max_centers=None, expensive=False, kernel_type="polyharmonic", beta=3, solver_tol_exp=-6, solver_type='minres'):
+    def __init__(self, no_parameters, no_observations, initial_iteration=None, max_centers=None, expensive=False,
+                 kernel_type="polyharmonic", beta=3, solver_tol_exp=-6, solver_type='minres'):
         self.no_parameters = no_parameters
         self.no_observations = no_observations
         self.initial_iteration = initial_iteration
@@ -113,7 +114,7 @@ class Surrogate_update:  # initiated by COLLECTOR
             for i in range(no_snapshots - self.max_centers):
                 argmin = np.argmin(M)
                 xx = argmin // no_snapshots
-                if self.expensive == True:
+                if self.expensive is True:
                     S = sum(M)
                     yy = argmin % no_snapshots
                     M[xx, yy] = MAX

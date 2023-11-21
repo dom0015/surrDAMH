@@ -57,8 +57,8 @@ if __name__ == "__main__":
     # N = 100
     # grid = np.linspace(0,365,N).reshape((N,1))
     # parameters = [[30,50],[30,166],[50,166]]
-    N=141
-    grid=np.linspace(0,140,141).reshape((N,1))
+    N = 141
+    grid = np.linspace(0, 140, 141).reshape((N, 1))
 
     conf_list = []
     # blok 1
@@ -89,29 +89,29 @@ if __name__ == "__main__":
     C2 = assemble_covariance_matrix(conf_list)
     print(np.shape(C2))
 
-    C = C2[:N,:N]
+    C = C2[:N, :N]
     print(np.shape(C))
-    D,V = np.linalg.eig(C)
+    D, V = np.linalg.eig(C)
     D = np.real(D)
-    D[D<0] = 0
+    D[D < 0] = 0
     L = V*np.sqrt(D)
-    
+
     plt.figure()
     np.random.seed(1)
     n = C.shape[0]
     for i in range(4):
-        eta = np.random.randn(n).reshape((n,1))
-        plt.plot(grid,np.matmul(L,eta))
+        eta = np.random.randn(n).reshape((n, 1))
+        plt.plot(grid, np.matmul(L, eta))
     plt.grid()
     plt.show()
-    
-    grid2=([0, 10, 17, 27, 37, 47, 57, 67, 77, 87, 97, 107, 117, 127, 137, 140])
+
+    grid2 = ([0, 10, 17, 27, 37, 47, 57, 67, 77, 87, 97, 107, 117, 127, 137, 140])
     plt.figure()
     np.random.seed(1)
     n = C.shape[0]
     for i in range(4):
-        eta = np.random.randn(n).reshape((n,1))
-        y=np.matmul(L,eta)
-        plt.plot(grid2,y[grid2])
+        eta = np.random.randn(n).reshape((n, 1))
+        y = np.matmul(L, eta)
+        plt.plot(grid2, y[grid2])
     plt.grid()
     plt.show()
