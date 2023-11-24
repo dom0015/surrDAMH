@@ -12,14 +12,19 @@ import sys
 # sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 import ruamel.yaml as yaml
 import importlib.util as iu
-from modules import classes_communication
-from modules import Gaussian_process
-from modules import transformations as trans
+from surrDAMH.modules import classes_communication
+from surrDAMH.modules import Gaussian_process
+from surrDAMH.modules import transformations as trans
 import numpy as np
 
 
 class Configuration:
-    def __init__(self, no_samplers, conf_path):
+    def __init__(self):
+        pass
+
+    def set_from_file(self, no_samplers, output_dir, conf_path):
+        self.output_dir = output_dir
+
         # MODEL PROBLEM CHOICE:
         basename = os.path.basename(conf_path)
         conf_name, fext = os.path.splitext(basename)
@@ -92,15 +97,15 @@ class Configuration:
             self.use_surrogate = True
             self.rank_surr_collector = self.no_samplers + 1
             if conf["surrogate_type"] == "rbf":  # radial basis functions surrogate model
-                from modules import surrogate_rbf as surr
+                from surrDAMH.surrogates import radial_basis as surr
             elif conf["surrogate_type"] == "poly":  # polynomial surrogate model
-                from modules import surrogate_poly as surr
+                from surrDAMH.surrogates import polynomial_sklearn as surr
             else:
-                spec = iu.spec_from_file_location(
-                    conf["surrogate_module_name"], conf["surrogate_module_path"])
+                # spec = iu.spec_from_file_location(
+                #    conf["surrogate_module_name"], conf["surrogate_module_path"])
+                spec = iu.spec_from_file_location("surrogates.polynomial_sklearn", "surrDAMH/surrogates/polynomial_sklearn.py")
                 surr = iu.module_from_spec(spec)
                 spec.loader.exec_module(surr)
-            # self.surr_solver_init = surr.PolynomialEvaluator
             self.surr_updater_init = surr.PolynomialTrainer
             self.surr_solver_parameters = {"no_parameters": self.no_parameters,
                                            "no_observations": self.no_observations

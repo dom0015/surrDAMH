@@ -13,11 +13,12 @@ from configuration import Configuration
 
 assert (len(sys.argv) == 5)
 no_samplers = int(sys.argv[1])
-problem_path = sys.argv[2]
+conf_file_path = sys.argv[2]
 solver_id = int(sys.argv[3])
 output_dir = sys.argv[4]
 
-C = Configuration(no_samplers, problem_path)
+C = Configuration()
+C.set_from_file(no_samplers, output_dir, conf_file_path)
 
 parent_comm = MPI.Comm.Get_parent()
 rank = parent_comm.Get_rank()

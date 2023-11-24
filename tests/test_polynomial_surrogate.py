@@ -1,4 +1,5 @@
-from surrDAMH.modules.surrogate_poly import PolynomialTrainer
+from surrDAMH.surrogates.polynomial_new import PolynomialTrainer as TrainerNew
+from surrDAMH.surrogates.polynomial_sklearn import PolynomialTrainer as TrainerSklearn
 import numpy as np
 import time
 
@@ -11,35 +12,39 @@ import time
 def observation_operator(x, y): return x*x*x*y - y*y
 
 
-no_snapshots = 20000
-no_test_points = 100
+no_snapshots = 20  # to learn the surrogate model
+no_test_points = 10000  # to test the surrogate model
 
+# CREATE SNAPSHOTS
 np.random.seed(5)
-parameters = np.random.rand(no_snapshots, 2)
+parameters = np.random.randn(no_snapshots, 2)
 x = parameters[:, 0]
 y = parameters[:, 1]
 observations = observation_operator(x, y)
 
-a = np.random.rand(2)
-b = np.random.rand(5)
-w = np.random.rand(1)
-
-trainer = PolynomialTrainer(2, 1, 5, "pinv")
-trainer.add_data(parameters, observations)
-t = time.time()
-evaluator = trainer.get_evaluator()
-t_elapsed = time.time() - t
-
-test_data = 10*np.random.rand(no_test_points, 2)
-
-evaluations = evaluator(test_data)
-
+# CREATE TEST DATA
+test_data = np.random.randn(no_test_points, 2)
 x_test = test_data[:, 0]
 y_test = test_data[:, 1]
 z_test = observation_operator(x_test, y_test)
 z_test = z_test.reshape((-1, 1))
 
-print(z_test)
-print(evaluations)
-print(np.sort(np.abs((z_test-evaluations)/z_test), axis=0))
-print("time elapsed:", t_elapsed)
+# CREATE AND APPLY THE SURROGATE MODELS
+trainer_new = TrainerNew(2, 1, 5, "jlkjl")  # own
+trainer_sklearn = TrainerSklearn(2, 1, 5)  # sklearn
+for trainer in [trainer_new, trainer_sklearn]:
+    print("------")
+    trainer.add_data(parameters, observations)
+    t = time.time()
+    evaluator = trainer.get_evaluator()
+    t_training = time.time() - t
+    t = time.time()
+    evaluations = evaluator(test_data)
+    t_evaluation = time.time() - t
+
+    # COMPARE RESULTS
+    rel_err = np.abs((z_test-evaluations)/z_test)
+    print(trainer)
+    print("relative error (min, max, norm):", min(rel_err), max(rel_err), np.linalg.norm(rel_err))
+    print("training time:", t_training)
+    print("evaluation time:", t_evaluation)

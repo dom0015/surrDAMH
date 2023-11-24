@@ -8,7 +8,7 @@ Created on Wed Jan 22 10:15:50 2020
 
 import numpy as np
 import numpy.typing as npt
-from surrDAMH.modules.surrogate import Trainer, Evaluator
+from surrDAMH.surrogates.parent import Trainer, Evaluator
 
 
 class PolynomialEvaluator(Evaluator):
@@ -106,13 +106,17 @@ class PolynomialTrainer(Trainer):  # initiated by COLLECTOR
         self.poly = generate_polynomials(self.no_parameters, self.current_degree)
         self.no_poly = self.poly.shape[0]
         self.hermite_coefs = calculate_hermite_coefs(self.current_degree)
+        print("HERMITE:")
+        d = self.hermite_coefs.diagonal()
+        print()
 
+        # recalculate products and products_weighted for already processed data
         self.products = np.ones((self.no_processed, self.no_poly))
         hermite_eval = evaluate_polynomials(self.hermite_coefs, self.processed_par)
         for j in range(self.no_parameters):
             self.products *= hermite_eval[:, j, self.poly[:, j]]
-
         self.products_weighted = (self.products * self.processed_wei)
+
         print("SURROGATE: polynomial degree increased to",
               self.current_degree, "i.e.", self.no_poly, "polynomials")
 

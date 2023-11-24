@@ -20,11 +20,11 @@ class Solver_MPI_parent:  # initiated by SOLVERS POOL
         # path hack: find absolute path to process_CHILD.py
         # this makes surrDAMH lib independent of the initial calling path
         rep_dir = os.path.dirname(os.path.abspath(__file__))
-        print("Spawning on rank " + str(MPI.COMM_WORLD.Get_rank()), flush=True)
+        # print("Spawning on rank " + str(MPI.COMM_WORLD.Get_rank()), flush=True)
         self.comm = MPI.COMM_SELF.Spawn(sys.executable, args=[rep_dir+'/../process_CHILD.py', str(no_samplers),
                                                               problem_path, str(solver_id), output_dir],
                                         maxprocs=maxprocs)
-        print("Spawned. MPI Status " + str(MPI.Status()), flush=True)
+        # print("Spawned. MPI Status " + str(MPI.Status()), flush=True)
         self.tag = 0
         self.received_data = np.zeros(self.no_observations)
         self.status = MPI.Status()
@@ -117,9 +117,9 @@ class Solver_local_collector_MPI:  # initiated by SAMPLERs
         # self.local_solver_instance = local_solver_instance
         self.is_updated = is_updated
         self.rank_collector = rank_collector
-        self.solver_data = [None] * 2       # double buffer
-        self.solver_data_idx = 0            # idx of current buffer 0/1
-        self.solver_data_iterator = 0
+        self.evaluators_buffer = [None] * 2       # double buffer
+        self.evaluators_buffer_idx = 0            # idx of current buffer 0/1
+        # self.solver_data_iterator = 0
         self.tag_terminate = 0
         self.tag_ready_to_receive = 1
         self.tag_sent_data = 2
@@ -150,7 +150,7 @@ class Solver_local_collector_MPI:  # initiated by SAMPLERs
         #     self.request_Isend = self.comm.Isend(self.empty_buffer, dest=self.rank_collector, tag=self.tag_ready_to_receive)
 
         # computed_observations = self.local_solver_instance.apply(self.solver_data[self.solver_data_idx],self.parameters)
-        computed_observations = self.solver_data[self.solver_data_idx](self.parameters)
+        computed_observations = self.evaluators_buffer[self.evaluators_buffer_idx](self.parameters)
         # self.computation_in_progress_ = False
         return 1, computed_observations
 
@@ -182,10 +182,10 @@ class Solver_local_collector_MPI:  # initiated by SAMPLERs
         except:
             print("EX in Solver_local_collector_MPI")
         if probe:
-            r = self.request_recv.wait()
-            self.solver_data_iterator += 1
-            self.solver_data[1 - self.solver_data_idx] = r
-            self.solver_data_idx = 1 - self.solver_data_idx
+            evaluator_instance = self.request_recv.wait()
+            # self.solver_data_iterator += 1
+            self.evaluators_buffer[1 - self.evaluators_buffer_idx] = evaluator_instance
+            self.evaluators_buffer_idx = 1 - self.evaluators_buffer_idx
             self.request_recv = self.comm.irecv(self.max_buffer_size, source=self.rank_collector, tag=self.tag_sent_data)
             self.request_Isend.Wait()
             self.request_Isend = self.comm.Isend(self.empty_buffer, dest=self.rank_collector, tag=self.tag_ready_to_receive)
