@@ -8,51 +8,28 @@ Created on Tue Oct 29 14:55:37 2019
 
 from mpi4py import MPI
 import numpy as np
-import sys
 from collections import deque
 from surrDAMH.configuration import Configuration
-
-# try FIX unpickled error
-# import mpi4py
-# mpi4py.rc.recv_mprobe = False
-
-if __name__ == "__main__":
-    comm_world = MPI.COMM_WORLD
-    rank_world = comm_world.Get_rank()
-    size_world = comm_world.Get_size()
-
-    conf_file_path = sys.argv[1]
-    output_dir = sys.argv[2]
-
-    no_samplers = rank_world
-
-    # print("process_SOLVER: ", no_samplers, problem_path, flush=True)
-    for i in range(size_world):
-        if i != rank_world:
-            list_to_send = [no_samplers, conf_file_path]
-            # print("comm_world.send(dest=", i, ") params: ", list_to_send, flush=True)
-            comm_world.send(list_to_send, dest=i, tag=100)
-    comm_world.Barrier()  # barrier probably not necessary when send/recv paired by tag=100
-    configuration = Configuration()
-    configuration.set_from_file(no_samplers, output_dir, conf_file_path)
+from surrDAMH.priors.parent import Prior
+from surrDAMH.solver_specification import SolverSpec
+from surrDAMH.modules.tools import ensure_dir
+from surrDAMH.modules.classes_communication import Solver_MPI_parent
+import os
 
 
-def run_SOLVER(conf):
+def run_SOLVER(conf: Configuration, prior: Prior, solver_spec: SolverSpec):
     comm_world = MPI.COMM_WORLD
     rank_world = comm_world.Get_rank()
     comm_world.Split(color=1, key=rank_world)
 
-    solver_init = conf.solver_parent_init
-    solver_parameters = conf.solver_parent_parameters
-    no_solvers = conf.no_full_solvers
-    # solver_init ... initializes the object of the (full, surrogate) solver
-    # solver_parameters ... list of dictionaries with initialization parameters
-    # no_solvers ... number of solvers to be created
-    # no_samplers ... number of samplers that request solutions
+    # solver_init ... initializes the object of the (full, surrogate) solver - TODO ?
+    solver_init = Solver_MPI_parent
+    no_solvers = conf.no_solvers  # number of solvers to be created
 
     Solvers = []
     for i in range(no_solvers):
-        Solvers.append(solver_init(**solver_parameters[i], output_dir=conf.output_dir))
+        solver_output_dir = ensure_dir(os.path.join(conf.output_dir, "solver_output", "rank{}".format(i)))
+        Solvers.append(solver_init(conf=conf, transform=prior.transform, solver_spec=solver_spec, solver_output_dir=solver_output_dir, solver_id=i))
     samplers_rank = np.arange(conf.no_samplers)
     sampler_is_active = np.array([True] * conf.no_samplers)
     sampler_can_send = np.array([True] * conf.no_samplers)
@@ -133,7 +110,3 @@ def run_SOLVER(conf):
 
     comm_world.Barrier()
     print("RANK", rank_world, "(SOLVERS POOL) terminated.")
-
-
-if __name__ == "__main__":
-    run_SOLVER(configuration)

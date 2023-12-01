@@ -9,41 +9,18 @@ Created on Thu Nov  7 13:26:55 2019
 from mpi4py import MPI
 import numpy as np
 from surrDAMH.configuration import Configuration
-
-# try FIX unpickled error
-# import mpi4py
-# mpi4py.rc.recv_mprobe = False
+from surrDAMH.surrogates.parent import Updater
 
 # communicates with: SAMPLERs
 
-if __name__ == "__main__":
-    comm_world = MPI.COMM_WORLD
 
-    no_samplers, conf_file_path = comm_world.recv(source=MPI.ANY_SOURCE, tag=100)
-    comm_world.Barrier()  # barrier probably not necessary when send/recv paired by tag=100
-
-    # data = None
-    # data = comm_world.bcast(data,root=1)
-    # no_samplers, problem_name = data
-    # print(rank_world,size_world,no_samplers,problem_name)
-    configuration = Configuration()
-    configuration.set_from_file(no_samplers, output_dir=None, conf_path=conf_file_path)
-
-
-def run_COLLECTOR(conf):
+def run_COLLECTOR(conf: Configuration, surrogate_updater: Updater = None, surrogate_delayed_init_data=None):
     comm_world = MPI.COMM_WORLD
     rank_world = comm_world.Get_rank()
     comm_world.Split(color=2, key=rank_world)
 
-    updater_init = conf.surr_updater_init
-    updater_parameters = conf.surr_updater_parameters
     max_buffer_size = conf.max_buffer_size
-    # updater_init ... initializes the object of the surr. updater
-    # updater_parameters ... list of dictionaries with initialization parameters
-    # no_samplers ... number of samplers that request solutions
-
-    local_updater_instance = updater_init(**updater_parameters)
-    samplers_ranks = np.arange(conf.no_samplers)  # TO DO: assumes ranks 0,1,...
+    samplers_ranks = np.arange(conf.no_samplers)  # TODO: assumes ranks 0,1,...
     sampler_is_active = np.array([True] * conf.no_samplers)
     send_buffers = [None] * conf.no_samplers
     sampler_can_recv = np.array([False] * conf.no_samplers)  # ready to receive updated data
@@ -58,6 +35,7 @@ def run_COLLECTOR(conf):
     request_irecv = [None] * conf.no_samplers
     request_isend = [None] * conf.no_samplers
     request_Isend = [None] * conf.no_samplers
+    surrogate_updater.delayed_init(surrogate_delayed_init_data)
     if any(sampler_is_active):
         for r in samplers_ranks[sampler_is_active]:
             # for i in np.nditer(np.where(sampler_is_active)):
@@ -117,8 +95,8 @@ def run_COLLECTOR(conf):
                     list_received = list_received_part.copy()
 
         if list_received and any(sampler_is_active):
-            local_updater_instance.add_data(list_received[0], list_received[1], list_received[2])
-            evaluator_instance = local_updater_instance.get_evaluator()
+            surrogate_updater.add_data(list_received[0], list_received[1], list_received[2])
+            evaluator_instance = surrogate_updater.get_evaluator()
             list_received = []
             sampler_got_last_surrogate = np.array([False] * conf.no_samplers)
         for r in samplers_ranks[sampler_is_active & sampler_can_recv & ~sampler_got_last_surrogate]:
@@ -135,7 +113,3 @@ def run_COLLECTOR(conf):
 
     comm_world.Barrier()
     print("RANK", rank_world, "(DATA COLLECTOR) terminated.")
-
-
-if __name__ == "__main__":
-    run_COLLECTOR(configuration)

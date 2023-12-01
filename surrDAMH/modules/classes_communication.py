@@ -13,22 +13,24 @@ import os
 
 
 class Solver_MPI_parent:  # initiated by SOLVERS POOL
-    def __init__(self, no_parameters, no_observations, no_samplers, problem_path, output_dir, maxprocs=1, solver_id=0, pickled_observations=True):
-        self.no_parameters = no_parameters
-        self.no_observations = no_observations
+    def __init__(self, conf, transform, solver_spec, solver_output_dir, solver_id):
+        # TODO: one child can use more MPI processes
+        self.no_parameters = conf.no_parameters
+        self.no_observations = conf.no_observations
         self.max_requests = 1
         # path hack: find absolute path to process_CHILD.py
         # this makes surrDAMH lib independent of the initial calling path
         rep_dir = os.path.dirname(os.path.abspath(__file__))
         # print("Spawning on rank " + str(MPI.COMM_WORLD.Get_rank()), flush=True)
-        self.comm = MPI.COMM_SELF.Spawn(sys.executable, args=[rep_dir+'/../process_CHILD.py', str(no_samplers),
-                                                              problem_path, str(solver_id), output_dir],
-                                        maxprocs=maxprocs)
+        self.comm = MPI.COMM_SELF.Spawn(sys.executable,
+                                        args=[rep_dir+'/../process_CHILD.py', str(solver_id), solver_output_dir],
+                                        maxprocs=conf.solver_maxprocs)
         # print("Spawned. MPI Status " + str(MPI.Status()), flush=True)
         self.tag = 0
         self.received_data = np.zeros(self.no_observations)
         self.status = MPI.Status()
-        self.pickled_observations = pickled_observations
+        self.pickled_observations = conf.pickled_observations
+        self.comm.bcast([conf, transform, solver_spec], root=MPI.ROOT)
 
     def send_parameters(self, data_par):
         self.tag += 1

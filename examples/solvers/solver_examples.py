@@ -8,39 +8,43 @@ Created on Wed Jan 22 10:00:23 2020
 
 import numpy as np
 from mpi4py import MPI
+from surrDAMH.solvers import Solver
 
-class Solver_illustrative_local:
+
+class Solver_illustrative_local(Solver):
     def __init__(self, solver_id=0, output_dir=None):
         self.no_parameters = 2
         self.no_observations = 1
-        
-    def set_parameters(self,data_par):
-        self.x = data_par[0]
-        self.y = data_par[1]
-        
+
+    def set_parameters(self, parameters):
+        self.x = parameters[0]
+        self.y = parameters[1]
+
     def get_observations(self):
         res = (self.x**2-self.y)*(np.log((self.x-self.y)**2+1))
         return res
-        #return convergence_tag, res
+        # return convergence_tag, res
 
-class Solver_linela2exp_local:
-    def __init__(self, solver_id=0, f=-0.1, L=1.0, M=0.5, output_dir=None):
+
+class Solver_linela2exp_local(Solver):
+    def __init__(self, f=-0.1, length=1.0, m=0.5, solver_id=0, output_dir=None):
         self.f = f
-        self.L = L
-        self.M = M
+        self.L = length
+        self.M = m
         self.no_parameters = 2
         self.no_observations = 1
-        
-    def set_parameters(self,data_par):
-        self.k1 = np.exp(data_par[0])
-        self.k2 = np.exp(data_par[1])
-        
+
+    def set_parameters(self, parameters):
+        self.k1 = np.exp(parameters[0])
+        self.k2 = np.exp(parameters[1])
+
     def get_observations(self):
         D1 = (self.f*self.L)/self.k2
         C1 = D1*self.k2/self.k1
         D2 = -self.f/(2*self.k1)*(self.M*self.M)+C1*self.M+self.f/(2*self.k2)*(self.M*self.M)-D1*self.M
         uL = -self.f/(2*self.k2)*(self.L*self.L)+D1*self.L+D2
         return uL
+
 
 class Solver_linela2exp_MPI:
     def __init__(self, solver_id=0, f=-0.1, L=1.0, M=0.5, output_dir=None):
@@ -54,20 +58,20 @@ class Solver_linela2exp_MPI:
         self.size = self.comm.Get_size()
         if self.rank == 0 or self.rank == self.size-1:
             self.data = np.empty((self.no_observations,))
-            
-    def set_parameters(self,data_par):
-        self.k1 = np.exp(data_par[0])
-        self.k2 = np.exp(data_par[1])
-        
+
+    def set_parameters(self, parameters):
+        self.k1 = np.exp(parameters[0])
+        self.k2 = np.exp(parameters[1])
+
     def get_observations(self):
-        if self.rank == 0 and self.size>1:
+        if self.rank == 0 and self.size > 1:
             self.comm.Recv(self.data, source=self.size-1)
         elif self.rank == self.size-1:
             D1 = (self.f*self.L)/self.k2
             C1 = D1*self.k2/self.k1
             D2 = -self.f/(2*self.k1)*(self.M*self.M)+C1*self.M+self.f/(2*self.k2)*(self.M*self.M)-D1*self.M
             self.data[0] = -self.f/(2*self.k2)*(self.L*self.L)+D1*self.L+D2
-            if self.size>1:
+            if self.size > 1:
                 self.comm.Send(self.data, dest=0)
         # else:
         #     print("Rank", self.rank, "has nothing to do.")
@@ -76,42 +80,44 @@ class Solver_linela2exp_MPI:
         else:
             return None
 
+
 class Solver_linela2exp_local_tag:
-    def __init__(self, solver_id=0, f=-0.1, L=1.0, M=0.5, output_dir=None):
+    def __init__(self, f=-0.1, length=1.0, m=0.5, solver_id=0, output_dir=None):
         self.f = f
-        self.L = L
-        self.M = M
+        self.L = length
+        self.M = m
         self.no_parameters = 2
         self.no_observations = 1
-        
-    def set_parameters(self,data_par):
-        self.k1 = np.exp(data_par[0])
-        self.k2 = np.exp(data_par[1])
-        
+
+    def set_parameters(self, parameters):
+        self.k1 = np.exp(parameters[0])
+        self.k2 = np.exp(parameters[1])
+
     def get_observations(self):
         D1 = (self.f*self.L)/self.k2
         C1 = D1*self.k2/self.k1
         D2 = -self.f/(2*self.k1)*(self.M*self.M)+C1*self.M+self.f/(2*self.k2)*(self.M*self.M)-D1*self.M
         uL = -self.f/(2*self.k2)*(self.L*self.L)+D1*self.L+D2
-        if int(np.random.rand()<0.5):
+        if int(np.random.rand() < 0.5):
             convergence_tag = 1
         else:
             convergence_tag = -1
         return convergence_tag, uL
-    
-class Generic:
+
+
+class Generic(Solver):
     def __init__(self, solver_id=0, no_parameters=3, no_observations=3, output_dir=None):
         self.no_parameters = no_parameters
         self.no_observations = no_observations
-        
-    def set_parameters(self,data_par):
-        self.x = np.mean(data_par)
-        
+
+    def set_parameters(self, parameters):
+        self.x = np.mean(parameters)
+
     def get_observations(self):
         res = self.x*np.ones((self.no_observations,))
-        if int(np.random.rand()<0.75):
+        if int(np.random.rand() < 0.75):
             convergence_tag = 1
         else:
             convergence_tag = -1
-        #return convergence_tag, res
+        # return convergence_tag, res
         return res

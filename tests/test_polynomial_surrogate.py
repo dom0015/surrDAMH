@@ -1,5 +1,5 @@
-from surrDAMH.surrogates.polynomial_new import PolynomialTrainer as TrainerNew
-from surrDAMH.surrogates.polynomial_sklearn import PolynomialTrainer as TrainerSklearn
+from surrDAMH.surrogates.polynomial_new import PolynomialProjectionUpdater as TrainerNew
+from surrDAMH.surrogates.polynomial_sklearn import PolynomialSklearnUpdater as TrainerSklearn
 import numpy as np
 import time
 

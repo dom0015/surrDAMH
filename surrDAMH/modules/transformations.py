@@ -12,7 +12,7 @@ import scipy.stats as stats
 
 def transform(data, settings):
     # data ... numpy array of shape (no_parameters,)
-    # settings ... list of lists [type, optionsl inputs]
+    # settings ... list of dictionaries, keys: "type", "options"
     trans_data = data.copy()
     for i, parameter in enumerate(data):
         if settings[i] is None:
@@ -51,38 +51,38 @@ def uniform_to_normal(parameters, a=0, b=1, mu=0, sigma=1):
     return stats.norm.ppf(tmp, mu, sigma)
 
 
-def beta_to_uniform(parameters, a=0, b=1, alfa=2, beta=2):
-    # Beta(alfa,beta) to Uni((a,b))
-    tmp = stats.beta.cdf(parameters, alfa, beta)
+def beta_to_uniform(parameters, a=0, b=1, alpha=2, beta=2):
+    # Beta(alpha,beta) to Uni((a,b))
+    tmp = stats.beta.cdf(parameters, alpha, beta)
     return a + tmp*(b-a)
 
 
-def uniform_to_beta(parameters, a=0, b=1, alfa=2, beta=2):
-    # Uni((a,b)) to Beta(alfa,beta)
+def uniform_to_beta(parameters, a=0, b=1, alpha=2, beta=2):
+    # Uni((a,b)) to Beta(alpha,beta)
     tmp = (parameters - a)/(b-a)
-    return stats.beta.ppf(tmp, alfa, beta)
+    return stats.beta.ppf(tmp, alpha, beta)
 
 
-def normal_to_beta(parameters, mu=0, sigma=1, alfa=2, beta=2):
-    # N(mu,sigma) to Beta(alfa,beta)
+def normal_to_beta(parameters, mu=0, sigma=1, alpha=2, beta=2):
+    # N(mu,sigma) to Beta(alpha,beta)
     tmp = normal_to_uniform(parameters, mu=mu, sigma=sigma)
-    return uniform_to_beta(tmp, alfa=alfa, beta=beta)
+    return uniform_to_beta(tmp, alpha=alpha, beta=beta)
 
 
-def beta_to_normal(parameters, mu=0, sigma=1, alfa=2, beta=2):
-    # Beta(alfa,beta) to N(mu,sigma)
-    tmp = beta_to_uniform(parameters, alfa=alfa, beta=beta)
+def beta_to_normal(parameters, mu=0, sigma=1, alpha=2, beta=2):
+    # Beta(alpha,beta) to N(mu,sigma)
+    tmp = beta_to_uniform(parameters, alpha=alpha, beta=beta)
     return uniform_to_normal(tmp, mu=mu, sigma=sigma)
 
 # TEST NORMAL-BETA
 # mu=0
 # sigma=1
-# alfa = 5
+# alpha = 5
 # beta = 5
 # parameters = np.random.randn(100,500)
 # parameters = parameters*sigma+mu
-# Y=normal_to_beta(parameters, mu=mu, sigma=sigma, alfa=alfa, beta=beta)
-# X=beta_to_normal(Y, mu=mu, sigma=sigma, alfa=alfa, beta=beta)
+# Y=normal_to_beta(parameters, mu=mu, sigma=sigma, alpha=alpha, beta=beta)
+# X=beta_to_normal(Y, mu=mu, sigma=sigma, alpha=alpha, beta=beta)
 
 # import matplotlib.pyplot as plt
 # plt.figure()

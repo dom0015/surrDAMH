@@ -8,7 +8,7 @@ Created on Wed Jan 22 10:15:50 2020
 
 import numpy as np
 import numpy.typing as npt
-from surrDAMH.surrogates.parent import Trainer, Evaluator
+from surrDAMH.surrogates.parent import Updater, Evaluator
 
 
 class PolynomialEvaluator(Evaluator):
@@ -31,7 +31,7 @@ class PolynomialEvaluator(Evaluator):
         return evaluations
 
 
-class PolynomialTrainer(Trainer):  # initiated by COLLECTOR
+class PolynomialTrainer(Updater):  # initiated by COLLECTOR
     def __init__(self, no_parameters, no_observations, max_degree=5, solver="pinv"):
         self.no_parameters = no_parameters
         self.no_observations = no_observations

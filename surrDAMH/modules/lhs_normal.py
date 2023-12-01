@@ -11,7 +11,7 @@ import numpy.matlib
 from scipy.stats import norm
 
 
-def lhs_normal(no_parameters, prior_mean, prior_std, n, seed):
+def lhs_normal(no_parameters, mean, sd, n, seed):
     LHS_final = np.zeros([n, n])
     maxmin = 0
     RS = np.random.RandomState(seed)
@@ -33,8 +33,6 @@ def lhs_normal(no_parameters, prior_mean, prior_std, n, seed):
         if quality > maxmin:
             LHS_final = LHS_uni
 
-    if np.array(prior_std).ndim == 2:
-        prior_std = np.sqrt(np.diag(prior_std))
-    LHS_norm = norm.ppf(LHS_final, loc=prior_mean, scale=prior_std)
+    LHS_norm = norm.ppf(LHS_final, loc=mean, scale=sd)
 
     return LHS_norm

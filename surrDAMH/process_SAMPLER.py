@@ -7,29 +7,15 @@ Created on Wed Oct 23 15:35:47 2019
 """
 
 from mpi4py import MPI
-import sys
 from surrDAMH.modules import classes_SAMPLER as cS
 from surrDAMH.modules import classes_communication
-from surrDAMH.modules import lhs_normal as LHS
+from surrDAMH.modules import lhs_normal as lhs
 from surrDAMH.configuration import Configuration
-
-if __name__ == "__main__":
-    comm_world = MPI.COMM_WORLD
-
-    output_dir = sys.argv[1]
-
-    no_samplers, conf_file_path = comm_world.recv(source=MPI.ANY_SOURCE, tag=100)
-    comm_world.Barrier()  # barrier probably not necessary when send/recv paired by tag=100
-
-    # data = None
-    # data = comm_world.bcast(data,root=MPI.ANY_SOURCE)
-    # no_samplers, problem_name = data
-    # print(rank_world,size_world,no_samplers,problem_name)
-    configuration = Configuration()
-    configuration.set_from_file(no_samplers, output_dir, conf_file_path)
+from surrDAMH.priors.parent import Prior
+from surrDAMH.likelihoods.parent import Likelihood
 
 
-def run_SAMPLER(conf):
+def run_SAMPLER(conf: Configuration, prior: Prior, likelihood: Likelihood):
     comm_world = MPI.COMM_WORLD
     rank_world = comm_world.Get_rank()
     size_world = comm_world.Get_size()
@@ -43,21 +29,20 @@ def run_SAMPLER(conf):
                                                             rank_solver=conf.solver_parent_rank,
                                                             pickled_observations=conf.pickled_observations)  # only knows the MPI rank to communicate with
     if conf.use_surrogate:
-        my_Surr = classes_communication.Solver_local_collector_MPI(rank_collector=conf.rank_surr_collector)
+        my_Surr = classes_communication.Solver_local_collector_MPI(rank_collector=conf.rank_collector)
     else:
         my_Surr = None
-    my_Prob = cS.Problem_Gauss(no_parameters=conf.no_parameters,
-                               noise_std=conf.problem_parameters['noise_std'],
-                               prior_mean=conf.problem_parameters['prior_mean'],
-                               prior_std=conf.problem_parameters['prior_std'],
-                               no_observations=conf.no_observations,
-                               observations=conf.problem_parameters['observations'],
-                               seed=seed0,
-                               name=conf.problem_name)
+    # my_Prob = cS.Problem_Gauss(no_parameters=conf.no_parameters,
+    #                            noise_std=conf.problem_parameters['noise_std'],
+    #                            #    prior_mean=conf.problem_parameters['prior_mean'],
+    #                            #    prior_std=conf.problem_parameters['prior_std'],
+    #                            no_observations=conf.no_observations,
+    #                            observations=conf.problem_parameters['observations'],
+    #                            seed=seed0)
     my_Prop = cS.Proposal_GaussRandomWalk(no_parameters=conf.no_parameters, seed=seed0+1)
 
     if conf.initial_sample_type == "lhs":
-        initial_samples = LHS.lhs_normal(conf.no_parameters, conf.problem_parameters['prior_mean'], conf.problem_parameters['prior_std'], conf.no_samplers, 0)
+        initial_samples = lhs.lhs_normal(conf.no_parameters, prior.mean, prior.sd_approximation, conf.no_samplers, 0)
         initial_sample = initial_samples[rank_world]
     else:
         initial_sample = None  # will be set to prior mean
@@ -84,9 +69,12 @@ def run_SAMPLER(conf):
                 sample_limit = None
                 if "sample_limit" in d.keys():
                     sample_limit = d["sample_limit"]
-                my_Alg = cS.Algorithm_MH_adaptive(my_Prob, my_Prop,
+                my_Alg = cS.Algorithm_MH_adaptive(my_Prop,
                                                   Solver=Solver,
                                                   Surrogate=Surrogate,
+                                                  conf=conf,
+                                                  prior=prior,
+                                                  likelihood=likelihood,
                                                   surrogate_is_updated=surrogate_is_updated,
                                                   initial_sample=initial_sample,
                                                   max_samples=d['max_samples'],
@@ -100,9 +88,12 @@ def run_SAMPLER(conf):
                                                   name='alg' + str(i).zfill(4) + 'MH_adaptive_rank' + str(rank_world),
                                                   seed=seed, output_dir=conf.output_dir)
             else:
-                my_Alg = cS.Algorithm_MH(my_Prob, my_Prop,
+                my_Alg = cS.Algorithm_MH(my_Prop,
                                          Solver=Solver,
                                          Surrogate=Surrogate,
+                                         conf=conf,
+                                         prior=prior,
+                                         likelihood=likelihood,
                                          surrogate_is_updated=surrogate_is_updated,
                                          initial_sample=initial_sample,
                                          max_samples=d['max_samples'],
@@ -113,8 +104,11 @@ def run_SAMPLER(conf):
                                          name='alg' + str(i).zfill(4) + 'MH_rank' + str(rank_world),
                                          seed=seed, output_dir=conf.output_dir)
         elif d['type'] == 'DAMH':
-            my_Alg = cS.Algorithm_DAMH(my_Prob, my_Prop, my_Sol,
+            my_Alg = cS.Algorithm_DAMH(my_Prop, my_Sol,
                                        Surrogate=my_Surr,
+                                       conf=conf,
+                                       prior=prior,
+                                       likelihood=likelihood,
                                        surrogate_is_updated=d['surrogate_is_updated'],
                                        initial_sample=initial_sample,
                                        max_samples=d['max_samples'],
@@ -149,7 +143,3 @@ def run_SAMPLER(conf):
 
     comm_world.Barrier()
     print("RANK", rank_world, "(SAMPLER) terminated.")
-
-
-if __name__ == "__main__":
-    run_SAMPLER(configuration)

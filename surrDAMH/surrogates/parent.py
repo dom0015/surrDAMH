@@ -5,10 +5,6 @@ import numpy.typing as npt
 
 
 class Evaluator:
-    """
-    Parent class for surrogate models.
-    """
-
     def __init__(self) -> None:
         pass
 
@@ -23,8 +19,17 @@ class Evaluator:
         pass
 
 
-class Trainer:
+class Updater:
+    """
+    Parent class for surrogate model updaters.
+    """
     def __init__(self, no_parameters: int, no_observations: int) -> None:
+        pass
+
+    def delayed_init(self, data):
+        """
+        Additional settings of the surrogate model.
+        """
         pass
 
     def add_data(self, parameters: npt.NDArray, observations: npt.NDArray, weights: npt.NDArray) -> None:

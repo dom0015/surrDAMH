@@ -8,13 +8,13 @@ Created on Wed Jan 22 10:15:50 2020
 
 import numpy as np
 import numpy.typing as npt
-from surrDAMH.surrogates.parent import Trainer, Evaluator
+from surrDAMH.surrogates.parent import Updater, Evaluator
 from sklearn.preprocessing import PolynomialFeatures
 from sklearn.linear_model import LinearRegression
 from sklearn.pipeline import make_pipeline
 
 
-class PolynomialEvaluator(Evaluator):
+class PolynomialSklearnEvaluator(Evaluator):
     def __init__(self, no_parameters, model) -> None:
         self.no_parameters = no_parameters
         self.model = model
@@ -25,7 +25,7 @@ class PolynomialEvaluator(Evaluator):
         return self.model.predict(datapoints)
 
 
-class PolynomialTrainer(Trainer):  # initiated by COLLECTOR
+class PolynomialSklearnUpdater(Updater):  # initiated by COLLECTOR
     def __init__(self, no_parameters: int, no_observations: int, max_degree: int = 5):
         self.no_parameters = no_parameters
         self.no_observations = no_observations
@@ -67,4 +67,4 @@ class PolynomialTrainer(Trainer):  # initiated by COLLECTOR
                 print("Polynomial surrogate model degree =", self.current_degree, ", no_snapshots =", self.no_snapshots, flush=True)
             self.model.fit(self.par, self.obs)
             self.no_included_snapshots = self.no_snapshots
-        return PolynomialEvaluator(self.no_parameters, self.model)
+        return PolynomialSklearnEvaluator(self.no_parameters, self.model)

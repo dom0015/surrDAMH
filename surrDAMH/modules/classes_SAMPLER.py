@@ -11,13 +11,17 @@ import numpy as np
 import os
 import csv
 import time
+from surrDAMH.priors.parent import Prior
+from surrDAMH.likelihoods.parent import Likelihood
 
 
 class Algorithm_PARENT:
-    def __init__(self, Problem, Proposal, Solver, max_samples, max_evaluations, name, seed=0, initial_sample=None, G_initial_sample=None,
+    def __init__(self, Proposal, Solver, max_samples, max_evaluations, name, seed=0, initial_sample=None, G_initial_sample=None,
                  Surrogate=None, is_saved=True, save_raw_data=False, transform_before_saving=None, surrogate_is_updated=True,
-                 time_limit=float('inf'), output_dir=""):
-        self.Problem = Problem
+                 time_limit=float('inf'), output_dir="", conf=None, prior: Prior = None, likelihood: Likelihood = None):
+        self.conf = conf
+        self.prior = prior
+        self.likelihood = likelihood
         self.Proposal = Proposal
         self.Solver = Solver
         self.max_samples = max_samples
@@ -27,7 +31,7 @@ class Algorithm_PARENT:
         self.output_dir = output_dir
         self.current_sample = initial_sample
         if self.current_sample is None:
-            self.current_sample = self.Problem.prior_mean.copy()
+            self.current_sample = self.prior.mean
         self.G_current_sample = G_initial_sample
         self.Surrogate = Surrogate
         if Surrogate is None:
@@ -42,19 +46,15 @@ class Algorithm_PARENT:
             self.save_transformed_data = False
         else:
             self.save_transformed_data = True
-            self.transform = transform_before_saving
+            self.transform = self.prior.transform
         self.time_limit = time_limit
         self.__generator = np.random.RandomState(seed)
         self.no_accepted = 0
         self.no_prerejected = 0
         self.no_rejected = 0
-        if Problem.is_exponential and Proposal.is_exponential:
-            if Proposal.is_symmetric:
-                self.is_accepted_sample = self._acceptance_log_symmetric
-                self.compute_posterior = self.Problem.get_log_posterior
-            else:
-                # not implemented
-                return
+        if Proposal.is_symmetric:
+            self.is_accepted_sample = self._acceptance_log_symmetric
+            self.compute_posterior = self.calculate_log_posterior
         else:
             # not implemented
             return
@@ -63,7 +63,7 @@ class Algorithm_PARENT:
         self.time_start = time.time()
         if self.is_saved:
             # saves [no. sample posterior pre_posterior]:
-            filename_G = os.path.join(self.output_dir, "saved_samples", self.Problem.name, "data", self.name + ".csv")
+            filename_G = os.path.join(self.output_dir, "saved_samples", "data", self.name + ".csv")
             os.makedirs(os.path.dirname(filename_G), exist_ok=True)
             self.__file_G = open(filename_G, 'w')
             self.__writer_G = csv.writer(self.__file_G)
@@ -71,7 +71,7 @@ class Algorithm_PARENT:
         else:
             self.__write_to_file = self._empty_function
         if self.save_raw_data:
-            filename = os.path.join(self.output_dir, "saved_samples", self.Problem.name, "raw_data", self.name + ".csv")
+            filename = os.path.join(self.output_dir, "saved_samples", "raw_data", self.name + ".csv")
             os.makedirs(os.path.dirname(filename), exist_ok=True)
             self.__file_raw = open(filename, 'w')
             self.writer_raw = csv.writer(self.__file_raw)
@@ -127,7 +127,7 @@ class Algorithm_PARENT:
         self.__write_to_file()
         if self.is_saved:
             self.__file_G.close()
-            filename_notes = os.path.join(self.output_dir, "saved_samples", self.Problem.name, "notes", self.name + ".csv")
+            filename_notes = os.path.join(self.output_dir, "saved_samples", "notes", self.name + ".csv")
             os.makedirs(os.path.dirname(filename_notes), exist_ok=True)
             labels = ["accepted", "rejected", "pre-rejected", "sum", "seed"]
             no_all = self.no_accepted + self.no_rejected + self.no_prerejected
@@ -166,13 +166,18 @@ class Algorithm_PARENT:
     def _empty_function(self, **kw):
         return
 
+    def calculate_log_posterior(self, sample, G_sample, convergence_tag=0):
+        if convergence_tag < 0:
+            return -np.inf
+        return self.likelihood.calculate_log_likelihood(G_sample) + self.prior.calculate_log_prior(sample)
+
 
 class Algorithm_MH(Algorithm_PARENT):  # initiated by SAMPLERs
-    def __init__(self, Problem, Proposal, Solver, max_samples, max_evaluations, name, seed=0, initial_sample=None, G_initial_sample=None,
+    def __init__(self, Proposal, Solver, max_samples, max_evaluations, name, seed=0, initial_sample=None, G_initial_sample=None,
                  Surrogate=None, is_saved=True, save_raw_data=False, transform_before_saving=None, surrogate_is_updated=True,
-                 time_limit=float('inf'), output_dir=""):
-        super().__init__(Problem, Proposal, Solver, max_samples, max_evaluations, name, seed, initial_sample, G_initial_sample,
-                         Surrogate, is_saved, save_raw_data, transform_before_saving, surrogate_is_updated, time_limit, output_dir)
+                 time_limit=float('inf'), output_dir="", conf=None, prior=None, likelihood=None):
+        super().__init__(Proposal, Solver, max_samples, max_evaluations, name, seed, initial_sample, G_initial_sample,
+                         Surrogate, is_saved, save_raw_data, transform_before_saving, surrogate_is_updated, time_limit, output_dir, conf, prior, likelihood)
         self.max_samples = min(self.max_samples, self.max_evaluations)
 
     def run(self):
@@ -191,11 +196,11 @@ class Algorithm_MH(Algorithm_PARENT):  # initiated by SAMPLERs
 
 
 class Algorithm_MH_adaptive(Algorithm_PARENT):  # initiated by SAMPLERs
-    def __init__(self, Problem, Proposal, Solver, max_samples, max_evaluations, name, target_rate=None, corr_limit=None, sample_limit=None,
+    def __init__(self, Proposal, Solver, max_samples, max_evaluations, name, target_rate=None, corr_limit=None, sample_limit=None,
                  seed=0, initial_sample=None, G_initial_sample=None, Surrogate=None, is_saved=True, save_raw_data=False,
-                 transform_before_saving=None, surrogate_is_updated=True, time_limit=float('inf'), output_dir=""):
-        super().__init__(Problem, Proposal, Solver, max_samples, max_evaluations, name, seed, initial_sample, G_initial_sample,
-                         Surrogate, is_saved, save_raw_data, transform_before_saving, surrogate_is_updated, time_limit, output_dir)
+                 transform_before_saving=None, surrogate_is_updated=True, time_limit=float('inf'), output_dir="", conf=None, prior=None, likelihood=None):
+        super().__init__(Proposal, Solver, max_samples, max_evaluations, name, seed, initial_sample, G_initial_sample,
+                         Surrogate, is_saved, save_raw_data, transform_before_saving, surrogate_is_updated, time_limit, output_dir, conf, prior, likelihood)
         self.max_samples = min(self.max_samples, self.max_evaluations)
         self.target_rate = target_rate  # target acceptance rate
         if self.target_rate is None:
@@ -209,7 +214,7 @@ class Algorithm_MH_adaptive(Algorithm_PARENT):  # initiated by SAMPLERs
 
     def run(self):
         self.prepare()
-        samples = np.empty((0, self.Problem.no_parameters))
+        samples = np.empty((0, self.conf.no_parameters))
         fweights = np.empty((0,), dtype=int)
         samples = np.vstack((samples, self.current_sample))
         fweights = np.append(fweights, 1)
@@ -243,27 +248,27 @@ class Algorithm_MH_adaptive(Algorithm_PARENT):  # initiated by SAMPLERs
                 # print("ACCEPTED:", counter_accepted, "REJECTED", counter_rejected, "-> RATE", current_rate)
                 COV = np.cov(samples, fweights=fweights, rowvar=False)
                 SD = np.sqrt(np.diag(COV))
-                CORR = COV/SD.reshape((self.Problem.no_parameters, 1))
-                CORR = CORR/SD.reshape((1, self.Problem.no_parameters))
+                CORR = COV/SD.reshape((self.conf.no_parameters, 1))
+                CORR = CORR/SD.reshape((1, self.conf.no_parameters))
                 # print(COV)
                 # print(CORR)
                 # correction of covariance matrix (maximal alowed correlation):
                 CORR[CORR < -self.corr_limit] = -self.corr_limit
                 CORR[CORR > self.corr_limit] = self.corr_limit
                 np.fill_diagonal(CORR, 1)
-                COV = CORR*SD.reshape((self.Problem.no_parameters, 1))
-                COV = COV*SD.reshape((1, self.Problem.no_parameters))
+                COV = CORR*SD.reshape((self.conf.no_parameters, 1))
+                COV = COV*SD.reshape((1, self.conf.no_parameters))
                 # print(CORR)
                 if init_flag:
                     init_flag = False
                     coef = np.mean(initial_SD/SD)
                 ratio = current_rate/self.target_rate
                 if ratio > 1.2:  # acceptance rate is too high:
-                    coef = coef*min(ratio**(2/self.Problem.no_parameters), 2.0)
+                    coef = coef*min(ratio**(2/self.conf.no_parameters), 2.0)
                     self.Proposal.set_covariance(coef*COV)
                     # print("COVARIANCE CHANGED (rate too high):", ratio, self.Proposal.proposal_std)
                 elif (1/ratio) > 1.2:  # acceptance rate is too low:
-                    coef = coef*max(ratio**(2/self.Problem.no_parameters), 0.5)
+                    coef = coef*max(ratio**(2/self.conf.no_parameters), 0.5)
                     self.Proposal.set_covariance(coef*COV)
                 #     print("COVARIANCE CHANGED (rate too low):", ratio, self.Proposal.proposal_std)
                 # else:
@@ -281,22 +286,22 @@ class Algorithm_MH_adaptive(Algorithm_PARENT):  # initiated by SAMPLERs
 
 
 class Algorithm_DAMH(Algorithm_PARENT):  # initiated by SAMPLERs
-    def __init__(self, Problem, Proposal, Solver, max_samples, max_evaluations, name, seed=0, initial_sample=None, G_initial_sample=None,
+    def __init__(self, Proposal, Solver, max_samples, max_evaluations, name, seed=0, initial_sample=None, G_initial_sample=None,
                  Surrogate=None, is_saved=True, save_raw_data=False, transform_before_saving=None, surrogate_is_updated=True,
-                 time_limit=float('inf'), output_dir=""):
-        super().__init__(Problem, Proposal, Solver, max_samples, max_evaluations, name, seed, initial_sample, G_initial_sample,
-                         Surrogate, is_saved, save_raw_data, transform_before_saving, surrogate_is_updated, time_limit, output_dir)
+                 time_limit=float('inf'), output_dir="", conf=None, prior=None, likelihood=None):
+        super().__init__(Proposal, Solver, max_samples, max_evaluations, name, seed, initial_sample, G_initial_sample,
+                         Surrogate, is_saved, save_raw_data, transform_before_saving, surrogate_is_updated, time_limit, output_dir, conf, prior, likelihood)
 
     def run(self):
         self.prepare()
         if self.is_saved:
             # posterior (vs approximated posterior) in rejected samples:
-            filename = os.path.join(self.output_dir, "saved_samples", self.Problem.name, "DAMH_rejected", self.name + ".csv")
+            filename = os.path.join(self.output_dir, "saved_samples", "DAMH_rejected", self.name + ".csv")
             os.makedirs(os.path.dirname(filename), exist_ok=True)
             self.__file_rejected = open(filename, 'w')
             self.__writer_rejected = csv.writer(self.__file_rejected)
             # posterior (vs approximated posterior) in accepted samples:
-            filename = os.path.join(self.output_dir, "saved_samples", self.Problem.name, "DAMH_accepted", self.name + ".csv")
+            filename = os.path.join(self.output_dir, "saved_samples", "DAMH_accepted", self.name + ".csv")
             os.makedirs(os.path.dirname(filename), exist_ok=True)
             self.__file_accepted = open(filename, 'w')
             self.__writer_accepted = csv.writer(self.__file_accepted)
@@ -400,8 +405,7 @@ class Proposal_GaussRandomWalk:  # initiated by SAMPLERs
 
 
 class Problem_Gauss:  # initiated by SAMPLERs
-    def __init__(self, no_parameters, prior_mean=0.0, prior_std=1.0, noise_std=1.0, no_observations=None, observations=None,
-                 seed=0, name='default_problem_name'):
+    def __init__(self, no_parameters, prior_mean=0.0, prior_std=1.0, noise_std=1.0, no_observations=None, observations=None):
         self.no_parameters = no_parameters
         if np.isscalar(prior_mean):
             self.prior_mean = np.full((no_parameters,), prior_mean)
@@ -413,10 +417,10 @@ class Problem_Gauss:  # initiated by SAMPLERs
             self.prior_std = np.full((no_parameters,), prior_std)
         else:
             self.prior_std = np.array(prior_std)
-        if self.prior_std.ndim == 1:  # prior - normal uncorrelated
-            self.get_log_prior = self._get_log_prior_uncorrelated
-        else:  # prior - normal correlated
-            self.get_log_prior = self.__get_log_prior_multivariate
+        # if self.prior_std.ndim == 1:  # prior - normal uncorrelated
+        #     self.get_log_prior = self._get_log_prior_uncorrelated
+        # else:  # prior - normal correlated
+        #     self.get_log_prior = self.__get_log_prior_multivariate
 
         self.observations = observations
         if no_observations is None:
@@ -424,44 +428,43 @@ class Problem_Gauss:  # initiated by SAMPLERs
         self.no_observations = no_observations
         self.noise_mean = np.zeros((no_observations,))
 
-        # noise std is scalar/vector/covariance matrix:
-        if np.isscalar(noise_std):
-            self.noise_std = np.full((no_observations,), noise_std)
-        else:
-            self.noise_std = np.array(noise_std)
-        if self.noise_std.ndim == 1:  # noise - normal uncorrelated
-            self.get_log_likelihood = self._get_log_likelihood_uncorrelated
-        else:  # noise - normal correlated
-            self.get_log_likelihood = self.__get_log_likelihood_multivariate
+        # # noise std is scalar/vector/covariance matrix:
+        # if np.isscalar(noise_std):
+        #     self.noise_std = np.full((no_observations,), noise_std)
+        # else:
+        #     self.noise_std = np.array(noise_std)
+        # if self.noise_std.ndim == 1:  # noise - normal uncorrelated
+        #     self.get_log_likelihood = self._get_log_likelihood_uncorrelated
+        # else:  # noise - normal correlated
+        #     self.get_log_likelihood = self.__get_log_likelihood_multivariate
 
-        self.name = name
         self.is_exponential = True
-        self.__generator = np.random.RandomState(seed)
+        # self.__generator = np.random.RandomState(seed)
 
-    def _get_log_likelihood_uncorrelated(self, G_sample):
-        v = self.observations - G_sample
-        invCv = v/(self.noise_std**2)
-        return -0.5*np.sum(v*invCv)
+    # def _get_log_likelihood_uncorrelated(self, G_sample):
+    #     v = self.observations - G_sample
+    #     invCv = v/(self.noise_std**2)
+    #     return -0.5*np.sum(v*invCv)
 
-    def __get_log_likelihood_multivariate(self, G_sample):
-        v = self.observations - G_sample.ravel()
-        invCv = np.linalg.solve(self.noise_std, v)
-        return -0.5*np.dot(v, invCv)
+    # def __get_log_likelihood_multivariate(self, G_sample):
+    #     v = self.observations - G_sample.ravel()
+    #     invCv = np.linalg.solve(self.noise_std, v)
+    #     return -0.5*np.dot(v, invCv)
 
-    def _get_log_prior_uncorrelated(self, sample):
-        v = sample - self.prior_mean
-        invCv = v/(self.prior_std**2)
-        return -0.5*np.dot(v, invCv)
+    # def _get_log_prior_uncorrelated(self, sample):
+    #     v = sample - self.prior_mean
+    #     invCv = v/(self.prior_std**2)
+    #     return -0.5*np.dot(v, invCv)
 
-    def __get_log_prior_multivariate(self, sample):
-        v = sample - self.prior_mean
-        invCv = np.linalg.solve(self.prior_std, v)
-        return -0.5*np.dot(v, invCv)
+    # def __get_log_prior_multivariate(self, sample):
+    #     v = sample - self.prior_mean
+    #     invCv = np.linalg.solve(self.prior_std, v)
+    #     return -0.5*np.dot(v, invCv)
 
-    def get_log_posterior(self, sample, G_sample, convergence_tag=0):
-        if convergence_tag < 0:
-            return -np.inf
-        return self.get_log_likelihood(G_sample) + self.get_log_prior(sample)
+    # def get_log_posterior(self, sample, G_sample, convergence_tag=0):
+    #     if convergence_tag < 0:
+    #         return -np.inf
+    #     return self.get_log_likelihood(G_sample) + self.get_log_prior(sample)
 
 # class Snapshot:
 #     def __init__(self, sample=None, G_sample=None, weight=None):
