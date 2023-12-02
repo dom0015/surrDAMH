@@ -1,19 +1,6 @@
 {
-    "problem_name": "simple",
     "no_parameters": 2,
     "no_observations": 1,
-    "problem_parameters": {
-        "prior_mean_": [5.0, 3.0],
-        "prior_std_": [[4,-2],[-2,4]],
-        "observations": [-1e-3],
-        "noise_std": 2e-4
-    },
-    "solver_module_path": "examples/solvers/solver_examples.py",
-    "solver_module_name": "solver_examples",
-    "solver_init_name": "Solver_linela2exp_local",
-    "solver_parameters": {
-    },
-    "no_solvers": 3,
     "samplers_list": [
         {
             "type": "MH",
@@ -37,8 +24,22 @@
             "surrogate_is_updated": false
         }
     ],
-    "surrogate_type": "poly",
-    "surr_updater_parameters": {
+
+    "problem_name_": "simple",
+    "problem_parameters_": {
+        "prior_mean": [5.0, 3.0],
+        "prior_std": [[4,-2],[-2,4]],
+        "observations": [-1e-3],
+        "noise_std": 2e-4
+    },
+    "solver_module_path_": "examples/solvers/solver_examples.py",
+    "solver_module_name_": "solver_examples",
+    "solver_init_name_": "Solver_linela2exp_local",
+    "solver_parameters_": {
+    },
+    "no_solvers_": 3,
+    "surrogate_type_": "poly",
+    "surr_updater_parameters_": {
         "max_degree": 10
     }
 }

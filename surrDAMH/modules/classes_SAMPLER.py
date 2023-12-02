@@ -16,19 +16,18 @@ from surrDAMH.likelihoods.parent import Likelihood
 
 
 class Algorithm_PARENT:
-    def __init__(self, Proposal, Solver, max_samples, max_evaluations, name, seed=0, initial_sample=None, G_initial_sample=None,
-                 Surrogate=None, is_saved=True, save_raw_data=False, transform_before_saving=None, surrogate_is_updated=True,
-                 time_limit=float('inf'), output_dir="", conf=None, prior: Prior = None, likelihood: Likelihood = None):
+    def __init__(self, Proposal, Solver, name, seed=0, initial_sample=None, G_initial_sample=None,
+                 Surrogate=None, is_saved=True, conf=None, stage=None, prior: Prior = None, likelihood: Likelihood = None):
         self.conf = conf
         self.prior = prior
         self.likelihood = likelihood
         self.Proposal = Proposal
         self.Solver = Solver
-        self.max_samples = max_samples
-        self.max_evaluations = max_evaluations
+        self.max_samples = stage.max_samples
+        self.max_evaluations = stage.max_evaluations
         self.name = name
         self.seed = seed
-        self.output_dir = output_dir
+        self.output_dir = conf.output_dir
         self.current_sample = initial_sample
         if self.current_sample is None:
             self.current_sample = self.prior.mean
@@ -36,18 +35,16 @@ class Algorithm_PARENT:
         self.Surrogate = Surrogate
         if Surrogate is None:
             self.__send_to_surrogate = self._empty_function
-        elif surrogate_is_updated is True:
+        elif stage.surrogate_is_updated:
             self.__send_to_surrogate = self.__send_to_surrogate__
         else:
             self.__send_to_surrogate = self._empty_function
         self.is_saved = is_saved
-        self.save_raw_data = save_raw_data
-        if transform_before_saving is None:
-            self.save_transformed_data = False
-        else:
-            self.save_transformed_data = True
+        self.save_raw_data = conf.save_raw_data
+        self.transform_before_saving = conf.transform_before_saving
+        if self.transform_before_saving:
             self.transform = self.prior.transform
-        self.time_limit = time_limit
+        self.time_limit = stage.time_limit
         self.__generator = np.random.RandomState(seed)
         self.no_accepted = 0
         self.no_prerejected = 0
@@ -105,7 +102,7 @@ class Algorithm_PARENT:
         self.G_current_sample = self.G_proposed_sample
         self.posterior_current_sample = self.posterior_proposed_sample
         if self.save_raw_data:
-            if self.save_transformed_data:
+            if self.transform_before_saving:
                 row = ['accepted'] + list(self.transform(self.proposed_sample)) + [self.convergence_tag] + list(self.G_current_sample.flatten())
             else:
                 row = ['accepted'] + list(self.proposed_sample) + [self.convergence_tag] + list(self.G_current_sample.flatten())
@@ -117,7 +114,7 @@ class Algorithm_PARENT:
         if self.convergence_tag > 0:
             self.__send_to_surrogate(sample=self.proposed_sample.copy(), G_sample=self.G_proposed_sample.copy(), weight=0)
         if self.save_raw_data:
-            if self.save_transformed_data:
+            if self.transform_before_saving:
                 row = ['rejected'] + list(self.transform(self.proposed_sample)) + [self.convergence_tag] + list(self.G_proposed_sample.flatten())
             else:
                 row = ['rejected'] + list(self.proposed_sample) + [self.convergence_tag] + list(self.G_proposed_sample.flatten())
@@ -151,7 +148,7 @@ class Algorithm_PARENT:
             return False
 
     def __write_to_file__(self):
-        if self.save_transformed_data:
+        if self.transform_before_saving:
             row = [1+self.no_rejected_current] + list(self.transform(self.current_sample))
         else:
             row = [1+self.no_rejected_current] + list(self.current_sample)
@@ -173,11 +170,10 @@ class Algorithm_PARENT:
 
 
 class Algorithm_MH(Algorithm_PARENT):  # initiated by SAMPLERs
-    def __init__(self, Proposal, Solver, max_samples, max_evaluations, name, seed=0, initial_sample=None, G_initial_sample=None,
-                 Surrogate=None, is_saved=True, save_raw_data=False, transform_before_saving=None, surrogate_is_updated=True,
-                 time_limit=float('inf'), output_dir="", conf=None, prior=None, likelihood=None):
-        super().__init__(Proposal, Solver, max_samples, max_evaluations, name, seed, initial_sample, G_initial_sample,
-                         Surrogate, is_saved, save_raw_data, transform_before_saving, surrogate_is_updated, time_limit, output_dir, conf, prior, likelihood)
+    def __init__(self, Proposal, Solver, name, seed=0, initial_sample=None, G_initial_sample=None,
+                 Surrogate=None, is_saved=True, conf=None, stage=None, prior=None, likelihood=None):
+        super().__init__(Proposal, Solver, name, seed, initial_sample, G_initial_sample,
+                         Surrogate, is_saved, conf, stage, prior, likelihood)
         self.max_samples = min(self.max_samples, self.max_evaluations)
 
     def run(self):
@@ -196,19 +192,18 @@ class Algorithm_MH(Algorithm_PARENT):  # initiated by SAMPLERs
 
 
 class Algorithm_MH_adaptive(Algorithm_PARENT):  # initiated by SAMPLERs
-    def __init__(self, Proposal, Solver, max_samples, max_evaluations, name, target_rate=None, corr_limit=None, sample_limit=None,
-                 seed=0, initial_sample=None, G_initial_sample=None, Surrogate=None, is_saved=True, save_raw_data=False,
-                 transform_before_saving=None, surrogate_is_updated=True, time_limit=float('inf'), output_dir="", conf=None, prior=None, likelihood=None):
-        super().__init__(Proposal, Solver, max_samples, max_evaluations, name, seed, initial_sample, G_initial_sample,
-                         Surrogate, is_saved, save_raw_data, transform_before_saving, surrogate_is_updated, time_limit, output_dir, conf, prior, likelihood)
+    def __init__(self, Proposal, Solver, name, seed=0, initial_sample=None, G_initial_sample=None,
+                 Surrogate=None, is_saved=True, conf=None, stage=None, prior=None, likelihood=None):
+        super().__init__(Proposal, Solver, name, seed, initial_sample, G_initial_sample,
+                         Surrogate, is_saved, conf, stage, prior, likelihood)
         self.max_samples = min(self.max_samples, self.max_evaluations)
-        self.target_rate = target_rate  # target acceptance rate
+        self.target_rate = stage.adaptive_target_rate  # target acceptance rate
         if self.target_rate is None:
             self.target_rate = 0.25
-        self.corr_limit = corr_limit  # maximal alowed correlation of proposal distribution
+        self.corr_limit = stage.adaptive_corr_limit  # maximal alowed correlation of proposal distribution
         if self.corr_limit is None:
             self.corr_limit = 0.3
-        self.sample_limit = sample_limit  # minimal number of accepted/rejected samples to evaluate acceptance rate
+        self.sample_limit = stage.adaptive_sample_limit  # minimal number of accepted/rejected samples to evaluate acceptance rate
         if self.sample_limit is None:
             self.sample_limit = 10
 
@@ -286,11 +281,10 @@ class Algorithm_MH_adaptive(Algorithm_PARENT):  # initiated by SAMPLERs
 
 
 class Algorithm_DAMH(Algorithm_PARENT):  # initiated by SAMPLERs
-    def __init__(self, Proposal, Solver, max_samples, max_evaluations, name, seed=0, initial_sample=None, G_initial_sample=None,
-                 Surrogate=None, is_saved=True, save_raw_data=False, transform_before_saving=None, surrogate_is_updated=True,
-                 time_limit=float('inf'), output_dir="", conf=None, prior=None, likelihood=None):
-        super().__init__(Proposal, Solver, max_samples, max_evaluations, name, seed, initial_sample, G_initial_sample,
-                         Surrogate, is_saved, save_raw_data, transform_before_saving, surrogate_is_updated, time_limit, output_dir, conf, prior, likelihood)
+    def __init__(self, Proposal, Solver, name, seed=0, initial_sample=None, G_initial_sample=None,
+                 Surrogate=None, is_saved=True, conf=None, stage=None, prior=None, likelihood=None):
+        super().__init__(Proposal, Solver, name, seed, initial_sample, G_initial_sample,
+                         Surrogate, is_saved, conf, stage, prior, likelihood)
 
     def run(self):
         self.prepare()
@@ -352,7 +346,7 @@ class Algorithm_DAMH(Algorithm_PARENT):  # initiated by SAMPLERs
                 self.no_prerejected += 1
                 self.no_rejected_current += 1
                 if self.save_raw_data:
-                    if self.save_transformed_data:
+                    if self.transform_before_saving:
                         row = ['prerejected'] + list(self.transform(self.proposed_sample)) + [0] + list(GS_proposed_sample.flatten())
                     else:
                         row = ['prerejected'] + list(self.proposed_sample) + [0] + list(GS_proposed_sample.flatten())
@@ -376,12 +370,12 @@ class Proposal_GaussRandomWalk:  # initiated by SAMPLERs
         self.is_symmetric = True
         self.is_exponential = True
 
-    def set_covariance(self, proposal_std=1.0):
+    def set_covariance(self, proposal_sd=1.0):
         # prior std is scalar/vector/covariance matrix:
-        if np.isscalar(proposal_std):
-            self.proposal_std = np.full((self.no_parameters,), proposal_std)
+        if np.isscalar(proposal_sd):
+            self.proposal_std = np.full((self.no_parameters,), proposal_sd)
         else:
-            self.proposal_std = np.array(proposal_std)
+            self.proposal_std = np.array(proposal_sd)
         if self.proposal_std.ndim == 1:  # proposal - normal uncorrelated
             self.propose_sample = self._propose_sample_uncorrelated
         else:  # proposal - normal correlated
@@ -404,67 +398,67 @@ class Proposal_GaussRandomWalk:  # initiated by SAMPLERs
         return sample
 
 
-class Problem_Gauss:  # initiated by SAMPLERs
-    def __init__(self, no_parameters, prior_mean=0.0, prior_std=1.0, noise_std=1.0, no_observations=None, observations=None):
-        self.no_parameters = no_parameters
-        if np.isscalar(prior_mean):
-            self.prior_mean = np.full((no_parameters,), prior_mean)
-        else:
-            self.prior_mean = np.array(prior_mean)
+# class Problem_Gauss:  # initiated by SAMPLERs
+#     def __init__(self, no_parameters, prior_mean=0.0, prior_std=1.0, noise_std=1.0, no_observations=None, observations=None):
+#         self.no_parameters = no_parameters
+#         if np.isscalar(prior_mean):
+#             self.prior_mean = np.full((no_parameters,), prior_mean)
+#         else:
+#             self.prior_mean = np.array(prior_mean)
 
-        # prior std is scalar/vector/covariance matrix:
-        if np.isscalar(prior_std):
-            self.prior_std = np.full((no_parameters,), prior_std)
-        else:
-            self.prior_std = np.array(prior_std)
-        # if self.prior_std.ndim == 1:  # prior - normal uncorrelated
-        #     self.get_log_prior = self._get_log_prior_uncorrelated
-        # else:  # prior - normal correlated
-        #     self.get_log_prior = self.__get_log_prior_multivariate
+#         # prior std is scalar/vector/covariance matrix:
+#         if np.isscalar(prior_std):
+#             self.prior_std = np.full((no_parameters,), prior_std)
+#         else:
+#             self.prior_std = np.array(prior_std)
+#         # if self.prior_std.ndim == 1:  # prior - normal uncorrelated
+#         #     self.get_log_prior = self._get_log_prior_uncorrelated
+#         # else:  # prior - normal correlated
+#         #     self.get_log_prior = self.__get_log_prior_multivariate
 
-        self.observations = observations
-        if no_observations is None:
-            no_observations = len(observations)
-        self.no_observations = no_observations
-        self.noise_mean = np.zeros((no_observations,))
+#         self.observations = observations
+#         if no_observations is None:
+#             no_observations = len(observations)
+#         self.no_observations = no_observations
+#         self.noise_mean = np.zeros((no_observations,))
 
-        # # noise std is scalar/vector/covariance matrix:
-        # if np.isscalar(noise_std):
-        #     self.noise_std = np.full((no_observations,), noise_std)
-        # else:
-        #     self.noise_std = np.array(noise_std)
-        # if self.noise_std.ndim == 1:  # noise - normal uncorrelated
-        #     self.get_log_likelihood = self._get_log_likelihood_uncorrelated
-        # else:  # noise - normal correlated
-        #     self.get_log_likelihood = self.__get_log_likelihood_multivariate
+#         # # noise std is scalar/vector/covariance matrix:
+#         # if np.isscalar(noise_std):is_adaptive=True))
+#         #     self.noise_std = np.full((no_observations,), noise_std)
+#         # else:
+#         #     self.noise_std = np.array(noise_std)
+#         # if self.noise_std.ndim == 1:  # noise - normal uncorrelated
+#         #     self.get_log_likelihood = self._get_log_likelihood_uncorrelated
+#         # else:  # noise - normal correlated
+#         #     self.get_log_likelihood = self.__get_log_likelihood_multivariate
 
-        self.is_exponential = True
-        # self.__generator = np.random.RandomState(seed)
+#         self.is_exponential = True
+#         # self.__generator = np.random.RandomState(seed)
 
-    # def _get_log_likelihood_uncorrelated(self, G_sample):
-    #     v = self.observations - G_sample
-    #     invCv = v/(self.noise_std**2)
-    #     return -0.5*np.sum(v*invCv)
+#     # def _get_log_likelihood_uncorrelated(self, G_sample):
+#     #     v = self.observations - G_sample
+#     #     invCv = v/(self.noise_std**2)
+#     #     return -0.5*np.sum(v*invCv)
 
-    # def __get_log_likelihood_multivariate(self, G_sample):
-    #     v = self.observations - G_sample.ravel()
-    #     invCv = np.linalg.solve(self.noise_std, v)
-    #     return -0.5*np.dot(v, invCv)
+#     # def __get_log_likelihood_multivariate(self, G_sample):
+#     #     v = self.observations - G_sample.ravel()
+#     #     invCv = np.linalg.solve(self.noise_std, v)
+#     #     return -0.5*np.dot(v, invCv)
 
-    # def _get_log_prior_uncorrelated(self, sample):
-    #     v = sample - self.prior_mean
-    #     invCv = v/(self.prior_std**2)
-    #     return -0.5*np.dot(v, invCv)
+#     # def _get_log_prior_uncorrelated(self, sample):
+#     #     v = sample - self.prior_mean
+#     #     invCv = v/(self.prior_std**2)
+#     #     return -0.5*np.dot(v, invCv)
 
-    # def __get_log_prior_multivariate(self, sample):
-    #     v = sample - self.prior_mean
-    #     invCv = np.linalg.solve(self.prior_std, v)
-    #     return -0.5*np.dot(v, invCv)
+#     # def __get_log_prior_multivariate(self, sample):
+#     #     v = sample - self.prior_mean
+#     #     invCv = np.linalg.solve(self.prior_std, v)
+#     #     return -0.5*np.dot(v, invCv)
 
-    # def get_log_posterior(self, sample, G_sample, convergence_tag=0):
-    #     if convergence_tag < 0:
-    #         return -np.inf
-    #     return self.get_log_likelihood(G_sample) + self.get_log_prior(sample)
+#     # def get_log_posterior(self, sample, G_sample, convergence_tag=0):
+#     #     if convergence_tag < 0:
+#     #         return -np.inf
+#     #     return self.get_log_likelihood(G_sample) + self.get_log_prior(sample)
 
 # class Snapshot:
 #     def __init__(self, sample=None, G_sample=None, weight=None):

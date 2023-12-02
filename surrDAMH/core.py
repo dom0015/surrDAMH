@@ -10,6 +10,8 @@ from surrDAMH.configuration import Configuration
 from surrDAMH.priors.parent import Prior
 from surrDAMH.likelihoods.parent import Likelihood
 from surrDAMH.solver_specification import SolverSpec
+from typing import List
+from surrDAMH.stages import Stage
 
 
 class SamplingFramework:
@@ -18,12 +20,14 @@ class SamplingFramework:
     Allows user-specified surrogate model.
     """
 
-    def __init__(self, configuration: Configuration, surrogate_updater: Updater, prior: Prior, likelihood: Likelihood, solver_spec: SolverSpec):
+    def __init__(self, configuration: Configuration, surrogate_updater: Updater, prior: Prior, likelihood: Likelihood,
+                 solver_spec: SolverSpec, list_of_stages: List[Stage]):
         self.configuration = configuration
         self.surrogate_updater = surrogate_updater
         self.prior = prior
         self.likelihood = likelihood
         self.solver = solver_spec
+        self.list_of_stages = list_of_stages
 
     def run(self):
         comm_world = MPI.COMM_WORLD
@@ -33,7 +37,7 @@ class SamplingFramework:
         elif rank_world == self.configuration.no_samplers+1:
             surrDAMH.process_COLLECTOR.run_COLLECTOR(self.configuration, surrogate_updater=self.surrogate_updater)
         else:
-            surrDAMH.process_SAMPLER.run_SAMPLER(self.configuration, self.prior, self.likelihood)
+            surrDAMH.process_SAMPLER.run_SAMPLER(self.configuration, self.prior, self.likelihood, self.list_of_stages)
 
         comm_world.Barrier()
         print("RANK", rank_world, "terminated.")

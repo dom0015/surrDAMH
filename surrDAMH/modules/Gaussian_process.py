@@ -8,41 +8,48 @@ Created on Fri Aug  6 14:07:23 2021
 
 import numpy as np
 import scipy.linalg
-
-# Gaussian random process
-# zero mean expected
+import numpy.typing as npt
 
 
-def autocorr_function_default(distance, corr_length):
+def autocorr_function_default(distances, corr_length):
     if corr_length == 0:
-        return np.eye(np.shape(distance)[0])
+        return np.eye(np.shape(distances)[0])
     # Ornstein-Uhlenbeck covariance function
-    return np.exp(-distance/corr_length)
+    return np.exp(-distances/corr_length)
 
 
-def autocorr_function_sqexp(distance, corr_length):
+def autocorr_function_sqexp(distances, corr_length):
     if corr_length == 0:
-        return np.eye(np.shape(distance)[0])
+        return np.eye(np.shape(distances)[0])
     # squared exponential covariance function
-    return np.exp(-(distance**2)/(2*corr_length**2))
+    return np.exp(-(distances**2)/(2*corr_length**2))
 
 
-def assemble_covariance_matrix(list_block_params):
+def assemble_covariance_matrix(block_spec_list: list) -> npt.NDArray:
+    # Calculates covariance matrix for Gaussian random process.
+    # It can be composed of separate diagonal blocks.
+    # Zero mean is expected.
+    # block_spec_list: list of dict
+    # dict keys: time_grid, corr_length, std, (cov_type)
+    # time_grid: list[float] | 1-D numpy array
+    # corr_length: float
+    # std: list[float] | 1-D numpy array
+    # cov_type: "Ornstein-Uhlenbeck" (default) | "squared_exponential"
     blocks = []
-    for b in list_block_params:
-        grid = np.array(b["time_grid"]).reshape((1, -1))
+    for block_spec in block_spec_list:
+        grid = np.array(block_spec["time_grid"]).reshape((1, -1))
         distances = np.abs(grid - grid.transpose())
-        corr_length = b["corr_length"]
-        std_list = b["std"]
+        corr_length = block_spec["corr_length"]
+        std_list = block_spec["std"]
         if type(std_list) is list:
-            std = np.array(b["std"]).reshape((1, -1))
+            std = np.array(block_spec["std"]).reshape((1, -1))
         else:
             std = std_list
         variance = std**2
-        if "cov_type" not in b.keys():
+        if "cov_type" not in block_spec.keys():
             cov_type = None
         else:
-            cov_type = b["cov_type"]
+            cov_type = block_spec["cov_type"]
 
         if cov_type == "squared_exponential":
             block = variance * autocorr_function_sqexp(distances, corr_length)

@@ -7,27 +7,43 @@ Created on Sun Feb 28 12:32:40 2021
 """
 
 from mpi4py import MPI
-import os
 import sys
-# sys.path.append(os.getcwd())
-# sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 import ruamel.yaml as yaml
-# import importlib.util as iu
-from surrDAMH.modules import classes_communication
 from surrDAMH.modules import Gaussian_process
-from surrDAMH.modules import transformations as trans
 import numpy as np
+from typing import Literal
 
 
 class Configuration:
-    def __init__(self, output_dir: str, use_surrogate=True):
+    def __init__(self, output_dir: str, no_parameters: int, no_observations: int,
+                 use_surrogate: bool = True,
+                 no_solvers: int = 2,
+                 solver_maxprocs: int = 1,
+                 solver_returns_tag: bool = False,
+                 pickled_observations: bool = True,
+                 save_raw_data: bool = False,
+                 transform_before_saving: bool = True,
+                 initial_sample_type: Literal["lhs", "prior_mean"] = "lhs",
+                 debug: bool = False,
+                 max_buffer_size=1 << 30) -> None:
         self.output_dir = output_dir
+        self.no_parameters = no_parameters
+        self.no_observations = no_observations
+        self.use_surrogate = use_surrogate
+        self.no_solvers = no_solvers
+        self.solver_maxprocs = solver_maxprocs
+        self.solver_returns_tag = solver_returns_tag
+        self.pickled_observations = pickled_observations
+        self.save_raw_data = save_raw_data
+        self.transform_before_saving = transform_before_saving
+        self.initial_sample_type = initial_sample_type
+        self.debug = debug
+        self.max_buffer_size = max_buffer_size
 
         comm_world = MPI.COMM_WORLD
         size_world = comm_world.Get_size()
 
-        self.use_surrogate = use_surrogate
-        if use_surrogate:
+        if self.use_surrogate:
             self.no_samplers = size_world - 2
             self.rank_collector = self.no_samplers + 1
         else:
@@ -36,50 +52,51 @@ class Configuration:
             print("Number of MPI processes is too low. Use at least \"mpirun -n 4\".")
         self.solver_parent_rank = self.no_samplers
 
-    def set_from_file(self, conf_path):
-        # TODO: input - dict or file with dict
+    def set_from_dict(self, conf_dict: dict = None, conf_dict_path: str = None) -> None:
+        """
+        Input: conf_dict or path to yaml/json file have to be specified.
+        """
+        if conf_dict is None:
+            with open(conf_dict_path) as f:
+                conf_dict = yaml.safe_load(f)
 
-        # MODEL PROBLEM CHOICE:
-        basename = os.path.basename(conf_path)
-        conf_name, fext = os.path.splitext(basename)
-        with open(conf_path) as f:
-            conf = yaml.safe_load(f)
+        # NECESSARY PARAMETERS (no default value):
+        self.no_parameters = conf_dict["no_parameters"]
+        self.no_observations = conf_dict["no_observations"]
 
-# NECESSARY PARAMETERS
-        self.no_parameters = conf["no_parameters"]
-        # length of the vector of observations, not repeated observations
-        self.no_observations = conf["no_observations"]
-        self.no_solvers = conf["no_solvers"]
+        # NON-NECESSARY PARAMETERS (default value specified in init):
+        if "no_solvers" in conf_dict.keys():
+            self.no_solvers = conf_dict["no_solvers"]
+        if "solver_maxprocs" in conf_dict.keys():
+            self.solver_maxprocs = conf_dict["solver_maxprocs"]
+        if "solver_returns_tag" in conf_dict.keys():
+            self.solver_returns_tag = conf_dict["solver_returns_tag"]
+        if "pickled_observations" in conf_dict.keys():
+            self.pickled_observations = conf_dict["pickled_observations"]
+        if "save_raw_data" in conf_dict.keys():
+            self.save_raw_data = conf_dict["save_raw_data"]
+        if "transform_before_saving" in conf_dict.keys():
+            self.transform_before_saving = conf_dict["transform_before_saving"]
+        if "initial_sample_type" in conf_dict.keys():
+            self.initial_sample_type = conf_dict["initial_sample_type"]
+        if "debug" in conf_dict.keys():
+            self.debug = conf_dict["debug"]
+        if "max_buffer_size" in conf_dict.keys():
+            self.max_buffer_size = conf_dict["max_buffer_size"]
 
-# NON-NECESSARY PARAMETERS (DEFAULT SPECIFIED)
-        if "solver_returns_tag" in conf.keys():
-            self.solver_returns_tag = conf["solver_returns_tag"]
-        else:
-            self.solver_returns_tag = False
-
-        if "pickled_observations" in conf.keys():
-            self.pickled_observations = conf["pickled_observations"]
-        else:
-            self.pickled_observations = True
-
-        if "solver_maxprocs" in conf.keys():
-            self.solver_maxprocs = conf["solver_maxprocs"]
-        else:
-            self.solver_maxprocs = 1
-
-# SOLVER SPECIFICATION:
-        if "paths_to_append" in conf.keys():
-            for path in conf["paths_to_append"]:
+    # OTHER NON-NECESSARY SETTINGS:
+        if "paths_to_append" in conf_dict.keys():
+            for path in conf_dict["paths_to_append"]:
                 sys.path.append(path)
 
 # LIKELIHOOD
-        if "noise_model" in conf.keys():
+        if "noise_model" in conf_dict.keys():
             noise_cov = Gaussian_process.assemble_covariance_matrix(
-                conf["noise_model"])
+                conf_dict["noise_model"])
             self.problem_parameters["noise_std"] = noise_cov
 
 # LIST OF STAGES (STAGES LIST):
-        self.list_alg = conf["samplers_list"]
+        self.list_alg = conf_dict["samplers_list"]
         for a in self.list_alg:
             if "max_samples" not in a.keys():
                 a["max_samples"] = sys.maxsize
@@ -87,10 +104,7 @@ class Configuration:
                 a["max_evaluations"] = sys.maxsize
             if "time_limit" not in a.keys():
                 a["time_limit"] = np.inf
-        if "initial_sample_type" in conf.keys():
-            self.initial_sample_type = conf["initial_sample_type"]
-        else:
-            self.initial_sample_type = "lhs"
+
 
 # SURROGATE MODEL SPECIFICATION:
         # if "surrogate_type" in conf.keys():
@@ -147,15 +161,7 @@ class Configuration:
         # for idx in range(self.no_solvers):  # deflation test
         #     self.solver_parent_parameters.append(tmp.copy())
         #     self.solver_parent_parameters[idx]["solver_id"] = idx
-        self.max_buffer_size = 1 << 30
-        
-        self.debug = False
-        if "debug" in conf.keys():
-            self.debug = conf["debug"]
-        if "save_raw_data" in conf.keys():
-            self.save_raw_data = conf["save_raw_data"]
-        else:
-            self.save_raw_data = False
+
         # if "save_transformed_data" in conf.keys():
         #     self.save_transformed_data = conf["save_transformed_data"]
         # else:
@@ -164,6 +170,3 @@ class Configuration:
         #     self.transform_before_saving = self.transform2
         # else:
         #     self.transform_before_saving = None
-        self.transform_before_saving = True
-
-        # defaultní hodnoty nastavit v initu, v této funkci kdyžta kpřepsat ze souboru
