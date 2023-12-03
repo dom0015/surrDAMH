@@ -57,6 +57,7 @@ def run_SAMPLER(conf: Configuration, prior: Prior, likelihood: Likelihood, list_
                 Surrogate = my_Surr
                 surrogate_is_updated = stage.surrogate_is_updated
             if stage.is_adaptive:
+                stage.name = 'alg' + str(i).zfill(4) + '_MH_adaptive'
                 my_Alg = cS.Algorithm_MH_adaptive(Proposal=my_Prop,
                                                   Solver=Solver,
                                                   Surrogate=Surrogate,
@@ -65,9 +66,9 @@ def run_SAMPLER(conf: Configuration, prior: Prior, likelihood: Likelihood, list_
                                                   prior=prior,
                                                   likelihood=likelihood,
                                                   initial_sample=initial_sample,
-                                                  name='alg' + str(i).zfill(4) + 'MH_adaptive_rank' + str(rank_world),
                                                   seed=seed)
             else:
+                stage.name = 'alg' + str(i).zfill(4) + 'MH'
                 my_Alg = cS.Algorithm_MH(Proposal=my_Prop,
                                          Solver=Solver,
                                          Surrogate=Surrogate,
@@ -76,9 +77,9 @@ def run_SAMPLER(conf: Configuration, prior: Prior, likelihood: Likelihood, list_
                                          prior=prior,
                                          likelihood=likelihood,
                                          initial_sample=initial_sample,
-                                         name='alg' + str(i).zfill(4) + 'MH_rank' + str(rank_world),
                                          seed=seed)
         elif stage.algorithm_type == 'DAMH':
+            stage.name = 'alg' + str(i).zfill(4) + 'DAMH'
             my_Alg = cS.Algorithm_DAMH(Proposal=my_Prop,
                                        Solver=my_Sol,
                                        Surrogate=my_Surr,
@@ -87,7 +88,6 @@ def run_SAMPLER(conf: Configuration, prior: Prior, likelihood: Likelihood, list_
                                        prior=prior,
                                        likelihood=likelihood,
                                        initial_sample=initial_sample,
-                                       name='alg' + str(i).zfill(4) + 'DAMH_rank' + str(rank_world),
                                        seed=seed)
         print('--- SAMPLER ' + my_Alg.name + ' starts ---')
         # print("RANK", rank_world, "INITIAL SAMPLE", initial_sample)

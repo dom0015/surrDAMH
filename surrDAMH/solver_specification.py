@@ -1,15 +1,21 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+from dataclasses import dataclass
+
+
+@dataclass
 class SolverSpec:
     """
     Solvers are initiated by spawned processes.
     """
-    def __init__(self, solver_module_path: str, solver_module_name: str, solver_class_name: str, solver_parameters: dict = {}) -> None:
-        self.solver_module_path = solver_module_path
-        self.solver_module_name = solver_module_name
-        self.solver_class_name = solver_class_name
-        self.solver_parameters = solver_parameters
+    solver_module_path: str
+    solver_module_name: str
+    solver_class_name: str
+    solver_parameters: dict
+
+    # def __post_init__(self) -> None:
+    #     self.solver_parameters = {}
 
 
 class SolverSpecExample1(SolverSpec):
@@ -19,6 +25,7 @@ class SolverSpecExample1(SolverSpec):
     observation = (x**2-y)*(log((x-y)**2+1))
     x in (0,length), u = par[0] in (0,m), u = par[1] in (m,length)
     """
+
     def __init__(self) -> None:
         self.solver_module_path = "examples/solvers/solver_examples.py"
         self.solver_module_name = "solver_examples"
@@ -37,6 +44,7 @@ class SolverSpecExample2(SolverSpec):
          p'(length) = 0
     observed value is p(length)
     """
+
     def __init__(self, f: float = -0.1, length: float = 1.0, m: float = 0.5) -> None:
         self.solver_module_path = "examples/solvers/solver_examples.py"
         self.solver_module_name = "solver_examples"
@@ -50,6 +58,7 @@ class SolverSpecGeneric(SolverSpec):
     Takes user-specified number of parameters (no_parameters), 
     returns their mean in the form of a constant vector of user-specified length (no_observations).
     """
+
     def __init__(self, no_parameters: int = 3, no_observations: int = 2) -> None:
         self.solver_module_path = "examples/solvers/solver_examples.py"
         self.solver_module_name = "solver_examples"

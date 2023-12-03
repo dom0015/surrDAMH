@@ -12,6 +12,10 @@ from surrDAMH.likelihoods.parent import Likelihood
 from surrDAMH.solver_specification import SolverSpec
 from typing import List
 from surrDAMH.stages import Stage
+from surrDAMH.modules.tools import ensure_dir
+import os
+import pickle
+import yaml
 
 
 class SamplingFramework:
@@ -32,6 +36,20 @@ class SamplingFramework:
     def run(self):
         comm_world = MPI.COMM_WORLD
         rank_world = comm_world.Get_rank()
+
+        if rank_world == 0:  # serialize to file
+            ensure_dir(self.configuration.output_dir)
+            with open(os.path.join(self.configuration.output_dir, "sampling_framework.pkl"), 'wb') as f:
+                pickle.dump(self, f)
+            with open(os.path.join(self.configuration.output_dir, "sampling_framework.yaml"), 'w') as f:
+                yaml.dump(self, f)
+
+        """
+        pickle deserialize:
+        with open(os.path.join(conf.output_dir, "sampling_framework.pkl"), 'rb') as f:
+            reconstructed_sam = pickle.load(f)
+        """
+
         if rank_world == self.configuration.no_samplers:
             surrDAMH.process_SOLVER.run_SOLVER(self.configuration, self.prior, self.solver)
         elif rank_world == self.configuration.no_samplers+1:

@@ -16,8 +16,8 @@ from surrDAMH.likelihoods.parent import Likelihood
 
 
 class Algorithm_PARENT:
-    def __init__(self, Proposal, Solver, name, seed=0, initial_sample=None, G_initial_sample=None,
-                 Surrogate=None, is_saved=True, conf=None, stage=None, prior: Prior = None, likelihood: Likelihood = None):
+    def __init__(self, Proposal, Solver, seed=0, initial_sample=None, G_initial_sample=None,
+                 Surrogate=None, conf=None, stage=None, prior: Prior = None, likelihood: Likelihood = None):
         self.conf = conf
         self.prior = prior
         self.likelihood = likelihood
@@ -25,27 +25,29 @@ class Algorithm_PARENT:
         self.Solver = Solver
         self.max_samples = stage.max_samples
         self.max_evaluations = stage.max_evaluations
-        self.name = name
         self.seed = seed
         self.output_dir = conf.output_dir
         self.current_sample = initial_sample
+        self.is_saved = stage.is_saved
+        self.name = stage.name
+        self.rank_world = MPI.COMM_WORLD.Get_rank()
+        self.csv_filename = "rank" + str(self.rank_world).zfill(4) + ".csv"
         if self.current_sample is None:
             self.current_sample = self.prior.mean
         self.G_current_sample = G_initial_sample
         self.Surrogate = Surrogate
         if Surrogate is None:
-            self.__send_to_surrogate = self._empty_function
+            self._send_to_surrogate = self._empty_function
         elif stage.surrogate_is_updated:
-            self.__send_to_surrogate = self.__send_to_surrogate__
+            self._send_to_surrogate = self._send_to_surrogate__
         else:
-            self.__send_to_surrogate = self._empty_function
-        self.is_saved = is_saved
+            self._send_to_surrogate = self._empty_function
         self.save_raw_data = conf.save_raw_data
         self.transform_before_saving = conf.transform_before_saving
         if self.transform_before_saving:
             self.transform = self.prior.transform
         self.time_limit = stage.time_limit
-        self.__generator = np.random.RandomState(seed)
+        self._generator = np.random.RandomState(seed)
         self.no_accepted = 0
         self.no_prerejected = 0
         self.no_rejected = 0
@@ -60,18 +62,18 @@ class Algorithm_PARENT:
         self.time_start = time.time()
         if self.is_saved:
             # saves [no. sample posterior pre_posterior]:
-            filename_G = os.path.join(self.output_dir, "saved_samples", "data", self.name + ".csv")
+            filename_G = os.path.join(self.output_dir, "sampling_output", "samples", self.name, self.csv_filename)
             os.makedirs(os.path.dirname(filename_G), exist_ok=True)
-            self.__file_G = open(filename_G, 'w')
-            self.__writer_G = csv.writer(self.__file_G)
-            self.__write_to_file = self.__write_to_file__
+            self._file_G = open(filename_G, 'w')
+            self._writer_G = csv.writer(self._file_G)
+            self._write_to_file = self._write_to_file__
         else:
-            self.__write_to_file = self._empty_function
+            self._write_to_file = self._empty_function
         if self.save_raw_data:
-            filename = os.path.join(self.output_dir, "saved_samples", "raw_data", self.name + ".csv")
+            filename = os.path.join(self.output_dir, "sampling_output", "raw_data", self.name, self.csv_filename)
             os.makedirs(os.path.dirname(filename), exist_ok=True)
-            self.__file_raw = open(filename, 'w')
-            self.writer_raw = csv.writer(self.__file_raw)
+            self._file_raw = open(filename, 'w')
+            self.writer_raw = csv.writer(self._file_raw)
             """ temporary (4 lines, monitoring log_ratio): """
             # filename = os.path.join(self.output_dir, "temp", self.Problem.name, "log_ratio", self.name + ".csv")
             # os.makedirs(os.path.dirname(filename), exist_ok=True)
@@ -94,8 +96,8 @@ class Algorithm_PARENT:
         # self.writer_temp.writerow(row)
 
     def if_accepted(self):
-        self.__write_to_file()
-        self.__send_to_surrogate(sample=self.current_sample.copy(), G_sample=self.G_current_sample.copy(), weight=self.no_rejected_current+1)
+        self._write_to_file()
+        self._send_to_surrogate(sample=self.current_sample.copy(), G_sample=self.G_current_sample.copy(), weight=self.no_rejected_current+1)
         self.no_accepted += 1
         self.no_rejected_current = 0
         self.current_sample = self.proposed_sample
@@ -112,7 +114,7 @@ class Algorithm_PARENT:
         self.no_rejected += 1
         self.no_rejected_current += 1
         if self.convergence_tag > 0:
-            self.__send_to_surrogate(sample=self.proposed_sample.copy(), G_sample=self.G_proposed_sample.copy(), weight=0)
+            self._send_to_surrogate(sample=self.proposed_sample.copy(), G_sample=self.G_proposed_sample.copy(), weight=0)
         if self.save_raw_data:
             if self.transform_before_saving:
                 row = ['rejected'] + list(self.transform(self.proposed_sample)) + [self.convergence_tag] + list(self.G_proposed_sample.flatten())
@@ -121,10 +123,10 @@ class Algorithm_PARENT:
             self.writer_raw.writerow(row)
 
     def close_files(self):
-        self.__write_to_file()
+        self._write_to_file()
         if self.is_saved:
-            self.__file_G.close()
-            filename_notes = os.path.join(self.output_dir, "saved_samples", "notes", self.name + ".csv")
+            self._file_G.close()
+            filename_notes = os.path.join(self.output_dir, "sampling_output", "notes", self.name, self.csv_filename)
             os.makedirs(os.path.dirname(filename_notes), exist_ok=True)
             labels = ["accepted", "rejected", "pre-rejected", "sum", "seed"]
             no_all = self.no_accepted + self.no_rejected + self.no_prerejected
@@ -135,28 +137,28 @@ class Algorithm_PARENT:
             writer_notes.writerow(notes)
             file_notes.close()
         if self.save_raw_data:
-            self.__file_raw.close()
+            self._file_raw.close()
             """ temporary: """
             # self.__file_temp.close()
 
     def _acceptance_log_symmetric(self, log_ratio):
-        temp = self.__generator.uniform(0.0, 1.0)
+        temp = self._generator.uniform(0.0, 1.0)
         temp = np.log(temp)
         if temp < log_ratio:  # accepted
             return True
         else:
             return False
 
-    def __write_to_file__(self):
+    def _write_to_file__(self):
         if self.transform_before_saving:
             row = [1+self.no_rejected_current] + list(self.transform(self.current_sample))
         else:
             row = [1+self.no_rejected_current] + list(self.current_sample)
         row.append(self.posterior_current_sample)
         row.append(self.pre_posterior_current_sample)
-        self.__writer_G.writerow(row)
+        self._writer_G.writerow(row)
 
-    def __send_to_surrogate__(self, sample, G_sample, weight):
+    def _send_to_surrogate__(self, sample, G_sample, weight):
         # snapshot = Snapshot(sample=sample, G_sample=G_sample, weight=weight)
         self.Surrogate.send_to_data_collector([sample, G_sample, weight])
 
@@ -170,10 +172,10 @@ class Algorithm_PARENT:
 
 
 class Algorithm_MH(Algorithm_PARENT):  # initiated by SAMPLERs
-    def __init__(self, Proposal, Solver, name, seed=0, initial_sample=None, G_initial_sample=None,
-                 Surrogate=None, is_saved=True, conf=None, stage=None, prior=None, likelihood=None):
-        super().__init__(Proposal, Solver, name, seed, initial_sample, G_initial_sample,
-                         Surrogate, is_saved, conf, stage, prior, likelihood)
+    def __init__(self, Proposal, Solver, seed=0, initial_sample=None, G_initial_sample=None,
+                 Surrogate=None, conf=None, stage=None, prior=None, likelihood=None):
+        super().__init__(Proposal, Solver, seed, initial_sample, G_initial_sample,
+                         Surrogate, conf, stage, prior, likelihood)
         self.max_samples = min(self.max_samples, self.max_evaluations)
 
     def run(self):
@@ -186,16 +188,16 @@ class Algorithm_MH(Algorithm_PARENT):  # initiated by SAMPLERs
             else:
                 self.if_rejected()
             if time.time() - self.time_start > self.time_limit:
-                print("SAMPLER at RANK", MPI.COMM_WORLD.Get_rank(), "time limit ", self.time_limit, " reached - loop", i)
+                print("SAMPLER at RANK", self.rank_world, "time limit ", self.time_limit, " reached - loop", i)
                 break
         self.close_files()
 
 
 class Algorithm_MH_adaptive(Algorithm_PARENT):  # initiated by SAMPLERs
-    def __init__(self, Proposal, Solver, name, seed=0, initial_sample=None, G_initial_sample=None,
-                 Surrogate=None, is_saved=True, conf=None, stage=None, prior=None, likelihood=None):
-        super().__init__(Proposal, Solver, name, seed, initial_sample, G_initial_sample,
-                         Surrogate, is_saved, conf, stage, prior, likelihood)
+    def __init__(self, Proposal, Solver, seed=0, initial_sample=None, G_initial_sample=None,
+                 Surrogate=None, conf=None, stage=None, prior=None, likelihood=None):
+        super().__init__(Proposal, Solver, seed, initial_sample, G_initial_sample,
+                         Surrogate, conf, stage, prior, likelihood)
         self.max_samples = min(self.max_samples, self.max_evaluations)
         self.target_rate = stage.adaptive_target_rate  # target acceptance rate
         if self.target_rate is None:
@@ -274,28 +276,28 @@ class Algorithm_MH_adaptive(Algorithm_PARENT):  # initiated by SAMPLERs
                 counter_rejected = 0
 
             if time.time() - self.time_start > self.time_limit:
-                print("SAMPLER at RANK", MPI.COMM_WORLD.Get_rank(), "time limit ", self.time_limit, " reached - loop", i)
+                print("SAMPLER at RANK", self.rank_world, "time limit ", self.time_limit, " reached - loop", i)
                 break
-        print("RANK", MPI.COMM_WORLD.Get_rank(), "FINAL COV", coef*COV)
+        print("RANK", self.rank_world, "FINAL COV", coef*COV)
         self.close_files()
 
 
 class Algorithm_DAMH(Algorithm_PARENT):  # initiated by SAMPLERs
-    def __init__(self, Proposal, Solver, name, seed=0, initial_sample=None, G_initial_sample=None,
-                 Surrogate=None, is_saved=True, conf=None, stage=None, prior=None, likelihood=None):
-        super().__init__(Proposal, Solver, name, seed, initial_sample, G_initial_sample,
-                         Surrogate, is_saved, conf, stage, prior, likelihood)
+    def __init__(self, Proposal, Solver, seed=0, initial_sample=None, G_initial_sample=None,
+                 Surrogate=None, conf=None, stage=None, prior=None, likelihood=None):
+        super().__init__(Proposal, Solver, seed, initial_sample, G_initial_sample,
+                         Surrogate, conf, stage, prior, likelihood)
 
     def run(self):
         self.prepare()
         if self.is_saved:
             # posterior (vs approximated posterior) in rejected samples:
-            filename = os.path.join(self.output_dir, "saved_samples", "DAMH_rejected", self.name + ".csv")
+            filename = os.path.join(self.output_dir, "sampling_output", "DAMH_rejected", self.name, self.csv_filename)
             os.makedirs(os.path.dirname(filename), exist_ok=True)
             self.__file_rejected = open(filename, 'w')
             self.__writer_rejected = csv.writer(self.__file_rejected)
             # posterior (vs approximated posterior) in accepted samples:
-            filename = os.path.join(self.output_dir, "saved_samples", "DAMH_accepted", self.name + ".csv")
+            filename = os.path.join(self.output_dir, "sampling_output", "DAMH_accepted", self.name, self.csv_filename)
             os.makedirs(os.path.dirname(filename), exist_ok=True)
             self.__file_accepted = open(filename, 'w')
             self.__writer_accepted = csv.writer(self.__file_accepted)
@@ -352,10 +354,10 @@ class Algorithm_DAMH(Algorithm_PARENT):  # initiated by SAMPLERs
                         row = ['prerejected'] + list(self.proposed_sample) + [0] + list(GS_proposed_sample.flatten())
                     self.writer_raw.writerow(row)
             if time.time() - self.time_start > self.time_limit:
-                print("SAMPLER at RANK", MPI.COMM_WORLD.Get_rank(), "time limit ", self.time_limit, " reached - loop", i)
+                print("SAMPLER at RANK", self.rank_world, "time limit ", self.time_limit, " reached - loop", i)
                 break
             if (self.no_rejected + self.no_accepted) >= self.max_evaluations:
-                print("SAMPLER at RANK", MPI.COMM_WORLD.Get_rank(), "evaluations limit ", self.max_evaluations, " reached - loop", i)
+                print("SAMPLER at RANK", self.rank_world, "evaluations limit ", self.max_evaluations, " reached - loop", i)
                 break
         self.close_files()
         self.__file_rejected.close()

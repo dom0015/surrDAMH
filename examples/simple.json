@@ -1,7 +1,7 @@
 {
     "no_parameters": 2,
     "no_observations": 1,
-    "samplers_list": [
+    "samplers_list_": [
         {
             "type": "MH",
             "max_samples": 100,
