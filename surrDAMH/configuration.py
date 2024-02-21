@@ -12,6 +12,7 @@ import ruamel.yaml as yaml
 from surrDAMH.modules import Gaussian_process
 from typing import Literal
 from dataclasses import dataclass
+import numpy as np
 
 
 @dataclass
@@ -19,13 +20,14 @@ class Configuration:
     output_dir: str
     no_parameters: int
     no_observations: int
-    use_surrogate: bool = True
+    use_collector: bool = True
     no_solvers: int = 2
     solver_maxprocs: int = 1
     solver_returns_tag: bool = False
     pickled_observations: bool = True
     save_raw_data: bool = False
     transform_before_saving: bool = True
+    transform_before_surrogate: bool = True
     initial_sample_type: Literal["lhs", "prior_mean"] = "lhs"
     debug: bool = False
     max_buffer_size: int = 1 << 30
@@ -37,17 +39,19 @@ class Configuration:
         else:
             self._append_path()
 
-        comm_world = MPI.COMM_WORLD
-        size_world = comm_world.Get_size()
+        size_world = MPI.COMM_WORLD.Get_size()
 
-        if self.use_surrogate:
+        # ranks of samplers, collector, solvers pool:
+        if self.use_collector:
             self.no_samplers = size_world - 2
             self.rank_collector = self.no_samplers + 1
         else:
             self.no_samplers = size_world - 1
+            self.rank_collector = None
         if self.no_samplers < 1:
             print("Number of MPI processes is too low. Use at least \"mpirun -n 4\".")
-        self.solver_parent_rank = self.no_samplers
+        self.sampler_ranks = np.arange(self.no_samplers)  # ranks 0, 1, ..., no_samplers-1
+        self.solver_pool_rank = self.no_samplers  # rank no_smplers
 
     def set_from_dict(self, conf_dict: dict = None, conf_dict_path: str = None) -> None:
         """

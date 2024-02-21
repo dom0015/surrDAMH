@@ -46,7 +46,7 @@ class PolynomialProjectionUpdater(Updater):  # initiated by COLLECTOR
         self.no_included_snapshots = 0
         self.model = None
 
-    def add_data(self, parameters: int, observations: int, weights: npt.NDArray = None):
+    def add_data(self, parameters: npt.NDArray, observations: npt.NDArray, weights: npt.NDArray = None):
         # add new data to matrices of non-processed data
         # TODO: polynomial surrogate weights
         weights = None  # WEIGHTS ARE NOT USED

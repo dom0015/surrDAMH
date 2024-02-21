@@ -7,6 +7,7 @@ class Prior:
     The prior distribution is a function composition: transform(internal_prior()).
 
     """
+
     def __init__(self):
         self.mean = 0.0
         self.sd_approximation = None  # for LHS
@@ -16,7 +17,7 @@ class Prior:
         """
         The sample is transformed before the solver is applied to it,
         and (optionally) before writing to a file.
-        If not overridden, it remaint the identity.
+        If not overridden, it remains the identity.
         """
         return sample
 
