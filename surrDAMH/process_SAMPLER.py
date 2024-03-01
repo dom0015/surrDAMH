@@ -100,6 +100,4 @@ def run_SAMPLER(conf: Configuration, prior: Prior, likelihood: Likelihood, list_
     if callable(f):
         commSurrogate.terminate()
 
-    comm_world.Barrier()
-    print("RANK", rank_world, "(SAMPLER) terminated.")
     return []

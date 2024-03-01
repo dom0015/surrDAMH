@@ -23,7 +23,7 @@ TAG_TERMINATE = 0
 TAG_READY_TO_RECEIVE = 1
 TAG_DATA = 2
 
-ANALYZE = False
+ANALYZE = True
 
 
 def run_COLLECTOR(conf: Configuration, surrogate_updater: Updater, surrogate_delayed_init_data=None):
@@ -54,8 +54,8 @@ def run_COLLECTOR(conf: Configuration, surrogate_updater: Updater, surrogate_del
         buffers_empty_signal[i] = np.zeros((1,))
     request_Isend_signal = [None] * conf.no_samplers
 
-    def request_snapshots_from_sampler():
-        # collector expects to receive snapshots from this (active) sampler later:
+    def request_snapshot_from_sampler():
+        # collector expects to receive snapshot from this (active) sampler later:
         request_irecv_snapshots[i] = comm_world.irecv(conf.max_buffer_size, source=rank, tag=TAG_DATA)
         # sends signal to this (active) sampler that collector is ready to receive snapshots:
         if request_Isend_signal[i] is not None:
@@ -65,7 +65,7 @@ def run_COLLECTOR(conf: Configuration, surrogate_updater: Updater, surrogate_del
     if any(sampler_is_active):
         for rank in sampler_ranks[sampler_is_active]:
             i = sampler_ranks[sampler_ranks == rank][0]
-            request_snapshots_from_sampler()
+            request_snapshot_from_sampler()
 
     if ANALYZE:
         list_all_snapshots = []
@@ -88,7 +88,7 @@ def run_COLLECTOR(conf: Configuration, surrogate_updater: Updater, surrogate_del
                         list_all_snapshots = [np.vstack((list_all_snapshots[j], list_received_part[j])) for j in range(3)]
                     else:
                         list_all_snapshots = list_received_part.copy()
-                request_snapshots_from_sampler()
+                request_snapshot_from_sampler()
             # check if there is an incoming signal from this active sampler
             # (tag_terminate | tag_ready_to_receive (updated) evaluator):
             status = MPI.Status()
@@ -121,10 +121,6 @@ def run_COLLECTOR(conf: Configuration, surrogate_updater: Updater, surrogate_del
             request_isend_evaluator[i] = comm_world.isend(buffers_evaluator[i], dest=rank, tag=TAG_DATA)
             sampler_can_recv_evaluator[i] = False
             sampler_got_last_evaluator[i] = True
-
-    comm_world.Barrier()
-
-    print("RANK", rank_world, "(DATA COLLECTOR) terminated.")
 
     if ANALYZE:
         @dataclass

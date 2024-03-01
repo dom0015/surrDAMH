@@ -22,6 +22,7 @@ class KDTreeEvaluator(Evaluator):
     def __call__(self, datapoints: npt.NDArray):
         # evaluates the surrogate model in datapoints
         datapoints = datapoints.reshape(-1, self.no_parameters)
+        no_datapoints = datapoints.shape[0]
         distances, indices = self.kdtree.query(datapoints, k=self.no_nearest_neighbors)
 
         if self.no_nearest_neighbors == 1:
@@ -31,9 +32,12 @@ class KDTreeEvaluator(Evaluator):
             weights = 1 / distances
             weights /= np.sum(weights, axis=1, keepdims=True)  # Normalize weights to sum to 1
             # Perform the weighted average of values from the two nearest neighbors
-            print("???", weights.shape, self.obs[indices].shape, indices.shape)
-            print(indices)
-            print(self.obs[indices])
+            # print("???", weights.shape, self.obs[indices].shape, indices.shape)
+            # print(weights)
+            # print(weights.reshape((no_datapoints, self.no_nearest_neighbors, 1)))
+            # print(indices)
+            # print(self.obs[indices])
+            weights = weights.reshape((no_datapoints, self.no_nearest_neighbors, 1))
             interpolated_values = np.sum(self.obs[indices] * weights, axis=1)
 
         return interpolated_values

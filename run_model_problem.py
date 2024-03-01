@@ -3,7 +3,7 @@
 
 """
 Run with:
-mpirun -n 6 python3 -m mpi4py run_surrDAMH.py
+mpirun -n 6 python3 -m mpi4py run_model_problem.py
 """
 
 import numpy as np
@@ -17,7 +17,7 @@ from surrDAMH.stages import Stage
 import matplotlib.pyplot as plt
 
 
-conf = surrDAMH.Configuration(output_dir="output_nonlinear_rbf", no_parameters=4, no_observations=1,
+conf = surrDAMH.Configuration(output_dir="output_nonlinear2_nn_relu20", no_parameters=2, no_observations=1,
                               use_collector=True, initial_sample_type="prior", transform_before_surrogate=True, save_raw_data=True)
 
 # solver_spec = surrDAMH.solver_specification.SolverSpecExample1()
@@ -29,9 +29,10 @@ solver_spec = surrDAMH.solver_specification.SolverSpecNonlinearGeneric(no_parame
 # updater = surrDAMH.surrogates.PolynomialSklearnSigmoidUpdater(conf.no_parameters, conf.no_observations, max_degree=15)
 # updater = surrDAMH.surrogates.GaussianSklearnUpdater(conf.no_parameters, conf.no_observations)
 # updater = surrDAMH.surrogates.PolynomialProjectionUpdater(conf.no_parameters, conf.no_observations, max_degree=5)
-# updater = surrDAMH.surrogates.RBFInterpolationUpdater(conf.no_parameters, conf.no_observations, kernel="thin_plate_spline")
+updater = surrDAMH.surrogates.RBFInterpolationUpdater(conf.no_parameters, conf.no_observations, kernel="thin_plate_spline")
 # updater = surrDAMH.surrogates.NearestInterpolationUpdater(conf.no_parameters, conf.no_observations)
-updater = surrDAMH.surrogates.KDTreeUpdater(conf.no_parameters, conf.no_observations, no_nearest_neighbors=3) # TODO
+# updater = surrDAMH.surrogates.NNSklearnUpdater(conf.no_parameters, conf.no_observations, hidden_layer_sizes=(20, 20), activation='relu')
+# updater = surrDAMH.surrogates.KDTreeUpdater(conf.no_parameters, conf.no_observations, no_nearest_neighbors=3) # TODO
 
 # prior = surrDAMH.priors.PriorNormal(conf.no_parameters, mean=[5.0, 3.0], cov=[[4, -2], [-2, 4]])
 list_of_components = [Normal(0, 4), Normal(0, 4), Uniform(-4, 8), Uniform(-4, 8), Beta(2, 2), Uniform(3, 5), Lognormal(0, 1), Normal(0, 2)]
@@ -39,7 +40,7 @@ list_of_components = list_of_components[0:conf.no_parameters]
 prior = surrDAMH.priors.PriorIndependentComponents(list_of_components)
 # prior = surrDAMH.priors.PriorNormal(conf.no_parameters, 0.0, 1.0)
 
-observations = 0.0  # surrDAMH.solvers.calculate_artificial_observations(solver_spec, [4, 4])
+observations = surrDAMH.solvers.calculate_artificial_observations(solver_spec, [-2, 2])
 noise_sd = 1.0  # np.abs(observations)*0.1  # TODO: cannot be zero
 likelihood = surrDAMH.likelihoods.LikelihoodNormal(conf.no_observations, observations, sd=noise_sd)
 
@@ -171,6 +172,7 @@ používat vizualizační knihovnu arviz (upravit data do požadovaného formát
 surrogate se momentálně tvoří na datech z N(0,1), přidat moožnost tvoření na transformovaných datech
 ujasnit si, co všechno se má ukládat, oddělit ukládání od zbytku kódu, možná použít iscream
 zlepšit (nejen) názvosloví ohledně transformed, např. original/internal distribution
+oddělit mpi od ostatních kódů
 
 # TODO: prior, likelihood, etc. set_from_dict as another option?
 # the dictionary can be also created on start and saved to yaml file
@@ -182,6 +184,7 @@ zlepšit (nejen) názvosloví ohledně transformed, např. original/internal dis
 #  - taky může být možnost začít samplovat "od začátku", ale s existujícím (už naučeným) surrogate modelem
 # in stage: if "use_only_surrogate", then "surrogate_is_updated" should be False (or implement this? no)
 # in classes_SAMPLER: is G_initial_sample used?
+# přidat adaptivní volbu směrodatné odchylky návrhového rozdělení vzhledem k target acceptance rate
 
 Analýza kvality surrogatu 
 - zaznamenávat všechny body, ve kterých byl počítán přesný model

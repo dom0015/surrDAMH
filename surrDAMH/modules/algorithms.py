@@ -31,10 +31,10 @@ class Algorithm_PARENT:
         if self.current_sample is None:
             self.current_sample = self.prior.mean
         self.commSurrogate = commSurrogate
-        if conf.use_collector:
-            self._send_to_surrogate = self._send_to_surrogate__
+        if conf.use_collector and stage.surrogate_is_updated:
+            self._send_to_collector = self._send_to_collector__
         else:
-            self._send_to_surrogate = self._empty_function
+            self._send_to_collector = self._empty_function
         self._generator = np.random.RandomState(seed)
         self.no_accepted = 0
         self.no_prerejected = 0
@@ -64,7 +64,7 @@ class Algorithm_PARENT:
 
     def if_accepted(self):
         self.current_sample_to_file()
-        self._send_to_surrogate(sample=self.current_sample, observation=self.G_current_sample, weight=self.no_rejected_current+1)
+        self._send_to_collector(sample=self.current_sample, observation=self.G_current_sample, weight=self.no_rejected_current+1)
         self.no_accepted += 1
         self.no_rejected_current = 0
         self.current_sample = self.proposed_sample
@@ -75,8 +75,8 @@ class Algorithm_PARENT:
     def if_rejected(self):
         self.no_rejected += 1
         self.no_rejected_current += 1
-        if self.convergence_tag > 0:
-            self._send_to_surrogate(sample=self.proposed_sample, observation=self.G_proposed_sample, weight=0)
+        if not self.convergence_tag < 0:
+            self._send_to_collector(sample=self.proposed_sample, observation=self.G_proposed_sample, weight=0)
         self.raw_data_to_file(type="rejected", tag=self.convergence_tag, observations=self.G_proposed_sample)
 
     def finalize(self):
@@ -115,7 +115,7 @@ class Algorithm_PARENT:
             row.append(observations.flatten())
             self.monitor(data_name="raw_data", row=row)
 
-    def _send_to_surrogate__(self, sample, observation, weight):
+    def _send_to_collector__(self, sample, observation, weight):
         sample = sample.copy()
         observation = observation.copy()
         if self.conf.transform_before_surrogate:

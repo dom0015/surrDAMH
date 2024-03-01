@@ -95,6 +95,7 @@ class SurrogateLocal_CollectorMPI:
 
     def recv_observations(self, ):
         computed_observations = self.evaluators_buffer[self.evaluators_buffer_idx](self.parameters)
+        # TODO: evaluation may be requested before the first evaluator is available!!
         return 1, computed_observations
 
     def send_to_collector(self, snapshot):
