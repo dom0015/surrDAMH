@@ -3,7 +3,7 @@
 
 """
 Run with:
-mpirun -n 6 python3 -m mpi4py run_example.py
+mpirun -n 6 python3 -m mpi4py run_example_nn.py
 """
 
 import numpy as np
@@ -17,14 +17,17 @@ from surrDAMH.stages import Stage
 
 # basic configuration
 conf = surrDAMH.Configuration(output_dir="output_dir", no_parameters=4, no_observations=1,
-                              use_collector=True, initial_sample_type="prior", transform_before_surrogate=True, save_raw_data=True)
+                              use_collector=True, initial_sample_type="prior", transform_before_surrogate=True, save_raw_data=True,
+                              no_snapshots_initial=5, no_snapshots_to_update=5)
 
 # solver spacification
-solver_spec = surrDAMH.solver_specification.SolverSpecNonlinearGeneric(no_parameters=conf.no_parameters, no_observations=conf.no_observations)
+solver_spec = surrDAMH.solver_specification.SolverSpecNonlinearGeneric(no_parameters=conf.no_parameters, no_observations=conf.no_observations, sleep=1e-2)
 
 # surrogate model updater
-updater = surrDAMH.surrogates.RBFInterpolationUpdater(conf.no_parameters, conf.no_observations, kernel="thin_plate_spline")
+# updater = surrDAMH.surrogates.RBFInterpolationUpdater(conf.no_parameters, conf.no_observations, kernel="thin_plate_spline")
 # updater = surrDAMH.surrogates.NNSklearnUpdater(conf.no_parameters, conf.no_observations, hidden_layer_sizes=(20, 20), activation='relu')
+updater = surrDAMH.surrogates.NNSklearnOngoingUpdater(conf.no_parameters, conf.no_observations, hidden_layer_sizes=(20, 20),
+                                                      activation='relu', solver='adam', learning_rate_init=1e-3, iterations_batch=100)
 
 # prior distribution
 list_of_components = [Normal(0, 2), Normal(0, 2), Uniform(-3, 3), Beta(2, 2), Lognormal(0, 1)]

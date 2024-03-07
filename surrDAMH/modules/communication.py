@@ -12,6 +12,7 @@ import sys
 import os
 from surrDAMH.configuration import Configuration
 from surrDAMH.surrogates.parent import Evaluator
+import copy
 
 TAG_TERMINATE = 0
 TAG_READY_TO_RECEIVE = 1
@@ -68,6 +69,7 @@ class SurrogateLocal_CollectorMPI:
         self.rank_collector = conf.rank_collector
         self.evaluators_buffer = [None] * 2       # double buffer
         self.evaluators_buffer_idx = 0            # idx of current buffer 0/1
+        self.tag = 2
         if self.rank_collector is None:
             self.evaluators_buffer[self.evaluators_buffer_idx] = evaluator
             self.terminated_collector = True
@@ -76,9 +78,17 @@ class SurrogateLocal_CollectorMPI:
             self.comm_world = MPI.COMM_WORLD
             self.empty_buffer = np.zeros((1,))
             self.empty_buffer_Isend = np.zeros((1,))
-            self.request_send = None
+            self.requests = []  # buffer for isend requests
+            self.no_requests = 100  # maximal number of isend requests before wait is called
+            # self.request_send = None
             self.request_Isend_signal = None
             self.request_evaluator_from_collector()
+
+    def wait_for_evaluator_and_request_new(self, ):
+        evaluator_instance = self.request_recv.wait()
+        self.evaluators_buffer[1 - self.evaluators_buffer_idx] = evaluator_instance
+        self.evaluators_buffer_idx = 1 - self.evaluators_buffer_idx
+        self.request_evaluator_from_collector()
 
     def request_evaluator_from_collector(self, ):
         # sampler expects to receive evaluator later:
@@ -94,36 +104,58 @@ class SurrogateLocal_CollectorMPI:
         self.parameters = parameters.copy()  # TO DO: copy?
 
     def recv_observations(self, ):
+        if self.evaluators_buffer[self.evaluators_buffer_idx] is None:
+            self.wait_for_evaluator_and_request_new()
         computed_observations = self.evaluators_buffer[self.evaluators_buffer_idx](self.parameters)
-        # TODO: evaluation may be requested before the first evaluator is available!!
         return 1, computed_observations
 
     def send_to_collector(self, snapshot):
         # Adds new snapshot to a list; if COLLECTOR is ready to receive new
         # snapshots, sends list of snapshots to COLLECTOR and empties the list.
         # (only if is_updated == True)
-        if self.list_of_snapshots:
-            self.list_of_snapshots = [np.vstack((self.list_of_snapshots[i], snapshot[i])) for i in range(3)]
+
+        # SIMPLE VERSION
+        data_to_pickle = copy.deepcopy(snapshot)
+        # print("COMMUNICATION", self.comm_world.Get_rank(), data_to_pickle, flush=True)
+
+        # if self.request_send is not None:
+        #     self.request_send.wait()
+        request_send = self.comm_world.isend(data_to_pickle, dest=self.rank_collector, tag=self.tag)
+
+        if self.tag-2 >= self.no_requests:
+            self.requests[(self.tag-2) % self.no_requests].wait()
+            self.requests[(self.tag-2) % self.no_requests] = request_send
         else:
-            self.list_of_snapshots = snapshot.copy()
-        probe = self.comm_world.Iprobe(source=self.rank_collector, tag=TAG_READY_TO_RECEIVE)
-        if probe:  # if COLLECTOR is ready to receive new snapshots
-            self.comm_world.Recv(self.empty_buffer, source=self.rank_collector, tag=TAG_READY_TO_RECEIVE)
-            data_to_pickle = self.list_of_snapshots.copy()
-            if self.request_send is not None:
-                self.request_send.wait()
-            self.request_send = self.comm_world.isend(data_to_pickle, dest=self.rank_collector, tag=TAG_DATA)
-            self.list_of_snapshots = []
+            self.requests.append(request_send)
+        self.tag += 1
+        ################################################################
+
+        # PREVIOUS VERSION
+        # if self.list_of_snapshots:
+        #     self.list_of_snapshots = [np.vstack((self.list_of_snapshots[i], snapshot[i])) for i in range(3)]
+        # else:
+        #     self.list_of_snapshots = snapshot.copy()
+        # probe = self.comm_world.Iprobe(source=self.rank_collector, tag=TAG_READY_TO_RECEIVE)
+        # if probe:  # if COLLECTOR is ready to receive new snapshots
+        #     self.comm_world.Recv(self.empty_buffer, source=self.rank_collector, tag=TAG_READY_TO_RECEIVE)
+        #     data_to_pickle = self.list_of_snapshots.copy()
+        #     if self.request_send is not None:
+        #         self.request_send.wait()
+        #     self.request_send = self.comm_world.isend(data_to_pickle, dest=self.rank_collector, tag=TAG_DATA)
+        #     self.list_of_snapshots = []
+        ################################################################
+
         # check COMM_WORLD if there is an incoming message with TAG_DATA,
         # if so, receive updated surrogate model evaluator:
         status = self.request_recv.Get_status()
         if status:
-            evaluator_instance = self.request_recv.wait()
-            self.evaluators_buffer[1 - self.evaluators_buffer_idx] = evaluator_instance
-            self.evaluators_buffer_idx = 1 - self.evaluators_buffer_idx
-            self.request_evaluator_from_collector()
+            self.wait_for_evaluator_and_request_new()
 
     def terminate(self, ):
         if not self.terminated_collector:
+            # if self.request_send is not None:
+            #     self.request_send.wait()
+            MPI.Request.waitall(self.requests)
+            MPI.Request.waitall([])
             self.comm_world.Send(self.empty_buffer, dest=self.rank_collector, tag=TAG_TERMINATE)
             self.terminated_collector = True

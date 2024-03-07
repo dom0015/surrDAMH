@@ -73,8 +73,6 @@ class Samples:
             bins = np.floor(no_unique_samples_sum/20)
             bins = min(bins, 100)
             bins = max(bins, 10)
-        print("ALL", all_x)
-        print("LEN", len(all_x))
         axis.hist(all_x, bins=int(bins), density=True)
         axis.grid(True)
         if show:

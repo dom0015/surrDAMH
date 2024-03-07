@@ -29,6 +29,8 @@ class Configuration:
     transform_before_saving: bool = True
     transform_before_surrogate: bool = True
     initial_sample_type: Literal["lhs", "prior_mean"] = "lhs"
+    no_snapshots_to_update: int = 1  # how many snapshots (at least) have to be added to update the surrogate model
+    no_snapshots_initial: int = 1  # minimal number of snapshots for the construction of initial surrogate model
     debug: bool = False
     max_buffer_size: int = 1 << 30
     paths_to_append: list[str] = None

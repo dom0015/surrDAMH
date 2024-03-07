@@ -81,7 +81,7 @@ def run_SAMPLER(conf: Configuration, prior: Prior, likelihood: Likelihood, list_
                                         likelihood=likelihood,
                                         initial_sample=initial_sample,
                                         seed=seed)
-        print('--- SAMPLER ' + my_Alg.stage.name + ' starts ---')
+        # print('--- SAMPLER ' + my_Alg.stage.name + ' starts ---')
         my_Alg.run()
         if stage.is_adaptive:
             sendbuf = my_Prop.sd
@@ -100,4 +100,7 @@ def run_SAMPLER(conf: Configuration, prior: Prior, likelihood: Likelihood, list_
     if callable(f):
         commSurrogate.terminate()
 
+    comm_world.Barrier()
+    comm_world.Barrier()
+    commSurrogate.tag = 0
     return []

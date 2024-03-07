@@ -7,3 +7,4 @@ from .nearest_scipy import NearestInterpolationUpdater
 from .nearest_kdtree import KDTreeUpdater
 from .evaluator_constant import ConstantEvaluator
 from .nn_sklearn import NNSklearnUpdater
+from .nn_sklearn_ongoing import NNSklearnOngoingUpdater

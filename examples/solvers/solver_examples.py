@@ -9,6 +9,7 @@ Created on Wed Jan 22 10:00:23 2020
 import numpy as np
 from mpi4py import MPI
 from surrDAMH.solvers import Solver
+import time
 
 
 class Solver_illustrative_local(Solver):
@@ -22,6 +23,7 @@ class Solver_illustrative_local(Solver):
 
     def get_observations(self):
         res = (self.x**2-self.y)*(np.log((self.x-self.y)**2+1))
+        # time.sleep(0.01)
         return res
         # return convergence_tag, res
 
@@ -123,15 +125,17 @@ class Solver_linela2exp_local_tag:
 
 
 class NonlinearGeneric(Solver):
-    def __init__(self, solver_id=0, no_parameters=3, no_observations=3,  output_dir=None):
+    def __init__(self, solver_id=0, no_parameters=3, no_observations=3,  output_dir=None, sleep: float = 0.0):
         self.no_parameters = no_parameters
         self.no_observations = no_observations
+        self.sleep = sleep
 
     def set_parameters(self, parameters):
         self.par = parameters
 
     def get_observations(self):
         val = np.Inf
+        time.sleep(self.sleep)
         for i in range(self.no_parameters):
             linear_function = np.sum(self.par[:i]) + np.sum(self.par[i+1:]) - self.par[i]
             val = np.min([val, linear_function])

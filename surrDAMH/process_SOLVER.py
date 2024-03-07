@@ -151,4 +151,6 @@ def run_SOLVER(conf: Configuration, prior: Prior, solver_spec: SolverSpec):
         if callable(f):
             comm_with_child[i].terminate()
 
+    comm_world.Barrier()
+    comm_world.Barrier()
     return []
