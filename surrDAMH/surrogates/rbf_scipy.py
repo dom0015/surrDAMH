@@ -59,8 +59,9 @@ class RBFInterpolationUpdater(Updater):  # initiated by COLLECTOR
         try:
             rbf_interpolator = RBFInterpolator(self.par, self.obs, neighbors=self.neighbors, smoothing=self.smoothing,
                                                kernel=self.kernel, epsilon=self.epsilon, degree=self.degree)
+            print("RBF model constructed:", self.par.shape, flush=True)
         except ValueError as e:
-            print("Exception - RBFInterpolation ValueError:", e)
+            print("Exception - RBFInterpolation ValueError:", e, flush=True)
             par = self.par.copy()
             obs = self.obs.copy()
             for i in range(self.no_parameters):

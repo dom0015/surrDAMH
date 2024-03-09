@@ -15,6 +15,8 @@ import time
 from surrDAMH.priors.parent import Prior
 from surrDAMH.likelihoods.parent import Likelihood
 
+ANALYZE = False
+
 
 class Algorithm_PARENT:
     def __init__(self, proposal, commSolver, seed=0, initial_sample=None, commSurrogate=None,
@@ -52,6 +54,8 @@ class Algorithm_PARENT:
         if self.G_current_sample is None:
             self.commSolver.send_parameters(self.current_sample)
             self.convergence_tag, self.G_current_sample = self.commSolver.recv_observations()
+        if ANALYZE:
+            print(self.rank_world, "EXACT CURRENT", flush=True)
         self.log_posterior_exact_current = self.calculate_log_posterior(self.current_sample, self.G_current_sample, self.convergence_tag)
         self.no_rejected_current = 0
         self.pre_posterior_current_sample = 0
@@ -59,6 +63,8 @@ class Algorithm_PARENT:
     def request_observations(self):
         self.commSolver.send_parameters(self.proposed_sample)
         self.convergence_tag, self.G_proposed_sample = self.commSolver.recv_observations()
+        if ANALYZE:
+            print(self.rank_world, "EXACT PROPOSED", flush=True)
         self.log_posterior_exact_proposed = self.calculate_log_posterior(self.proposed_sample, self.G_proposed_sample, self.convergence_tag)
         self.log_posterior_ratio_exact = self.log_posterior_exact_proposed - self.log_posterior_exact_current
 
@@ -130,6 +136,8 @@ class Algorithm_PARENT:
             return -np.inf
         log_likelihood = self.likelihood.calculate_log_likelihood(observation)
         log_prior = self.prior.calculate_log_prior(sample)
+        if ANALYZE:
+            print(self.rank_world, "LOG LIKELIHOOD, LOG PRIOR:", log_likelihood, log_prior, flush=True)
         res = log_likelihood + log_prior
         return res
 
@@ -257,14 +265,21 @@ class Algorithm_DAMH(Algorithm_PARENT):  # initiated by SAMPLERs
                 self.commSurrogate.send_parameters(np.array([self.current_sample, self.proposed_sample]))
             tag, tmp = self.commSurrogate.recv_observations()
             observation_approx_current = tmp[0, :]
+            if ANALYZE:
+                print(self.rank_world, "APPROX CURRENT", flush=True)
             self.log_posterior_approx_current = self.calculate_log_posterior(self.current_sample, observation_approx_current)
             observation_approx_proposed = tmp[1, :]
-
+            if ANALYZE:
+                print(self.rank_world, "APPROX PROPOSED", flush=True)
             log_posterior_approx_proposed = self.calculate_log_posterior(self.proposed_sample, observation_approx_proposed)
             log_posterior_ratio_approx = log_posterior_approx_proposed - self.log_posterior_approx_current
 
             if self.is_accepted_sample(log_posterior_ratio_approx):
                 self.request_observations()
+                # if self.rank_world == 0:
+                # print("SURROGATE", observation_approx_proposed[:10], flush=True)
+                # print("EXACT", self.G_proposed_sample[:10], flush=True)
+                # print("DIFF", np.mean(np.abs(observation_approx_proposed-self.G_proposed_sample)), flush=True)
                 row = [log_posterior_approx_proposed, self.log_posterior_approx_current, self.log_posterior_exact_proposed, self.log_posterior_exact_current]
                 self.monitor(data_name="acceptance", row=row)
                 row = [i] + [self.log_posterior_exact_proposed] + [log_posterior_approx_proposed]

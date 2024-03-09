@@ -28,7 +28,8 @@ class Configuration:
     save_raw_data: bool = False
     transform_before_saving: bool = True
     transform_before_surrogate: bool = True
-    initial_sample_type: Literal["lhs", "prior_mean"] = "lhs"
+    initial_sample_type: Literal["lhs", "prior_mean", "user_specified"] = "prior_mean"  # "prior_mean" and "user_specified" will be perturbed
+    initial_sample: np.ndarray | None = None  # only if initial_sample_type == "user_specified"
     no_snapshots_to_update: int = 1  # how many snapshots (at least) have to be added to update the surrogate model
     no_snapshots_initial: int = 1  # minimal number of snapshots for the construction of initial surrogate model
     debug: bool = False

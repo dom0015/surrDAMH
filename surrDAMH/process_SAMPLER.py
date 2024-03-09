@@ -31,6 +31,9 @@ def run_SAMPLER(conf: Configuration, prior: Prior, likelihood: Likelihood, list_
     if conf.initial_sample_type == "lhs":
         initial_samples = lhs.lhs_normal(conf.no_parameters, prior.mean, prior.sd_approximation, conf.no_samplers, 0)
         initial_sample = initial_samples[rank_world]
+    elif conf.initial_sample_type == "user_specified":
+        initial_sample = np.random.normal(conf.initial_sample, prior.sd_approximation*0.01)
+        print("INITIAL SAMPLE - rank", rank_world, "=", initial_sample, flush=True)
     else:
         initial_sample = np.random.normal(prior.mean, prior.sd_approximation*0.01)
         # prior.mean TODO: problems with RBF surrogate - singular matrix

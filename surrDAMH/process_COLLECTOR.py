@@ -24,6 +24,8 @@ TAG_DATA = 2
 
 ANALYZE = False
 
+MAX_COLLECTED = 50
+
 
 def run_COLLECTOR(conf: Configuration, surrogate_updater: Updater, surrogate_delayed_init_data=None):
     surrogate_updater.delayed_init(surrogate_delayed_init_data)
@@ -78,6 +80,7 @@ def run_COLLECTOR(conf: Configuration, surrogate_updater: Updater, surrogate_del
     while any(sampler_is_active):  # while at least 1 sampling algorithm is active
 
         # SIMPLE VERSION
+        collected = 0
         while comm_world.iprobe(source=MPI.ANY_SOURCE, tag=MPI.ANY_TAG, status=status):
             # it is expected that only samplers send messages to collector
             # while there is an incoming message from any sampler
@@ -85,10 +88,15 @@ def run_COLLECTOR(conf: Configuration, surrogate_updater: Updater, surrogate_del
             tag = status.Get_tag()
             source = status.Get_source()
             if tag >= TAG_DATA:
+                collected += 1
                 # if received message is a new snapshot, it is added to the list
                 received_snapshot = comm_world.recv(source=source, tag=tag)
+                # print("COLLECTOR:", received_snapshot, flush=True)
                 list_received_snapshots = [np.vstack((list_received_snapshots[j], received_snapshot[j])) for j in range(3)]
                 no_snapshots_received += len(list_received_snapshots[2])
+                if collected > MAX_COLLECTED:
+                    print("COLLECTOR", len(list_received_snapshots[2]), flush=True)
+                    break
             else:
                 i = sampler_ranks[sampler_ranks == source][0]
                 if tag == TAG_TERMINATE:
@@ -144,8 +152,8 @@ def run_COLLECTOR(conf: Configuration, surrogate_updater: Updater, surrogate_del
                     list_all_snapshots = list_received_snapshots.copy()
             list_received_snapshots = [np.empty((0, conf.no_parameters)), np.empty((0, conf.no_observations)), np.empty((0, 1))]
         cond_init = no_snapshots_current == 0 and no_snapshots_received >= conf.no_snapshots_initial  # initial surrogate model
-        cond_update = no_snapshots_current > 0 and no_snapshots_received - \
-            no_snapshots_current >= conf.no_snapshots_to_update  # update if at least NO_SNAPSHOTS_TO_UPDATE was added
+        # update if at least NO_SNAPSHOTS_TO_UPDATE was added:
+        cond_update = no_snapshots_current > 0 and no_snapshots_received - no_snapshots_current >= conf.no_snapshots_to_update
         if (cond_init or cond_update) and any(sampler_is_active):
             evaluator_instance = surrogate_updater.get_evaluator()
             no_snapshots_current = no_snapshots_received

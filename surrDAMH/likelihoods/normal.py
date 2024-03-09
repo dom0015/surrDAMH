@@ -15,7 +15,7 @@ class LikelihoodNormal(Likelihood):
 
         if cov is not None:  # noise distribution covariance matrix is given
             self.cov = np.array(cov)
-            self.calculate_log_likelihoos = self.calculate_log_likelihood_multivariate
+            self.calculate_log_likelihood = self.calculate_log_likelihood_multivariate
         else:  # no covarinace matrix, use sd instead
             if np.isscalar(sd):
                 self.sd = np.full((no_observations,), sd)
@@ -30,7 +30,6 @@ class LikelihoodNormal(Likelihood):
         return -0.5*np.sum(v*invCv)
 
     def calculate_log_likelihood_multivariate(self, G_sample):
-        v = self.observations - G_sample.ravel()  # TODO: ravel? and for normal prior?
+        v = self.observations - G_sample.ravel()
         invCv = np.linalg.solve(self.cov, v)
         return -0.5*np.dot(v, invCv)
-
