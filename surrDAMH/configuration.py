@@ -30,8 +30,10 @@ class Configuration:
     transform_before_surrogate: bool = True
     initial_sample_type: Literal["lhs", "prior_mean", "user_specified"] = "prior_mean"  # "prior_mean" and "user_specified" will be perturbed
     initial_sample: np.ndarray | None = None  # only if initial_sample_type == "user_specified"
-    no_snapshots_to_update: int = 1  # how many snapshots (at least) have to be added to update the surrogate model
-    no_snapshots_initial: int = 1  # minimal number of snapshots for the construction of initial surrogate model
+    min_snapshots_to_update: int = 1  # how many snapshots (at least) have to be added to update the surrogate model
+    num_snapshots_initial: int = 1  # minimal number of snapshots for the construction of initial surrogate model
+    max_collected_snapshots_per_loop: int = 50  # maximal number of snapshots to collected in one loop
+    max_sampler_isend_requests: int = 100  # size of the buffer for isend requests (sending snapshots from samplers to collector)
     debug: bool = False
     max_buffer_size: int = 1 << 30
     paths_to_append: list[str] = None

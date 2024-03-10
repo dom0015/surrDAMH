@@ -18,7 +18,7 @@ from surrDAMH.stages import Stage
 # basic configuration
 conf = surrDAMH.Configuration(output_dir="output_dir", no_parameters=4, no_observations=1,
                               use_collector=True, initial_sample_type="prior", transform_before_surrogate=True, save_raw_data=True,
-                              no_snapshots_initial=5, no_snapshots_to_update=5)
+                              num_snapshots_initial=5, min_snapshots_to_update=5)
 
 # solver spacification
 solver_spec = surrDAMH.solver_specification.SolverSpecNonlinearGeneric(no_parameters=conf.no_parameters, no_observations=conf.no_observations, sleep=1e-2)

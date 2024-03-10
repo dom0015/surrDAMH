@@ -20,7 +20,7 @@ import matplotlib.pyplot as plt
 # basic configuration
 conf = surrDAMH.Configuration(output_dir="output_TSX", no_parameters=8, no_observations=104, no_solvers=3,
                               use_collector=True, initial_sample_type="prior", transform_before_surrogate=True, save_raw_data=True,
-                              no_snapshots_initial=9, no_snapshots_to_update=1)
+                              num_snapshots_initial=9, min_snapshots_to_update=1)
 
 # prior distribution
 prior_mean = np.array([-16, 26, 17, 16, -48, -41, -14, -16], dtype=np.float32)

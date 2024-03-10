@@ -17,6 +17,7 @@ import copy
 TAG_TERMINATE = 0
 TAG_READY_TO_RECEIVE = 1
 TAG_DATA = 2
+TAG_ISEND_START = 10
 
 
 class SolverMPI:  # initiated by SAMPLERs
@@ -65,12 +66,11 @@ class SurrogateLocal_CollectorMPI:
     # sends signals that sampler is ready to receive evaluator instance (Isend, tag=1)
     # sends signal that sampler terminated (Send, tag=0)
     def __init__(self, conf: Configuration, evaluator: Evaluator = None):
-        self.max_buffer_size = conf.max_buffer_size
-        self.rank_collector = conf.rank_collector
+        self.conf = conf
         self.evaluators_buffer = [None] * 2       # double buffer
         self.evaluators_buffer_idx = 0            # idx of current buffer 0/1
-        self.tag = 2
-        if self.rank_collector is None:
+        self.tag = TAG_ISEND_START
+        if self.conf.rank_collector is None:
             self.evaluators_buffer[self.evaluators_buffer_idx] = evaluator
             self.terminated_collector = True
         else:
@@ -79,7 +79,6 @@ class SurrogateLocal_CollectorMPI:
             self.empty_buffer = np.zeros((1,))
             self.empty_buffer_Isend = np.zeros((1,))
             self.requests = []  # buffer for isend requests
-            self.no_requests = 100  # maximal number of isend requests before wait is called
             # self.request_send = None
             self.request_Isend_signal = None
             self.request_evaluator_from_collector()
@@ -92,11 +91,11 @@ class SurrogateLocal_CollectorMPI:
 
     def request_evaluator_from_collector(self, ):
         # sampler expects to receive evaluator later:
-        self.request_recv = self.comm_world.irecv(self.max_buffer_size, source=self.rank_collector, tag=TAG_DATA)
+        self.request_recv = self.comm_world.irecv(self.conf.max_buffer_size, source=self.conf.rank_collector, tag=TAG_DATA)
         # sends signal to collector that the sampler is ready to receive evaluator
         if self.request_Isend_signal is not None:
             self.request_Isend_signal.Wait()
-        self.request_Isend_signal = self.comm_world.Isend(self.empty_buffer_Isend, dest=self.rank_collector, tag=TAG_READY_TO_RECEIVE)
+        self.request_Isend_signal = self.comm_world.Isend(self.empty_buffer_Isend, dest=self.conf.rank_collector, tag=TAG_READY_TO_RECEIVE)
 
         self.list_of_snapshots = []
 
@@ -120,11 +119,11 @@ class SurrogateLocal_CollectorMPI:
 
         # if self.request_send is not None:
         #     self.request_send.wait()
-        request_send = self.comm_world.isend(data_to_pickle, dest=self.rank_collector, tag=self.tag)
+        request_send = self.comm_world.isend(data_to_pickle, dest=self.conf.rank_collector, tag=self.tag)
 
-        if self.tag-2 >= self.no_requests:
-            self.requests[(self.tag-2) % self.no_requests].wait()
-            self.requests[(self.tag-2) % self.no_requests] = request_send
+        if self.tag-TAG_ISEND_START >= self.conf.max_sampler_isend_requests:
+            self.requests[(self.tag-TAG_ISEND_START) % self.conf.max_sampler_isend_requests].wait()
+            self.requests[(self.tag-TAG_ISEND_START) % self.conf.max_sampler_isend_requests] = request_send
         else:
             self.requests.append(request_send)
         self.tag += 1
@@ -157,5 +156,5 @@ class SurrogateLocal_CollectorMPI:
             #     self.request_send.wait()
             MPI.Request.waitall(self.requests)
             MPI.Request.waitall([])
-            self.comm_world.Send(self.empty_buffer, dest=self.rank_collector, tag=TAG_TERMINATE)
+            self.comm_world.Send(self.empty_buffer, dest=self.conf.rank_collector, tag=TAG_TERMINATE)
             self.terminated_collector = True

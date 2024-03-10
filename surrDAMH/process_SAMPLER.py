@@ -18,6 +18,8 @@ from typing import List
 from surrDAMH.stages import Stage
 import numpy as np
 
+TAG_STAGE_FINISHED = 3
+
 
 def run_SAMPLER(conf: Configuration, prior: Prior, likelihood: Likelihood, list_of_stages: List[Stage], surrogate_evaluator: Evaluator = None):
     comm_world = MPI.COMM_WORLD
@@ -93,6 +95,7 @@ def run_SAMPLER(conf: Configuration, prior: Prior, likelihood: Likelihood, list_
             my_Prop.set_covariance(proposal_sd=recvbuf/conf.no_samplers)
         if not stage.is_excluded:
             initial_sample = my_Alg.current_sample
+        comm_world.send([], dest=conf.rank_collector, tag=TAG_STAGE_FINISHED)
         print('--- SAMPLER ' + my_Alg.stage.name + ' --- acc/rej/prerej:', my_Alg.no_accepted, my_Alg.no_rejected, my_Alg.no_prerejected, flush=True)
 
     f = getattr(commSolver, "terminate", None)

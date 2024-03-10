@@ -27,8 +27,9 @@ initial_sample = ref_par-prior_mean
 # basic configuration
 conf = surrDAMH.Configuration(output_dir="output_TSX", no_parameters=8, no_observations=104, no_solvers=2,
                               use_collector=True, initial_sample_type="user_specified", initial_sample=initial_sample,
-                              transform_before_surrogate=True, save_raw_data=True,
-                              no_snapshots_initial=9, no_snapshots_to_update=20)
+                              transform_before_surrogate=False, save_raw_data=True,
+                              num_snapshots_initial=9, min_snapshots_to_update=20,
+                              max_collected_snapshots_per_loop=50, max_sampler_isend_requests=100)
 
 # solver speification
 solver_spec = SolverSpec(solver_module_path="examples/solvers/TSX_pytorch/flow_torch_wrapper.py",
@@ -79,7 +80,7 @@ for i in range(4):
                                   320., 340., 360., 365.])
     spec["corr_length"] = 30.0
     spec["std"] = 50.0
-    spec["cov_type"] = "squared_exponential"
+    spec["cov_type"] = "exponential"
     block_spec_list.append(spec)
 noise_cov = assemble_covariance_matrix(block_spec_list)
 likelihood = surrDAMH.likelihoods.LikelihoodNormal(conf.no_observations, observations, cov=noise_cov)  # correlated
@@ -87,9 +88,10 @@ likelihood = surrDAMH.likelihoods.LikelihoodNormal(conf.no_observations, observa
 
 # stages of sampling process
 list_of_stages = []
-list_of_stages.append(Stage(algorithm_type="MH", proposal_sd=0.1, max_evaluations=50))
-list_of_stages.append(Stage(algorithm_type="DAMH", proposal_sd=0.1, max_evaluations=50, surrogate_is_updated=True))
-list_of_stages.append(Stage(algorithm_type="DAMH", proposal_sd=0.1, max_evaluations=50, surrogate_is_updated=False))
+list_of_stages.append(Stage(algorithm_type="MH", proposal_sd=0.1, max_evaluations=100))
+list_of_stages.append(Stage(algorithm_type="DAMH", proposal_sd=0.1, max_evaluations=100, surrogate_is_updated=True))
+list_of_stages.append(Stage(algorithm_type="DAMH", proposal_sd=0.1, max_evaluations=100, surrogate_is_updated=True))
+list_of_stages.append(Stage(algorithm_type="DAMH", proposal_sd=0.1, max_evaluations=100, surrogate_is_updated=False))
 
 # run the sampling process
 sam = surrDAMH.SamplingFramework(conf, surrogate_updater=updater, prior=prior, likelihood=likelihood, solver_spec=solver_spec, list_of_stages=list_of_stages)
@@ -100,7 +102,7 @@ comm_world = MPI.COMM_WORLD
 rank_world = comm_world.Get_rank()
 if rank_world == 0:
     samples = surrDAMH.post_processing.Samples(conf.no_parameters, conf.output_dir)
-    fig, axes = samples.plot_hist_grid(bins1d=30, bins2d=30, stages_to_disp=[1, 2], scale=["ln"]*8)
+    fig, axes = samples.plot_hist_grid(bins1d=20, bins2d=20, scale=["ln"]*8)
     surrDAMH.post_processing.add_normal_dist_grid(axes, prior_mean, prior_sd)
     surrDAMH.post_processing.add_normal_dist_grid(axes, ref_par, prior_sd, no_sigmas_to_show=0, color="orange")
     ensure_dir(os.path.join(conf.output_dir, "post_processing_output"))

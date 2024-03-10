@@ -14,7 +14,7 @@ import numpy.typing as npt
 def autocorr_function_default(distances, corr_length):
     if corr_length == 0:
         return np.eye(np.shape(distances)[0])
-    # Ornstein-Uhlenbeck covariance function
+    # exponential covariance function
     return np.exp(-distances/corr_length)
 
 
@@ -34,7 +34,7 @@ def assemble_covariance_matrix(block_spec_list: list) -> npt.NDArray:
     # time_grid: list[float] | 1-D numpy array
     # corr_length: float
     # std: list[float] | 1-D numpy array
-    # cov_type: "Ornstein-Uhlenbeck" (default) | "squared_exponential"
+    # cov_type: "exponential" (default) | "squared_exponential"
     blocks = []
     for block_spec in block_spec_list:
         grid = np.array(block_spec["time_grid"]).reshape((1, -1))

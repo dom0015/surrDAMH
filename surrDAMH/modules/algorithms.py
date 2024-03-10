@@ -154,7 +154,7 @@ class Algorithm_MH(Algorithm_PARENT):  # initiated by SAMPLERs
             else:
                 self.if_rejected()
             if time.time() - self.time_start > self.stage.time_limit:
-                print("SAMPLER at RANK", self.rank_world, "time limit ", self.stage.time_limit, " reached - loop", i)
+                print("SAMPLER at RANK", self.rank_world, "time limit ", self.stage.time_limit, " reached - loop", i, flush=True)
                 break
         self.finalize()
 
@@ -237,9 +237,9 @@ class Algorithm_MH_adaptive(Algorithm_PARENT):  # initiated by SAMPLERs
                 counter_rejected = 0
 
             if time.time() - self.time_start > self.stage.time_limit:
-                print("SAMPLER at RANK", self.rank_world, "time limit ", self.stage.time_limit, " reached - loop", i)
+                print("SAMPLER at RANK", self.rank_world, "time limit ", self.stage.time_limit, " reached - loop", i, flush=True)
                 break
-        print("RANK", self.rank_world, "FINAL COV", coef*COV)
+        print("RANK", self.rank_world, "FINAL COV", coef*COV, flush=True)
         self.finalize()
 
 
@@ -294,10 +294,10 @@ class Algorithm_DAMH(Algorithm_PARENT):  # initiated by SAMPLERs
                 self.no_rejected_current += 1
                 self.raw_data_to_file(type="prerejected", tag=0, observations=observation_approx_proposed)
             if time.time() - self.time_start > self.stage.time_limit:
-                print("SAMPLER at RANK", self.rank_world, "time limit ", self.stage.time_limit, " reached - loop", i)
+                print("SAMPLER at RANK", self.rank_world, "time limit ", self.stage.time_limit, " reached - loop", i, flush=True)
                 break
             if (self.no_rejected + self.no_accepted) >= self.stage.max_evaluations:
-                print("SAMPLER at RANK", self.rank_world, "evaluations limit ", self.stage.max_evaluations, " reached - loop", i)
+                print("SAMPLER at RANK", self.rank_world, "evaluations limit ", self.stage.max_evaluations, " reached - loop", i, flush=True)
                 break
         self.finalize()
 
