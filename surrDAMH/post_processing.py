@@ -46,6 +46,7 @@ class Samples:
                  decompress_samples: bool = True, load_posterior: bool = False, load_posterior_surrogate: bool = False):
         # TODO: samples organized in folders by stages
         self.no_parameters = no_parameters
+        self.sampling_output_dir = os.path.join(samples_dir, "sampling_output")
         self.samples_dir = os.path.join(samples_dir, "sampling_output", "samples")
         self.stage_names = [f for f in os.listdir(self.samples_dir) if not os.path.isfile(os.path.join(self.samples_dir, f))]
         self.stage_names.sort()
@@ -172,6 +173,104 @@ class Samples:
                         label += "\n(ln)"
                     axis.set_title(label, x=1.05, rotation=45, multialignment='center')
         return fig, axes
+
+    def hist_observations(self, no_observations: int, chosen_observations: np.ndarray | None = None, grid: np.ndarray | None = None,
+                          grid_interp: np.ndarray | None = None, bins: List[int] | None = None, chains_to_disp: List[int] | None = None,
+                          stages_to_disp: List[int] | None = None, observations: np.ndarray | None = None, cmap="viridis_r"):
+        """
+        Creates 2d histogram of observations.
+        Observations can be loaded only if save_raw_data==True.
+        Suitable for observations in the form of time series.
+
+        Args:
+            no_observattions (int): number of observations
+            chosen_observations (ndarray of int of length N): indices forming the time series (otherwise all are used)
+            grid (ndarray of float of length N): time values for the time series (otherwise range(N) is used)
+            grid_interp (ndarray of float): time grid for horizontal axis (otherwise grid_inter = grid)
+            bins (list of int of length 2): [bins_x, bins_y] (optional)
+            chains_disp (list of int of length N): chains that should be included (otherwise all chains are included)
+            stages_disp (list of int): stages that should be included (otherwise all stages are included)
+            observations (ndarray of shape (no_observations,)): vector of observations (optional)
+        """
+        if chosen_observations is None:
+            chosen_observations = np.arange(no_observations, dtype=np.int32)
+        if grid is None:
+            grid = np.arange(len(chosen_observations), dtype=np.int32)
+        if grid_interp is None:
+            grid_interp = grid
+        if chains_to_disp is None:
+            chains_to_disp = range(self.list_of_stages[0].no_chains)
+        if stages_to_disp is None:
+            stage_names = self.stage_names
+        else:
+            stage_names = [self.stage_names[i] for i in stages_to_disp]
+
+        len_grid = len(grid_interp)
+        grid_interp = np.arange(len_grid)
+        x_all = np.empty((0, len_grid))
+        weights_all = np.empty((0, len_grid))
+        G_all = np.empty((0, len_grid))
+        # param_all = np.empty((0, self.no_parameters))
+        for stage_name in stage_names:
+            dirname = os.path.join(self.sampling_output_dir, "raw_data", stage_name)
+            files = [f for f in os.listdir(dirname) if os.path.isfile(os.path.join(dirname, f))]
+            files.sort()
+            for i in chains_to_disp:
+                path_samples = os.path.join(dirname, files[i])
+                df_samples = pd.read_csv(path_samples, header=None)
+                types = df_samples.iloc[:, 0]
+                idx = np.ones(len(types), dtype=bool)
+                idx[types == "prerejected"] = 0
+                idx[types == "rejected"] = 0
+                temp = np.arange(len(types))
+                weights = temp[idx]
+                no_accepted = len(weights)
+                weights[1:] = weights[1:] - weights[:-1]
+                if sum(idx) == 0:
+                    print("hist_G EMPTY - chain:", i)
+                else:
+                    G_values = np.array(df_samples.iloc[:, 2+self.no_parameters+chosen_observations])
+                    G_values = G_values[idx]
+                    G_interp = np.zeros((no_accepted, len_grid))
+                    for i in range(no_accepted):
+                        G_interp[i, :] = np.interp(grid_interp, grid, G_values[i, :])
+                    G_all = np.vstack((G_all, G_interp))
+                    # param = np.array(df_samples.iloc[:, 1:self.no_parameters+1])
+                    # param = param[idx]
+                    # param_all = np.vstack((param_all, param))
+                    weights = weights.reshape((-1, 1))
+                    weights = np.repeat(weights, len_grid, 1)
+                    x = np.repeat(grid_interp.reshape((1, -1)), no_accepted, 0)
+                    x_all = np.vstack((x_all, x))
+                    weights_all = np.vstack((weights_all, weights))
+
+        plt.figure(figsize=(6, 6))
+        n_samples = G_all.shape[0]
+        if bins is None:
+            nbins = (5*1.2*np.sqrt(n_samples)).astype(int)
+            bins = [len_grid, nbins]
+        G_all = G_all.flatten()
+        min_G = min(G_all)
+        max_G = max(G_all)
+        range_G = max_G - min_G
+        hist_range = [[min(grid_interp), max(grid_interp)], [min_G-range_G/10, max_G+range_G/10]]
+        output = plt.hist2d(x_all.flatten(), G_all, bins=bins, range=hist_range, weights=weights_all.flatten(),
+                            cmap=cmap)  # , vmin=1, vmax=n_samples/10)
+        plt.colorbar(output[3])
+        # img = np.flipud(output[0].transpose())
+        # img[img > 0] = 1
+        # print(img.shape)
+        # xx = output[1]
+        # yy = output[2]
+        # plt.figure()
+        # plt.imshow(img, extent=[xx[0], xx[-1], yy[0], yy[-1]], aspect='auto', cmap="viridis_r")
+
+        plt.grid()
+        # lbl_fontsize = "large"
+        # plt.xlabel("time [d]", fontsize=lbl_fontsize)
+        # plt.ylabel("pressure head [m]", fontsize=lbl_fontsize)
+        plt.plot(grid, observations[chosen_observations], label="observations", linewidth=1)
+        plt.legend()
 
 
 def add_normal_dist_grid(axes, mean: List[float], sd: List[float], no_sigmas_to_show: int = 3, color: str = "red") -> None:

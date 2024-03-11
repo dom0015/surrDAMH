@@ -117,8 +117,8 @@ class Algorithm_PARENT:
                 row = [type] + list(self.prior.transform(self.proposed_sample))
             else:
                 row = [type] + list(self.proposed_sample)
-            row.append(tag)
-            row.append(observations.flatten())
+            row += [tag]
+            row += list(observations.flatten())
             self.monitor(data_name="raw_data", row=row)
 
     def _send_to_collector__(self, sample, observation, weight):

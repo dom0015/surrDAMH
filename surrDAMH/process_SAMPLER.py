@@ -95,8 +95,8 @@ def run_SAMPLER(conf: Configuration, prior: Prior, likelihood: Likelihood, list_
             my_Prop.set_covariance(proposal_sd=recvbuf/conf.no_samplers)
         if not stage.is_excluded:
             initial_sample = my_Alg.current_sample
-        comm_world.send([], dest=conf.rank_collector, tag=TAG_STAGE_FINISHED)
         print('--- SAMPLER ' + my_Alg.stage.name + ' --- acc/rej/prerej:', my_Alg.no_accepted, my_Alg.no_rejected, my_Alg.no_prerejected, flush=True)
+        comm_world.send([], dest=conf.rank_collector, tag=TAG_STAGE_FINISHED)
 
     f = getattr(commSolver, "terminate", None)
     if callable(f):

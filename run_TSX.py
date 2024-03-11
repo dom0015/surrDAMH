@@ -16,6 +16,7 @@ from surrDAMH.modules.tools import ensure_dir
 from surrDAMH.modules.Gaussian_process import assemble_covariance_matrix
 from surrDAMH.stages import Stage
 from surrDAMH.solver_specification import SolverSpec
+import matplotlib.pyplot as plt
 
 # problem data
 ref_par = np.array([-17.42599444,  26.59339408,  17.38733495,  14.49584642,
@@ -26,10 +27,10 @@ initial_sample = ref_par-prior_mean
 
 # basic configuration
 conf = surrDAMH.Configuration(output_dir="output_TSX", no_parameters=8, no_observations=104, no_solvers=2,
-                              use_collector=True, initial_sample_type="user_specified", initial_sample=initial_sample,
+                              use_collector=True, initial_sample_type="lhs",  # initial_sample=initial_sample,
                               transform_before_surrogate=False, save_raw_data=True,
                               num_snapshots_initial=9, min_snapshots_to_update=20,
-                              max_collected_snapshots_per_loop=50, max_sampler_isend_requests=100)
+                              max_collected_snapshots_per_loop=200, max_sampler_isend_requests=100)
 
 # solver speification
 solver_spec = SolverSpec(solver_module_path="examples/solvers/TSX_pytorch/flow_torch_wrapper.py",
@@ -78,7 +79,7 @@ for i in range(4):
     spec["time_grid"] = np.array([0., 10., 17., 27., 37., 47., 57., 67., 77., 87., 97.,
                                   100., 120., 140., 160., 180., 200., 220., 240., 260., 280., 300.,
                                   320., 340., 360., 365.])
-    spec["corr_length"] = 30.0
+    spec["corr_length"] = 20.0
     spec["std"] = 50.0
     spec["cov_type"] = "exponential"
     block_spec_list.append(spec)
@@ -88,10 +89,10 @@ likelihood = surrDAMH.likelihoods.LikelihoodNormal(conf.no_observations, observa
 
 # stages of sampling process
 list_of_stages = []
-list_of_stages.append(Stage(algorithm_type="MH", proposal_sd=0.1, max_evaluations=100))
-list_of_stages.append(Stage(algorithm_type="DAMH", proposal_sd=0.1, max_evaluations=100, surrogate_is_updated=True))
-list_of_stages.append(Stage(algorithm_type="DAMH", proposal_sd=0.1, max_evaluations=100, surrogate_is_updated=True))
-list_of_stages.append(Stage(algorithm_type="DAMH", proposal_sd=0.1, max_evaluations=100, surrogate_is_updated=False))
+list_of_stages.append(Stage(algorithm_type="MH", proposal_sd=0.2, max_evaluations=500))
+list_of_stages.append(Stage(algorithm_type="DAMH", proposal_sd=0.3, max_evaluations=500, surrogate_is_updated=True))
+# list_of_stages.append(Stage(algorithm_type="DAMH", proposal_sd=0.1, max_evaluations=1000, surrogate_is_updated=True))
+# list_of_stages.append(Stage(algorithm_type="DAMH", proposal_sd=0.1, max_evaluations=1000, surrogate_is_updated=False))
 
 # run the sampling process
 sam = surrDAMH.SamplingFramework(conf, surrogate_updater=updater, prior=prior, likelihood=likelihood, solver_spec=solver_spec, list_of_stages=list_of_stages)
@@ -108,3 +109,8 @@ if rank_world == 0:
     ensure_dir(os.path.join(conf.output_dir, "post_processing_output"))
     file_path = os.path.join(conf.output_dir, "post_processing_output", "histograms.pdf")
     fig.savefig(file_path, bbox_inches="tight")
+
+    samples.hist_observations(no_observations=conf.no_observations, stages_to_disp=[1],
+                              observations=observations, bins=[conf.no_observations, 100])
+    file_path = os.path.join(conf.output_dir, "post_processing_output", "posterior_of_observations2.pdf")
+    plt.savefig(file_path, bbox_inches="tight")

@@ -6,6 +6,7 @@ Run with:
 python3 run_TSX_postprocess.py
 """
 
+from matplotlib.colors import ListedColormap
 import numpy as np
 import surrDAMH
 # import surrDAMH.post_processing as post
@@ -76,27 +77,65 @@ plt.savefig(file_path, bbox_inches="tight")
 ref_par = np.array([-17.42599444,  26.59339408,  17.38733495,  14.49584642,
                     -49.24249923, -42.02752125, -13.58804331, -17.45912394])
 
-# save histograms grid
+# save plots
+
+ensure_dir(os.path.join(conf.output_dir, "post_processing_output"))
+
 samples = surrDAMH.post_processing.Samples(conf.no_parameters, conf.output_dir)
-fig, axes = samples.plot_hist_grid(bins1d=30, bins2d=30, stages_to_disp=[0], scale=["ln"]*8)
+fig, axes = samples.plot_hist_grid(bins1d=30, bins2d=30, stages_to_disp=[1], scale=["ln"]*8)
 surrDAMH.post_processing.add_normal_dist_grid(axes, prior_mean, prior_sd)
 surrDAMH.post_processing.add_normal_dist_grid(axes, ref_par, prior_sd, no_sigmas_to_show=0, color="orange")
-ensure_dir(os.path.join(conf.output_dir, "post_processing_output"))
 file_path = os.path.join(conf.output_dir, "post_processing_output", "histograms0.pdf")
 fig.savefig(file_path, bbox_inches="tight")
 
-samples = surrDAMH.post_processing.Samples(conf.no_parameters, conf.output_dir)
-fig, axes = samples.plot_hist_grid(bins1d=30, bins2d=30, stages_to_disp=[1, 2], scale=["ln"]*8)
-surrDAMH.post_processing.add_normal_dist_grid(axes, prior_mean, prior_sd)
-surrDAMH.post_processing.add_normal_dist_grid(axes, ref_par, prior_sd, no_sigmas_to_show=0, color="orange")
-ensure_dir(os.path.join(conf.output_dir, "post_processing_output"))
-file_path = os.path.join(conf.output_dir, "post_processing_output", "histograms12.pdf")
-fig.savefig(file_path, bbox_inches="tight")
+# samples = surrDAMH.post_processing.Samples(conf.no_parameters, conf.output_dir)
+# fig, axes = samples.plot_hist_grid(bins1d=30, bins2d=30, stages_to_disp=[1, 2], scale=["ln"]*8)
+# surrDAMH.post_processing.add_normal_dist_grid(axes, prior_mean, prior_sd)
+# surrDAMH.post_processing.add_normal_dist_grid(axes, ref_par, prior_sd, no_sigmas_to_show=0, color="orange")
+# file_path = os.path.join(conf.output_dir, "post_processing_output", "histograms12.pdf")
+# fig.savefig(file_path, bbox_inches="tight")
 
-parameters_to_disp = [0, 1, 2, 7]
-fig, axes = samples.plot_hist_grid(bins1d=30, bins2d=30, stages_to_disp=[1, 2], scale=["ln"]*8, parameters_to_disp=[0, 1, 2, 7])
-surrDAMH.post_processing.add_normal_dist_grid(axes, prior_mean[parameters_to_disp], prior_sd[parameters_to_disp])
-surrDAMH.post_processing.add_normal_dist_grid(axes, ref_par[parameters_to_disp], prior_sd[parameters_to_disp], no_sigmas_to_show=0, color="orange")
-ensure_dir(os.path.join(conf.output_dir, "post_processing_output"))
-file_path = os.path.join(conf.output_dir, "post_processing_output", "histograms12_0127.pdf")
-fig.savefig(file_path, bbox_inches="tight")
+# parameters_to_disp = [0, 1, 2, 7]
+# fig, axes = samples.plot_hist_grid(bins1d=30, bins2d=30, stages_to_disp=[1, 2], scale=["ln"]*8, parameters_to_disp=[0, 1, 2, 7])
+# surrDAMH.post_processing.add_normal_dist_grid(axes, prior_mean[parameters_to_disp], prior_sd[parameters_to_disp])
+# surrDAMH.post_processing.add_normal_dist_grid(axes, ref_par[parameters_to_disp], prior_sd[parameters_to_disp], no_sigmas_to_show=0, color="orange")
+# file_path = os.path.join(conf.output_dir, "post_processing_output", "histograms12_0127.pdf")
+# fig.savefig(file_path, bbox_inches="tight")
+
+# grid = np.array([0., 10., 17., 27., 37., 47., 57., 67., 77., 87., 97.,
+#                  100., 120., 140., 160., 180., 200., 220., 240., 260., 280., 300.,
+#                  320., 340., 360., 365.])
+# samples.hist_observations(no_observations=conf.no_observations, grid=grid, stages_to_disp=[2],
+#                           grid_interp=np.arange(366),
+#                           observations=observations,
+#                           chosen_observations=np.arange(26*3, 26*4, dtype=np.int32))
+# file_path = os.path.join(conf.output_dir, "post_processing_output", "posterior_of_observations.pdf")
+# plt.savefig(file_path, bbox_inches="tight")
+
+
+# samples.hist_observations(no_observations=conf.no_observations, stages_to_disp=[1],
+#                           observations=observations, bins=[conf.no_observations, 100])
+# file_path = os.path.join(conf.output_dir, "post_processing_output", "posterior_of_observations2.pdf")
+# plt.savefig(file_path, bbox_inches="tight")
+
+
+viridis = plt.cm.get_cmap('viridis_r', 256)
+newcolors = viridis(np.linspace(0, 1, 256))
+pink = np.array([248/256, 24/256, 148/256, 1])
+newcolors[0, :] = pink
+newcmp = ListedColormap(newcolors)
+
+# samples.hist_observations(no_observations=conf.no_observations, stages_to_disp=[1],
+#                           observations=observations, bins=[conf.no_observations, 100], cmap=newcmp)
+# file_path = os.path.join(conf.output_dir, "post_processing_output", "posterior_of_observations3.pdf")
+# plt.savefig(file_path, bbox_inches="tight")
+
+grid = np.array([0., 10., 17., 27., 37., 47., 57., 67., 77., 87., 97.,
+                 100., 120., 140., 160., 180., 200., 220., 240., 260., 280., 300.,
+                 320., 340., 360., 365.])
+samples.hist_observations(no_observations=conf.no_observations, grid=grid, stages_to_disp=[1],
+                          grid_interp=np.arange(366),
+                          observations=observations,
+                          chosen_observations=np.arange(26, dtype=np.int32), cmap=newcmp)
+file_path = os.path.join(conf.output_dir, "post_processing_output", "posterior_of_observations.pdf")
+plt.savefig(file_path, bbox_inches="tight")

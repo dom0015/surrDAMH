@@ -164,7 +164,8 @@ def run_COLLECTOR(conf: Configuration, surrogate_updater: Updater, surrogate_del
         cond_init = num_snapshots_used == 0 and num_snapshots >= conf.num_snapshots_initial  # initial surrogate model
         # update if at least NO_SNAPSHOTS_TO_UPDATE was added:
         cond_update = num_snapshots_used > 0 and num_snapshots - num_snapshots_used >= conf.min_snapshots_to_update
-        if (cond_init or cond_update) and any(sampler_is_active):
+        # TODO: if any(sampler_can_recv_evaluator)
+        if (cond_init or cond_update) and any(sampler_can_recv_evaluator):
             evaluator_instance = surrogate_updater.get_evaluator()
             num_snapshots_used = num_snapshots
             if ANALYZE:
