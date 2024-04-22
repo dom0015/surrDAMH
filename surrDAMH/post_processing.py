@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
 # from os import listdir
 import os
 from typing import List, Literal, Tuple
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 from scipy.stats import norm
 
 
@@ -271,6 +272,7 @@ class Samples:
         # plt.ylabel("pressure head [m]", fontsize=lbl_fontsize)
         plt.plot(grid, observations[chosen_observations], label="observations", linewidth=1)
         plt.legend()
+        return output[0]
 
 
 def add_normal_dist_grid(axes, mean: List[float], sd: List[float], no_sigmas_to_show: int = 3, color: str = "red") -> None:

@@ -11,7 +11,7 @@ from mpi4py import MPI
 import surrDAMH
 # import surrDAMH.post_processing as post
 import os
-from surrDAMH.priors.independent_components import Uniform, Beta, Lognormal, Normal
+from surrDAMH.distributions.independent_components import Uniform, Beta, Lognormal, Normal
 from surrDAMH.modules.tools import ensure_dir
 from surrDAMH.stages import Stage
 import matplotlib.pyplot as plt
@@ -37,7 +37,7 @@ updater = surrDAMH.surrogates.RBFInterpolationUpdater(conf.no_parameters, conf.n
 # prior = surrDAMH.priors.PriorNormal(conf.no_parameters, mean=[5.0, 3.0], cov=[[4, -2], [-2, 4]])
 list_of_components = [Normal(0, 4), Normal(0, 4), Uniform(-4, 8), Uniform(-4, 8), Beta(2, 2), Uniform(3, 5), Lognormal(0, 1), Normal(0, 2)]
 list_of_components = list_of_components[0:conf.no_parameters]
-prior = surrDAMH.priors.PriorIndependentComponents(list_of_components)
+prior = surrDAMH.distributions.PriorIndependentComponents(list_of_components)
 # prior = surrDAMH.priors.PriorNormal(conf.no_parameters, 0.0, 1.0)
 
 observations = surrDAMH.solvers.calculate_artificial_observations(solver_spec, [-2, 2])
@@ -136,75 +136,3 @@ if ANALYZE and rank_world == conf.rank_collector:
     create_image(x, y, Z2, "exact")
     create_image(x, y, np.minimum(10, np.log(np.abs((Z2-Z)/Z2))), "error")
 
-
-"""
-Stages:
-list of Stage
-    type
-    max_samples
-    time_limit
-    proposal_std --- prefferably Proposal instance
-    surrogate_is_updated (bool)
-    excluded (bool)
-    adaptive (bool)
-    use_only_surrogate (bool)
-    target_rate (float)
-    sample_limit (int)
-(sampler)
-"""
-
-"""
-prior po skupinách parametrů
-OK initial_sample - pokud je to prior mean, nevolit tentýž snímek, ale s malým rozptylem náhodně
-transform bere i více samplů najednou (np array) ? není třeba
-sjednotit sample, parameters, atd. vs. snapshots
-seřadit parametry funkcí - nutné, volitelné, =None, ...
-check seed!!
-imports within the package
-readme, čím je knihovna specifická, vymezit škálu úloh
-vyzkoušet knihovnu emcee, případně TinyDA
-vytvořit modelové úlohy, kde se načte všechno včetně prioru, likelihooodu apod.
-    - example.prior, example.likelihood apod. (třída example)
-    - možná lepší exmply mít jen jako sadu skriptů
-přidat uživatelsky bezpracné spuštění bez specifikování surrogatu a samplování
-    - dopředný model, měření, prior a chyba (kdyžtak jen přibližně)
-používat vizualizační knihovnu arviz (upravit data do požadovaného formátu pymc3)
-surrogate se momentálně tvoří na datech z N(0,1), přidat moožnost tvoření na transformovaných datech
-ujasnit si, co všechno se má ukládat, oddělit ukládání od zbytku kódu, možná použít iscream
-zlepšit (nejen) názvosloví ohledně transformed, např. original/internal distribution
-oddělit mpi od ostatních kódů
-
-# TODO: prior, likelihood, etc. set_from_dict as another option?
-# the dictionary can be also created on start and saved to yaml file
-#  = everything needed to reproduce the sampling process, maybe also seed? (no)
-#  - output dir and yaml path should not be in this file
-# přidat možnost navázat na samplování
-#  - může být na základě yaml file
-#  - nutné uložit setting surrogate modelu
-#  - taky může být možnost začít samplovat "od začátku", ale s existujícím (už naučeným) surrogate modelem
-# in stage: if "use_only_surrogate", then "surrogate_is_updated" should be False (or implement this? no)
-# in classes_SAMPLER: is G_initial_sample used?
-# přidat adaptivní volbu směrodatné odchylky návrhového rozdělení vzhledem k target acceptance rate
-
-Analýza kvality surrogatu 
-- zaznamenávat všechny body, ve kterých byl počítán přesný model
-- při každém updatu surrogatu vyhodnotit tento i všechny předchozí surrogaty ve všech bodech (pro analýzu)
-- zjednodušit posuzování chyby tak aby mohlo zůstat součástí knihovny
-- účelem je, aby nebyl používán surrogate, který je horší než ty předchozí
-- případně diagnostikovat, že surrogate už je dobrý a není třeba dále vylepšovat
-- sestrojit více surrogatů a použít ten lepší
-- "How bad the surrogate model can be?"
-- monitoring zlepsovani surrogatu v prubehu samplovani pomoci poctu zamitanych snimku (jako v DP/PANM)
-
-Použít cizí multidimenzionální aproximaci/interpolaci
-- např. scipy
-- např. RBF, gauss, spline
-- něco, čemu nevadí nelinearita - může jednuduše použít všechny známé body a nesnaží se vyhlazovat
-- provést porovnání růzých surrogatů - analýza přesnosti, (výpočetní čas) 
-- používají surrogaty i zámítnuté snímky?
-
-Diagnostika stagnace řetězců
-- takový řetězec odebrat, v lepším případě restartovat
-- pracovat se spolehlivostí surrogatu
-- pokud je snímek přijat, zjistit jaká je chyba surrogatu, pokud je moc velká, provést MH krok
-"""

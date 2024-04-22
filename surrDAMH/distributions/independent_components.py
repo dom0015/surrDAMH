@@ -2,9 +2,8 @@
 # -*- coding: utf-8 -*-
 
 import numpy as np
-from surrDAMH.priors.parent import Prior
-import surrDAMH.modules.transformations as transformations
-import surrDAMH.priors.normal
+from surrDAMH.distributions.parent import Distribution
+import surrDAMH.distributions.transformations as transformations
 
 
 class UnivariateComponent:
@@ -15,7 +14,7 @@ class UnivariateComponent:
         pass
 
 
-class PriorIndependentComponents(Prior):
+class PriorIndependentComponents(Distribution):
     """
     Internally, the sampling framework uses the Gaussian prior distribution N(zeros,ones).
     Other distributions are transformed to Gaussian, component by component.
@@ -23,6 +22,10 @@ class PriorIndependentComponents(Prior):
     """
 
     def __init__(self, list_of_components: list[UnivariateComponent]):
+        """
+        Args:
+            list_of_components: list of UnivariateComponent instances
+        """
         self.list_of_components = list_of_components
         self.no_parameters = len(list_of_components)
         self.mean = np.zeros((self.no_parameters,))
@@ -35,12 +38,18 @@ class PriorIndependentComponents(Prior):
             trans_sample[i] = self.list_of_components[i].transform(sample[i])
         return trans_sample
 
-    def calculate_log_prior(self, sample):
+    def logpdf(self, sample):
         """
         Returns logarithm of the value of N(zeros,ones) pdf in given sample
         (up to an additive constant).
         """
         return -0.5*np.dot(sample, sample)
+
+    def rvs(self):
+        """
+        Returns a random sample from N(zeros,ones).
+        """
+        return np.random.randn(self.no_parameters)
 
 
 class Uniform(UnivariateComponent):

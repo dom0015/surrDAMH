@@ -11,7 +11,7 @@ from mpi4py import MPI
 import surrDAMH
 # import surrDAMH.post_processing as post
 import os
-from surrDAMH.priors.independent_components import Uniform, Beta, Lognormal, Normal
+from surrDAMH.distributions.independent_components import Uniform, Beta, Lognormal, Normal
 from surrDAMH.modules.tools import ensure_dir
 from surrDAMH.stages import Stage
 import matplotlib.pyplot as plt
@@ -35,7 +35,7 @@ evaluator = surrDAMH.surrogates.ConstantEvaluator(conf.no_parameters, conf.no_ob
 # prior = surrDAMH.priors.PriorNormal(conf.no_parameters, mean=[5.0, 3.0], cov=[[4, -2], [-2, 4]])
 list_of_components = [Normal(0, 4), Normal(0, 4), Uniform(-4, 8), Uniform(-4, 8), Beta(2, 2), Uniform(3, 5), Lognormal(0, 1), Normal(0, 2)]
 list_of_components = list_of_components[0:conf.no_parameters]
-prior = surrDAMH.priors.PriorIndependentComponents(list_of_components)
+prior = surrDAMH.distributions.PriorIndependentComponents(list_of_components)
 # prior = surrDAMH.priors.PriorNormal(conf.no_parameters, 0.0, 1.0)
 
 observations = -3.0  # surrDAMH.solvers.calculate_artificial_observations(solver_spec, [4, 4])

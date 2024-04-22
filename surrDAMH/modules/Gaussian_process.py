@@ -26,15 +26,19 @@ def autocorr_function_sqexp(distances, corr_length):
 
 
 def assemble_covariance_matrix(block_spec_list: list) -> npt.NDArray:
-    # Calculates covariance matrix for Gaussian random process.
-    # It can be composed of separate diagonal blocks.
-    # Zero mean is expected.
-    # block_spec_list: list of dict
-    # dict keys: time_grid, corr_length, std, (cov_type)
-    # time_grid: list[float] | 1-D numpy array
-    # corr_length: float
-    # std: list[float] | 1-D numpy array
-    # cov_type: "exponential" (default) | "squared_exponential"
+    """
+    Calculates covariance matrix for Gaussian random process.
+    It can be composed of separate diagonal blocks.
+    Zero mean is expected.
+
+    Args:
+        block_spec_list (list): list of dict
+            dict keys: time_grid, corr_length, std, (cov_type)
+                time_grid: list[float] | 1-D numpy array
+                corr_length: float
+                std: list[float] | 1-D numpy array
+                cov_type: "exponential" (default) | "squared_exponential"
+    """
     blocks = []
     for block_spec in block_spec_list:
         grid = np.array(block_spec["time_grid"]).reshape((1, -1))

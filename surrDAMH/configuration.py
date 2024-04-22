@@ -6,13 +6,16 @@ Created on Sun Feb 28 12:32:40 2021
 @author: simona
 """
 
-from mpi4py import MPI
 import sys
-import ruamel.yaml as yaml
-from surrDAMH.modules import Gaussian_process
-from typing import Literal
 from dataclasses import dataclass
+from typing import Literal
+
 import numpy as np
+import numpy.typing as npt
+import ruamel.yaml as yaml
+from mpi4py import MPI
+
+from surrDAMH.distributions.parent import Distribution
 
 
 @dataclass
@@ -28,15 +31,16 @@ class Configuration:
     save_raw_data: bool = False
     transform_before_saving: bool = True
     transform_before_surrogate: bool = True
-    initial_sample_type: Literal["lhs", "prior_mean", "user_specified"] = "prior_mean"  # "prior_mean" and "user_specified" will be perturbed
-    initial_sample: np.ndarray | None = None  # only if initial_sample_type == "user_specified"
+    initial_sample_type: Literal["lhs", "prior", "user_specified"] = "prior"  # specifies how togenerate initial samples
+    initial_samples_distribution: Distribution | None = None  # only if initial_sample_type == "user_specified"
+    lhs_scale: float | npt.NDArray = 1.0  # only if initial_sample_type == "lhs"
     min_snapshots_to_update: int = 1  # how many snapshots (at least) have to be added to update the surrogate model
     num_snapshots_initial: int = 1  # minimal number of snapshots for the construction of initial surrogate model
     max_collected_snapshots_per_loop: int = 50  # maximal number of snapshots to collected in one loop
     max_sampler_isend_requests: int = 100  # size of the buffer for isend requests (sending snapshots from samplers to collector)
     debug: bool = False
     max_buffer_size: int = 1 << 30
-    paths_to_append: list[str] = None
+    paths_to_append: list[str] | None = None
 
     def __post_init__(self) -> None:
         if self.paths_to_append is None:
@@ -58,25 +62,22 @@ class Configuration:
         self.sampler_ranks = np.arange(self.no_samplers)  # ranks 0, 1, ..., no_samplers-1
         self.solver_pool_rank = self.no_samplers  # rank no_smplers
 
-    def set_from_dict(self, conf_dict: dict = None, conf_dict_path: str = None) -> None:
+    def set_from_dict(self, conf_dict: dict | None = None, conf_dict_path: str | None = None) -> None:
         """
         Input: conf_dict or path to yaml/json file have to be specified.
         """
         if conf_dict is None:
+            assert conf_dict_path is not None
             with open(conf_dict_path) as f:
                 conf_dict = yaml.safe_load(f)
 
+        assert conf_dict is not None
         for key, value in conf_dict.items():
             setattr(self, key, value)
 
         self._append_path()
 
-# LIKELIHOOD TODO
-        if "noise_model" in conf_dict.keys():
-            noise_cov = Gaussian_process.assemble_covariance_matrix(
-                conf_dict["noise_model"])
-            self.problem_parameters["noise_std"] = noise_cov
-
-    def _append_path(self):
+    def _append_path(self) -> None:
+        assert self.paths_to_append is not None
         for path in self.paths_to_append:
             sys.path.append(path)

@@ -8,11 +8,12 @@ Created on Tue Oct 22 15:00:39 2019
 
 from mpi4py import MPI
 import numpy as np
-import sys
-import os
+import numpy.typing as npt
+from typing import Tuple
 from surrDAMH.configuration import Configuration
 from surrDAMH.surrogates.parent import Evaluator
 import copy
+import time
 
 TAG_TERMINATE = 0
 TAG_READY_TO_RECEIVE = 1
@@ -20,13 +21,43 @@ TAG_DATA = 2
 TAG_ISEND_START = 10
 
 
-class SolverMPI:  # initiated by SAMPLERs
+class Communicator:
+    """
+    Parent class for communication between samplers and
+    full/surrogate solver (and collector, optionally).
+    """
+
+    def __init__(self) -> None:
+        pass
+
+    def set_parameters(self, parameters: npt.ArrayLike) -> None:
+        """
+        Sets sample for which the observations will be computed later
+        (by the full/surrogate solver).
+        """
+        pass
+
+    def get_observations(self) -> Tuple[npt.NDArray, int]:
+        """
+        Gets observations computed by the full/surrogate solver and solver tag.
+        """
+        raise NotImplementedError
+
+    def send_to_collector(self, data: list) -> None:
+        """
+        Sends triplets [sample, observations, weight] to the collector.
+        Optional.
+        """
+        pass
+
+
+class SolverMPI(Communicator):
     # initiated by SAMPLERs
     # communicates with SOLVERS POOL
     # sends parameters (Send, tag=1,2,...)
     # sends signal that sampler terminated (Send, tag=0)
     # receives observations and conv_tag (recv, tag=1,2,...) or (Recv, tag=conv_tag)
-    def __init__(self, conf: Configuration):
+    def __init__(self, conf: Configuration) -> None:
         self.solver_pool_rank = conf.solver_pool_rank
         self.rank_collector = conf.rank_collector
         self.pickled_observations = conf.pickled_observations
@@ -37,26 +68,36 @@ class SolverMPI:  # initiated by SAMPLERs
         self.terminated = False
         self.comm_world = MPI.COMM_WORLD
         self.status = MPI.Status()
+        self.tt_recv = 0
+        self.tt_send = 0
 
-    def send_parameters(self, parameters):
+    def set_parameters(self, parameters: npt.ArrayLike) -> None:
         self.tag_solver += 1
+        tmp = time.time()
         self.comm_world.Send(parameters, dest=self.solver_pool_rank, tag=self.tag_solver)  # TODO fixed tag
+        tmp2 = time.time() - tmp
+        self.tt_send = self.tt_send + tmp2
 
-    def recv_observations(self, ):
+    def get_observations(self, ):
+        tmp = time.time()
         if self.pickled_observations:
-            [convergence_tag, self.observations] = self.comm_world.recv(source=self.solver_pool_rank)  # , tag=self.tag_solver)
+            [self.observations, solver_tag] = self.comm_world.recv(source=self.solver_pool_rank)  # , tag=self.tag_solver)
         else:
             self.comm_world.Recv(self.observations, source=self.solver_pool_rank, tag=MPI.ANY_TAG, status=self.status)  # tag=self.tag_solver)
-            convergence_tag = self.status.Get_tag()
-        return convergence_tag, self.observations.copy()
+            solver_tag = self.status.Get_tag()
+        tmp2 = time.time() - tmp
+        self.tt_recv = self.tt_recv + tmp2
+        return self.observations.copy(), solver_tag
 
     def terminate(self, ):
+        print("communication RECV", self.tt_recv, "*************")
+        print("communication SEND", self.tt_send, "*************")
         if not self.terminated:
             self.comm_world.Send(self.buffer_empty_signal, dest=self.solver_pool_rank, tag=TAG_TERMINATE)
             self.terminated = True
 
 
-class SurrogateLocal_CollectorMPI:
+class SurrogateLocal_CollectorMPI(Communicator):
     # initiated by SAMPLERs
     # communicates with COLLECTOR
     # local surrogate evaluator (evaluated on SAMPLERs)
@@ -65,10 +106,10 @@ class SurrogateLocal_CollectorMPI:
     # sends snapshots (isend, tag=2)
     # sends signals that sampler is ready to receive evaluator instance (Isend, tag=1)
     # sends signal that sampler terminated (Send, tag=0)
-    def __init__(self, conf: Configuration, evaluator: Evaluator = None):
+    def __init__(self, conf: Configuration, evaluator: Evaluator | None = None) -> None:
         self.conf = conf
-        self.evaluators_buffer = [None] * 2       # double buffer
-        self.evaluators_buffer_idx = 0            # idx of current buffer 0/1
+        self.evaluators_buffer: list[Evaluator | None] = [None] * 2  # double buffer
+        self.evaluators_buffer_idx = 0  # idx of current buffer 0/1
         self.tag = TAG_ISEND_START
         if self.conf.rank_collector is None:
             self.evaluators_buffer[self.evaluators_buffer_idx] = evaluator
@@ -90,6 +131,7 @@ class SurrogateLocal_CollectorMPI:
         self.request_evaluator_from_collector()
 
     def request_evaluator_from_collector(self, ):
+        assert self.conf.rank_collector is not None
         # sampler expects to receive evaluator later:
         self.request_recv = self.comm_world.irecv(self.conf.max_buffer_size, source=self.conf.rank_collector, tag=TAG_DATA)
         # sends signal to collector that the sampler is ready to receive evaluator
@@ -99,16 +141,19 @@ class SurrogateLocal_CollectorMPI:
 
         self.list_of_snapshots = []
 
-    def send_parameters(self, parameters):
+    def set_parameters(self, parameters: npt.NDArray) -> None:
         self.parameters = parameters.copy()  # TO DO: copy?
 
-    def recv_observations(self, ):
+    def get_observations(self, ):
         if self.evaluators_buffer[self.evaluators_buffer_idx] is None:
             self.wait_for_evaluator_and_request_new()
-        computed_observations = self.evaluators_buffer[self.evaluators_buffer_idx](self.parameters)
-        return 1, computed_observations
+        evaluator = self.evaluators_buffer[self.evaluators_buffer_idx]
+        assert evaluator is not None
+        computed_observations = evaluator(self.parameters)
+        return computed_observations, 1
 
     def send_to_collector(self, snapshot):
+        assert self.conf.rank_collector is not None
         # Adds new snapshot to a list; if COLLECTOR is ready to receive new
         # snapshots, sends list of snapshots to COLLECTOR and empties the list.
         # (only if is_updated == True)
@@ -152,6 +197,7 @@ class SurrogateLocal_CollectorMPI:
 
     def terminate(self, ):
         if not self.terminated_collector:
+            assert self.conf.rank_collector is not None
             # if self.request_send is not None:
             #     self.request_send.wait()
             MPI.Request.waitall(self.requests)

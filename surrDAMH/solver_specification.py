@@ -70,7 +70,7 @@ class SolverSpecExampleNonlinear(SolverSpec):
 class SolverSpecGeneric(SolverSpec):
     """
     Serves only for test purposes.
-    Takes user-specified number of parameters (no_parameters), 
+    Takes user-specified number of parameters (no_parameters),
     returns their mean in the form of a constant vector of user-specified length (no_observations).
     """
 
@@ -84,7 +84,7 @@ class SolverSpecGeneric(SolverSpec):
 class SolverSpecNonlinearGeneric(SolverSpec):
     """
     Serves only for test purposes.
-    Takes user-specified number of parameters (no_parameters), 
+    Takes user-specified number of parameters (no_parameters),
     returns their mean in the form of a constant vector of user-specified length (no_observations).
     """
 

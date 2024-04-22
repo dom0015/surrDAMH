@@ -19,28 +19,42 @@ from surrDAMH.solver_specification import SolverSpec
 import matplotlib.pyplot as plt
 
 # problem data
-ref_par = np.array([-17.42599444,  26.59339408,  17.38733495,  14.49584642,
+ref_par = np.array([-17.42599444, 26.59339408, 17.38733495, 14.49584642,
                     -49.24249923, -42.02752125, -13.58804331, -17.45912394])
 prior_mean = np.array([-16, 26, 17, 16, -48, -41, -14, -16], dtype=np.float32)
 prior_sd = np.array([2, 2, 2, 2, 2, 2, 2, 2], dtype=np.float32)
-initial_sample = ref_par-prior_mean
+initial_sample = ref_par - prior_mean
 
 # basic configuration
-conf = surrDAMH.Configuration(output_dir="output_TSX2", no_parameters=8, no_observations=104, no_solvers=2,
+conf = surrDAMH.Configuration(output_dir="output_SMU_nn2", no_parameters=8, no_observations=104, no_solvers=2,
                               use_collector=True, initial_sample_type="user_specified", initial_sample=initial_sample,
-                              transform_before_surrogate=False, save_raw_data=True,
-                              num_snapshots_initial=9, min_snapshots_to_update=20,
-                              max_collected_snapshots_per_loop=200, max_sampler_isend_requests=100)
+                              transform_before_surrogate=False, save_raw_data=False,
+                              num_snapshots_initial=10, min_snapshots_to_update=5,
+                              max_collected_snapshots_per_loop=100, max_sampler_isend_requests=100)
 
 # solver speification
-solver_spec = SolverSpec(solver_module_path="examples/solvers/TSX_pytorch/flow_torch_wrapper.py",
+solver_spec = SolverSpec(solver_module_path="examples/solvers/TSX_pytorch2/flow_torch_wrapper.py",
                          solver_module_name="flow_torch_wrapper",
                          solver_class_name="Wrapper",
                          solver_parameters={})
 
 # surrogate model updater
-updater = surrDAMH.surrogates.RBFInterpolationUpdater(conf.no_parameters, conf.no_observations, kernel="thin_plate_spline")
-# updater = surrDAMH.surrogates.NNSklearnUpdater(conf.no_parameters, conf.no_observations, hidden_layer_sizes=(20, 20), activation='relu')
+# updater = surrDAMH.surrogates.PolynomialSklearnUpdater(conf.no_parameters, conf.no_observations, max_degree=15)
+# updater = surrDAMH.surrogates.RBFInterpolationUpdater(conf.no_parameters, conf.no_observations, kernel="thin_plate_spline", degree=1)
+# updater = surrDAMH.surrogates.NNSklearnUpdater(conf.no_parameters, conf.no_observations, hidden_layer_sizes=(200, 200), activation='tanh')
+updater = surrDAMH.surrogates.NNSklearnOngoingUpdater(conf.no_parameters, conf.no_observations, hidden_layer_sizes=(50, 100, 50),
+                                                      activation='tanh', solver='adam',  # learning_rate_init=1e-4,
+                                                      iterations_batch=100)
+
+# updater = surrDAMH.surrogates.PyTorchNNOngoingUpdater(conf.no_parameters, conf.no_observations, hidden_layer_sizes=(400, 400, 400, 400), learning_rate_init=2e-4,
+#                                                       iterations_batch=10000, loss_target=1e-4)
+
+# updater = surrDAMH.surrogates.PyTorchNNOngoingUpdaterENDE(conf.no_parameters, conf.no_observations, hidden_layer_sizes=(50, 100, 50), learning_rate_init=1e-3,
+#                                                           iterations_batch=10000, loss_target=2e-5)
+
+# updater = surrDAMH.surrogates.PyTorchNNPredicotrUpdater(conf.no_parameters, conf.no_observations, hidden_size=200, learning_rate_init=1e-4,
+#                                                         iterations_batch=10000)
+
 
 # prior distribution
 list_of_components = [Lognormal(prior_mean[i], prior_sd[i]) for i in range(conf.no_parameters)]
@@ -60,8 +74,8 @@ observations = np.array([275., 426.15387335, 519.56162791, 476.91835845,
                          336.49371946, 329.06614102, 321.78852469, 314.76080504,
                          308.03975175, 301.65272745, 295.60775284, 289.90057293,
                          284.51948343, 279.44855845, 274.66977245, 273.51013087,
-                         275., 154.60491207,  71.45236294,  76.70999836,
-                         83.21164371,  89.82079217,  96.03341936, 101.64846414,
+                         275., 154.60491207, 71.45236294, 76.70999836,
+                         83.21164371, 89.82079217, 96.03341936, 101.64846414,
                          106.61222918, 110.94128174, 114.68346148, 115.75476827,
                          121.62247161, 125.77437628, 128.63350118, 130.62182023,
                          131.95983675, 132.81103707, 133.29647802, 133.50601307,
@@ -89,13 +103,38 @@ likelihood = surrDAMH.likelihoods.LikelihoodNormal(conf.no_observations, observa
 
 # stages of sampling process
 list_of_stages = []
-list_of_stages.append(Stage(algorithm_type="MH", proposal_sd=0.2, max_evaluations=250))
-list_of_stages.append(Stage(algorithm_type="DAMH", proposal_sd=0.3, max_evaluations=250, surrogate_is_updated=True))
-list_of_stages.append(Stage(algorithm_type="DAMH", proposal_sd=0.3, max_evaluations=1000, surrogate_is_updated=True))
-list_of_stages.append(Stage(algorithm_type="DAMH", proposal_sd=0.3, max_evaluations=10000, surrogate_is_updated=False))
+list_of_stages.append(Stage(algorithm_type="MH", proposal_sd=0.3, max_evaluations=25, surrogate_is_updated=True))
+no_test_stages = 20
+for i in range(no_test_stages):
+    if i > 0:
+        list_of_stages.append(
+            Stage(
+                algorithm_type="DAMH",
+                proposal_sd=0.3,
+                max_evaluations=25,
+                surrogate_is_updated=True))
+    list_of_stages.append(
+        Stage(
+            algorithm_type="DAMH",
+            proposal_sd=0.3,
+            max_evaluations=250,
+            surrogate_is_updated=False,
+            is_excluded=True))
+# list_of_stages.append(
+#     Stage(
+#         algorithm_type="DAMH",
+#         proposal_sd=0.2,
+#         max_evaluations=300,
+#         surrogate_is_updated=False))
 
 # run the sampling process
-sam = surrDAMH.SamplingFramework(conf, surrogate_updater=updater, prior=prior, likelihood=likelihood, solver_spec=solver_spec, list_of_stages=list_of_stages)
+sam = surrDAMH.SamplingFramework(
+    conf,
+    surrogate_updater=updater,
+    prior=prior,
+    likelihood=likelihood,
+    solver_spec=solver_spec,
+    list_of_stages=list_of_stages)
 sam.run()
 
 # save histograms grid
@@ -103,14 +142,14 @@ comm_world = MPI.COMM_WORLD
 rank_world = comm_world.Get_rank()
 if rank_world == 0:
     samples = surrDAMH.post_processing.Samples(conf.no_parameters, conf.output_dir)
-    fig, axes = samples.plot_hist_grid(bins1d=25, bins2d=25, scale=["ln"]*8, stages_to_disp=[1, 2, 3])
+    fig, axes = samples.plot_hist_grid(bins1d=20, bins2d=20, scale=["ln"] * 8)
     surrDAMH.post_processing.add_normal_dist_grid(axes, prior_mean, prior_sd)
     surrDAMH.post_processing.add_normal_dist_grid(axes, ref_par, prior_sd, no_sigmas_to_show=0, color="orange")
     ensure_dir(os.path.join(conf.output_dir, "post_processing_output"))
     file_path = os.path.join(conf.output_dir, "post_processing_output", "histograms.pdf")
     fig.savefig(file_path, bbox_inches="tight")
 
-    samples.hist_observations(no_observations=conf.no_observations, stages_to_disp=[1, 2, 3],
-                              observations=observations, bins=[conf.no_observations, 100])
-    file_path = os.path.join(conf.output_dir, "post_processing_output", "posterior_of_observations2.pdf")
-    plt.savefig(file_path, bbox_inches="tight")
+    # samples.hist_observations(no_observations=conf.no_observations, stages_to_disp=[1],
+    #                           observations=observations, bins=[conf.no_observations, 100])
+    # file_path = os.path.join(conf.output_dir, "post_processing_output", "posterior_of_observations2.pdf")
+    # plt.savefig(file_path, bbox_inches="tight")

@@ -8,20 +8,19 @@ Created on Wed Oct 23 15:35:47 2019
 
 from mpi4py import MPI
 from surrDAMH.modules import algorithms as alg
+from surrDAMH.modules import proposals
 from surrDAMH.modules import communication
 from surrDAMH.modules import lhs_normal as lhs
 from surrDAMH.configuration import Configuration
-from surrDAMH.priors.parent import Prior
-from surrDAMH.likelihoods.parent import Likelihood
+from surrDAMH.distributions.parent import Distribution
 from surrDAMH.surrogates.parent import Evaluator
 from typing import List
 from surrDAMH.stages import Stage
-import numpy as np
 
 TAG_STAGE_FINISHED = 3
 
 
-def run_SAMPLER(conf: Configuration, prior: Prior, likelihood: Likelihood, list_of_stages: List[Stage], surrogate_evaluator: Evaluator = None):
+def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distribution, list_of_stages: List[Stage], surrogate_evaluator: Evaluator | None = None):
     comm_world = MPI.COMM_WORLD
     rank_world = comm_world.Get_rank()
     size_world = comm_world.Get_size()
@@ -31,49 +30,51 @@ def run_SAMPLER(conf: Configuration, prior: Prior, likelihood: Likelihood, list_
     commSurrogate = communication.SurrogateLocal_CollectorMPI(conf=conf, evaluator=surrogate_evaluator)
 
     if conf.initial_sample_type == "lhs":
-        initial_samples = lhs.lhs_normal(conf.no_parameters, prior.mean, prior.sd_approximation, conf.no_samplers, 0)
-        initial_sample = initial_samples[rank_world]
+        initial_samples = lhs.lhs_normal(loc=prior.mean, scale=conf.lhs_scale, n=conf.no_samplers, seed=0)
+        initial_sample = alg.Sample(parameters=initial_samples[rank_world])
     elif conf.initial_sample_type == "user_specified":
-        initial_sample = np.random.normal(conf.initial_sample, prior.sd_approximation*0.01)
-        print("INITIAL SAMPLE - rank", rank_world, "=", initial_sample, flush=True)
+        initial_sample = alg.Sample(parameters=conf.initial_samples_distribution.rvs())
     else:
-        initial_sample = np.random.normal(prior.mean, prior.sd_approximation*0.01)
-        # prior.mean TODO: problems with RBF surrogate - singular matrix
+        initial_sample = alg.Sample(parameters=prior.rvs())
+    print("Sampler at rank", rank_world, "- initial sample:", initial_sample, flush=True)
 
-    seed0 = max(1000, size_world)*rank_world  # TO DO check seeds
-    my_Prop = alg.Proposal_GaussRandomWalk(no_parameters=conf.no_parameters, seed=seed0+1)
+    seed0 = max(1000, size_world)*rank_world
+    my_Prop = proposals.GaussRandomWalk(no_parameters=conf.no_parameters, seed=seed0+1)
+    # my_Prop = proposals.GaussRandomWalk_adaptive(no_parameters=conf.no_parameters, seed=seed0+1)
     for i, stage in enumerate(list_of_stages):
         if stage.proposal_sd is not None:  # if None, result of adaptive stage is used
             my_Prop.set_covariance(proposal_sd=stage.proposal_sd)
         seed = seed0 + 2 + i
         if stage.algorithm_type == 'MH':
             if stage.use_only_surrogate:
-                Solver = commSurrogate
-                Surrogate = None
+                commSolver_instance = commSurrogate
+                commSurrogate_instance = None
             else:
-                Solver = commSolver
-                Surrogate = commSurrogate
+                commSolver_instance = commSolver
+                commSurrogate_instance = commSurrogate
             if stage.is_adaptive:
                 stage.name = 'alg' + str(i).zfill(4) + '_MH_adaptive'
                 my_Alg = alg.Algorithm_MH_adaptive(proposal=my_Prop,
-                                                   commSolver=Solver,
-                                                   commSurrogate=Surrogate,
+                                                   commSolver=commSolver_instance,
+                                                   commSurrogate=commSurrogate_instance,
                                                    conf=conf,
                                                    stage=stage,
                                                    prior=prior,
                                                    likelihood=likelihood,
                                                    initial_sample=initial_sample,
+                                                   rank_world=rank_world,
                                                    seed=seed)
             else:
                 stage.name = 'alg' + str(i).zfill(4) + 'MH'
                 my_Alg = alg.Algorithm_MH(proposal=my_Prop,
-                                          commSolver=Solver,
-                                          commSurrogate=Surrogate,
+                                          commSolver=commSolver_instance,
+                                          commSurrogate=commSurrogate_instance,
                                           conf=conf,
                                           stage=stage,
                                           prior=prior,
                                           likelihood=likelihood,
                                           initial_sample=initial_sample,
+                                          rank_world=rank_world,
                                           seed=seed)
         elif stage.algorithm_type == 'DAMH':
             stage.name = 'alg' + str(i).zfill(4) + 'DAMH'
@@ -85,6 +86,7 @@ def run_SAMPLER(conf: Configuration, prior: Prior, likelihood: Likelihood, list_
                                         prior=prior,
                                         likelihood=likelihood,
                                         initial_sample=initial_sample,
+                                        rank_world=rank_world,
                                         seed=seed)
         # print('--- SAMPLER ' + my_Alg.stage.name + ' starts ---')
         my_Alg.run()
@@ -94,9 +96,12 @@ def run_SAMPLER(conf: Configuration, prior: Prior, likelihood: Likelihood, list_
             comm_sampler.Allreduce(sendbuf, recvbuf)
             my_Prop.set_covariance(proposal_sd=recvbuf/conf.no_samplers)
         if not stage.is_excluded:
-            initial_sample = my_Alg.current_sample
-        print('--- SAMPLER ' + my_Alg.stage.name + ' --- acc/rej/prerej:', my_Alg.no_accepted, my_Alg.no_rejected, my_Alg.no_prerejected, flush=True)
+            initial_sample = my_Alg.current
+        print('Stage', my_Alg.stage.name, 'at MPI rank', rank_world, 'finished - acc/rej/prerej samples:',
+              my_Alg.no_accepted, my_Alg.no_rejected, my_Alg.no_prerejected, flush=True)
         comm_world.send([], dest=conf.rank_collector, tag=TAG_STAGE_FINISHED)
+        comm_sampler.Barrier()
+        # print("Barrier after stage", my_Alg.stage.name, "- rank", rank_world, flush=True)
 
     f = getattr(commSolver, "terminate", None)
     if callable(f):

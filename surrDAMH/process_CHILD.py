@@ -51,16 +51,16 @@ while solver_is_active:
         # print("TRANS: ", transformed_data)
         solver_instance.set_parameters(transformed_data.reshape((config.no_parameters,)))
         if config.solver_returns_tag:
-            [convergence_tag, sent_data] = solver_instance.get_observations()
-            if convergence_tag < 0:
+            [sent_data, solver_tag] = solver_instance.get_observations()
+            if solver_tag < 0:
                 sent_data = np.zeros((config.no_observations,))
         else:
             sent_data = solver_instance.get_observations()
-            convergence_tag = 0
+            solver_tag = 0
         counter += 1
         if rank == 0:
             if config.pickled_observations:
-                parent_comm.send([convergence_tag, sent_data], dest=0, tag=tag)
+                parent_comm.send([sent_data, solver_tag], dest=0, tag=int(tag))
             else:
-                parent_comm.Send(sent_data, dest=0, tag=convergence_tag)
-print("CHILD: ", counter)
+                parent_comm.Send(sent_data, dest=0, tag=solver_tag)
+print("Solver at spawned process - evaluations:", counter)

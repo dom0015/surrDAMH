@@ -47,7 +47,7 @@ class RBFInterpolationUpdater(Updater):  # initiated by COLLECTOR
         self.par = np.empty((0, self.no_parameters))
         self.obs = np.empty((0, self.no_observations))
 
-    def add_data(self, parameters: int, observations: int, weights: npt.NDArray = None):
+    def add_data(self, parameters: npt.NDArray, observations: npt.NDArray, weights: npt.NDArray | None = None):
         # add new data
         # WEIGHTS ARE NOT USED
         parameters = parameters.reshape(-1, self.no_parameters)
@@ -59,7 +59,7 @@ class RBFInterpolationUpdater(Updater):  # initiated by COLLECTOR
         try:
             rbf_interpolator = RBFInterpolator(self.par, self.obs, neighbors=self.neighbors, smoothing=self.smoothing,
                                                kernel=self.kernel, epsilon=self.epsilon, degree=self.degree)
-            print("RBF model constructed:", self.par.shape, flush=True)
+            # print("RBF model constructed:", self.par.shape, flush=True)
         except ValueError as e:
             print("Exception - RBFInterpolation ValueError:", e, flush=True)
             par = self.par.copy()

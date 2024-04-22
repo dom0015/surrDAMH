@@ -6,11 +6,14 @@ Created on Thu Nov  7 13:26:55 2019
 @author: simona
 """
 
-from mpi4py import MPI
+from dataclasses import dataclass
+from typing import Any, List
+
 import numpy as np
+from mpi4py import MPI
+
 from surrDAMH.configuration import Configuration
 from surrDAMH.surrogates.parent import Updater
-from dataclasses import dataclass
 
 # communicates with: SAMPLERs
 # sends evaluator instances (isend, tag=2)
@@ -41,10 +44,10 @@ def run_COLLECTOR(conf: Configuration, surrogate_updater: Updater, surrogate_del
     num_snapshots_used = 0  # using how many snapshots the current evaluator was created
 
     # related to surrogate evaluators:
-    buffers_evaluator = [None] * conf.no_samplers
+    buffers_evaluator: List[Any] = [None] * conf.no_samplers
     sampler_can_recv_evaluator = np.array([False] * conf.no_samplers)  # ready to receive updated evaluator
     sampler_got_current_evaluator = np.array([True] * conf.no_samplers)
-    request_isend_evaluator = [None] * conf.no_samplers
+    request_isend_evaluator: List[Any] = [None] * conf.no_samplers
 
     # related to received snapshots
     list_received_snapshots = [np.empty((0, conf.no_parameters)), np.empty((0, conf.no_observations)), np.empty((0, 1))]
@@ -52,7 +55,7 @@ def run_COLLECTOR(conf: Configuration, surrogate_updater: Updater, surrogate_del
 
     # related to signals
     buffer_empty_signal = np.zeros((1,))
-    buffers_empty_signal = [None] * conf.no_samplers  # when only tag is important
+    buffers_empty_signal: List[Any] = [None] * conf.no_samplers  # when only tag is important
     for i in range(conf.no_samplers):
         buffers_empty_signal[i] = np.zeros((1,))
     # request_Isend_signal = [None] * conf.no_samplers
@@ -82,11 +85,6 @@ def run_COLLECTOR(conf: Configuration, surrogate_updater: Updater, surrogate_del
         collected = 0
         while True:
             message_not_received = ~sampler_is_active
-            if collected > conf.max_collected_snapshots_per_loop:
-                print("COLLECTOR", len(list_received_snapshots[2]), flush=True)
-                break
-            if all(message_not_received):  # no incoming messages
-                break
             for rank in sampler_ranks[sampler_is_active]:
                 i = sampler_ranks[sampler_ranks == rank][0]
                 # check if there is an incoming message from this active sampler;
@@ -108,7 +106,6 @@ def run_COLLECTOR(conf: Configuration, surrogate_updater: Updater, surrogate_del
                             sampler_is_active[i] = False
                             comm_world.Recv(buffer_empty_signal, source=rank, tag=tag)  # TODO: cancel message
                         elif tag == TAG_STAGE_FINISHED:
-                            print("STAGE_FINISHED", rank, flush=True)
                             # the sampler waits for receiving this message at the end of each stage
                             comm_world.Recv(buffer_empty_signal, source=rank, tag=tag)  # TODO: cancel message
                         elif tag == TAG_READY_TO_RECEIVE:
@@ -118,6 +115,11 @@ def run_COLLECTOR(conf: Configuration, surrogate_updater: Updater, surrogate_del
                             comm_world.Recv(buffer_empty_signal, source=rank, tag=tag)  # TODO: cancel message
                 else:
                     message_not_received[i] = True
+            if collected > conf.max_collected_snapshots_per_loop:
+                # print("COLLECTOR", len(list_received_snapshots[2]), flush=True)
+                break
+            if all(message_not_received):  # no incoming messages
+                break
 
             ################################
 

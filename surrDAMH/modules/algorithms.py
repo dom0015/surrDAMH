@@ -6,84 +6,132 @@ Created on Tue Oct 22 15:00:39 2019
 @author: simona
 """
 
-from typing import Any
-from mpi4py import MPI
-import numpy as np
-import os
 import csv
+import os
 import time
-from surrDAMH.priors.parent import Prior
-from surrDAMH.likelihoods.parent import Likelihood
+# from copy import deepcopy
+from dataclasses import dataclass
+from typing import Any, List
 
-ANALYZE = False
+import numpy as np
+import numpy.typing as npt
+
+from surrDAMH.configuration import Configuration
+from surrDAMH.distributions.parent import Distribution
+from surrDAMH.modules.communication import Communicator
+from surrDAMH.modules.proposals import GaussRandomWalk, Proposal, GaussRandomWalk_adaptive
+from surrDAMH.stages import Stage
+
+
+@dataclass
+class Sample:
+    parameters: npt.NDArray
+    observations: npt.NDArray | None = None  # G(parameters)
+    posterior: float | None = None  # logarithm of posterior
+    solver_tag: int = 0
 
 
 class Algorithm_PARENT:
-    def __init__(self, proposal, commSolver, seed=0, initial_sample=None, commSurrogate=None,
-                 conf=None, stage=None, prior: Prior = None, likelihood: Likelihood = None):
-        self.prior = prior
+    def __init__(self, stage: Stage, proposal: Proposal, initial_sample: Sample, rank_world: int,
+                 conf: Configuration, prior: Distribution, likelihood: Distribution,
+                 commSolver: Communicator, commSurrogate: Communicator | None = None, seed: int = 0) -> None:
         self.stage = stage
-        self.likelihood = likelihood
         self.proposal = proposal
-        self.commSolver = commSolver
-        self.seed = seed
-        self.current_sample = initial_sample
-        self.G_current_sample = None
+        # self.current = Sample(parameters=initial_sample)
+        self.current = initial_sample
+        self.rank_world = rank_world
         self.conf = conf
-        if self.current_sample is None:
-            self.current_sample = self.prior.mean
+        self.prior = prior
+        self.likelihood = likelihood
+        self.commSolver = commSolver
         self.commSurrogate = commSurrogate
+        self.seed = seed
         if conf.use_collector and stage.surrogate_is_updated:
-            self._send_to_collector = self._send_to_collector__
+            self.send_to_collector = self._send_to_collector
         else:
-            self._send_to_collector = self._empty_function
-        self._generator = np.random.RandomState(seed)
+            self.send_to_collector = self._empty_function
         self.no_accepted = 0
         self.no_prerejected = 0
         self.no_rejected = 0
-        if proposal.is_symmetric:
-            self.is_accepted_sample = self.__acceptance_log_symmetric
-        else:
-            # TODO: not implemented
-            return
-        self.rank_world = MPI.COMM_WORLD.Get_rank()
-        self.monitor = Monitor(output_dir=self.conf.output_dir, stage=stage, basename="rank" + str(self.rank_world).zfill(4) + ".csv")
-
-    def prepare(self):
-        self.time_start = time.time()
-        if self.G_current_sample is None:
-            self.commSolver.send_parameters(self.current_sample)
-            self.convergence_tag, self.G_current_sample = self.commSolver.recv_observations()
-        if ANALYZE:
-            print(self.rank_world, "EXACT CURRENT", flush=True)
-        self.log_posterior_exact_current = self.calculate_log_posterior(self.current_sample, self.G_current_sample, self.convergence_tag)
         self.no_rejected_current = 0
-        self.pre_posterior_current_sample = 0
+        self.proposed: Sample
+        self._generator = np.random.RandomState(seed)
+        self.monitor = Monitor(output_dir=self.conf.output_dir, stage=stage, basename="rank" + str(self.rank_world).zfill(4) + ".csv")
+        self.prepare()
 
-    def request_observations(self):
-        self.commSolver.send_parameters(self.proposed_sample)
-        self.convergence_tag, self.G_proposed_sample = self.commSolver.recv_observations()
-        if ANALYZE:
-            print(self.rank_world, "EXACT PROPOSED", flush=True)
-        self.log_posterior_exact_proposed = self.calculate_log_posterior(self.proposed_sample, self.G_proposed_sample, self.convergence_tag)
-        self.log_posterior_ratio_exact = self.log_posterior_exact_proposed - self.log_posterior_exact_current
+    def prepare(self) -> None:
+        self.time_start = time.time()
+        if self.current.observations is None:
+            self.commSolver.set_parameters(self.current.parameters)
+            self.current.observations, self.current.solver_tag = self.commSolver.get_observations()
+        self.current.posterior = self.calculate_log_posterior(self.current.parameters, self.current.observations, self.current.solver_tag)
 
-    def if_accepted(self):
+    def request_observations(self) -> None:
+        parameters = self.proposed.parameters.copy()
+        self.commSolver.set_parameters(parameters)
+        self.proposed.observations, self.proposed.solver_tag = self.commSolver.get_observations()
+        self.proposed.posterior = self.calculate_log_posterior(self.proposed.parameters, self.proposed.observations, self.proposed.solver_tag)
+
+    def if_accepted(self) -> None:
         self.current_sample_to_file()
-        self._send_to_collector(sample=self.current_sample, observation=self.G_current_sample, weight=self.no_rejected_current+1)
+        self.send_to_collector(sample=self.current, weight=self.no_rejected_current+1)
         self.no_accepted += 1
         self.no_rejected_current = 0
-        self.current_sample = self.proposed_sample
-        self.G_current_sample = self.G_proposed_sample
-        self.log_posterior_exact_current = self.log_posterior_exact_proposed
-        self.raw_data_to_file(type="accepted", tag=self.convergence_tag, observations=self.G_current_sample)
+        # self.current = deepcopy(self.proposed)
+        self.current = Sample(parameters=self.proposed.parameters.copy(), observations=self.proposed.observations.copy(),
+                              posterior=self.proposed.posterior, solver_tag=self.proposed.solver_tag)
+        self.raw_data_to_file(type="accepted", tag=self.current.solver_tag, observations=self.current.observations)
 
     def if_rejected(self):
         self.no_rejected += 1
         self.no_rejected_current += 1
-        if not self.convergence_tag < 0:
-            self._send_to_collector(sample=self.proposed_sample, observation=self.G_proposed_sample, weight=0)
-        self.raw_data_to_file(type="rejected", tag=self.convergence_tag, observations=self.G_proposed_sample)
+        if not self.current.solver_tag < 0:
+            self.send_to_collector(sample=self.proposed, weight=0)
+        self.raw_data_to_file(type="rejected", tag=self.current.solver_tag, observations=self.proposed.observations)
+
+    def calculate_log_posterior(self, parameters: npt.NDArray, observation: npt.NDArray, solver_tag: int = 0) -> float:
+        if solver_tag < 0:
+            return -np.inf
+        log_likelihood = self.likelihood.logpdf(observation)
+        log_prior = self.prior.logpdf(parameters)
+        res = log_likelihood + log_prior
+        return res
+
+    def sample_acceptance_log(self, log_acceptance_probability):
+        temp = self._generator.uniform(0.0, 1.0)
+        if np.log(temp) < log_acceptance_probability:
+            return True  # accepted
+        else:
+            return False  # rejected
+
+    def current_sample_to_file(self):
+        if self.conf.transform_before_saving:
+            row: List[Any] = [1+self.no_rejected_current] + list(self.prior.transform(self.current.parameters))
+        else:
+            row: List[Any] = [1+self.no_rejected_current] + list(self.current.parameters)
+        row.append(self.current.posterior)
+        self.monitor(data_name="samples", row=row, condition=self.stage.is_saved)
+
+    def raw_data_to_file(self, type: str, tag, observations):
+        if self.conf.save_raw_data:
+            if self.conf.transform_before_saving:
+                row = [type] + list(self.prior.transform(self.proposed.parameters))
+            else:
+                row = [type] + list(self.proposed.parameters)
+            row += [tag]
+            row += list(observations.flatten())
+            self.monitor(data_name="raw_data", row=row)
+
+    def _send_to_collector(self, sample, weight):
+        parameters = sample.parameters.copy()
+        observations = sample.observations.copy()
+        if self.conf.transform_before_surrogate:
+            parameters = self.prior.transform(parameters)
+        assert self.commSurrogate is not None
+        self.commSurrogate.send_to_collector([parameters, observations, weight])
+
+    def _empty_function(self, **kw):
+        return
 
     def finalize(self):
         self.current_sample_to_file()
@@ -93,73 +141,58 @@ class Algorithm_PARENT:
         self.monitor(data_name="notes", row=notes, condition=self.stage.is_saved)
         self.monitor.close_files()
 
-    def __acceptance_log_symmetric(self, log_ratio):
-        temp = self._generator.uniform(0.0, 1.0)
-        temp = np.log(temp)
-        self.monitor(data_name="acceptance", row=[temp, log_ratio, temp < log_ratio])
-        if temp < log_ratio:  # accepted
-            return True
-        else:
-            return False
-
-    def current_sample_to_file(self):
-        if self.conf.transform_before_saving:
-            row = [1+self.no_rejected_current] + list(self.prior.transform(self.current_sample))
-        else:
-            row = [1+self.no_rejected_current] + list(self.current_sample)
-        row.append(self.log_posterior_exact_current)
-        row.append(self.pre_posterior_current_sample)
-        self.monitor(data_name="samples", row=row, condition=self.stage.is_saved)
-
-    def raw_data_to_file(self, type: str, tag, observations):
-        if self.conf.save_raw_data:
-            if self.conf.transform_before_saving:
-                row = [type] + list(self.prior.transform(self.proposed_sample))
-            else:
-                row = [type] + list(self.proposed_sample)
-            row += [tag]
-            row += list(observations.flatten())
-            self.monitor(data_name="raw_data", row=row)
-
-    def _send_to_collector__(self, sample, observation, weight):
-        sample = sample.copy()
-        observation = observation.copy()
-        if self.conf.transform_before_surrogate:
-            sample = self.prior.transform(sample)
-        self.commSurrogate.send_to_collector([sample, observation, weight])
-
-    def _empty_function(self, **kw):
-        return
-
-    def calculate_log_posterior(self, sample, observation, convergence_tag=0):
-        if convergence_tag < 0:
-            return -np.inf
-        log_likelihood = self.likelihood.calculate_log_likelihood(observation)
-        log_prior = self.prior.calculate_log_prior(sample)
-        if ANALYZE:
-            print(self.rank_world, "LOG LIKELIHOOD, LOG PRIOR:", log_likelihood, log_prior, flush=True)
-        res = log_likelihood + log_prior
-        return res
-
 
 class Algorithm_MH(Algorithm_PARENT):  # initiated by SAMPLERs
     def run(self):
+        tt_total = 0.0
         max_steps = min(self.stage.max_samples, self.stage.max_evaluations)
-        self.prepare()
         for i in range(max_steps):
-            self.proposed_sample = self.proposal.propose_sample(self.current_sample)
+            parameters = self.proposal.propose_sample(self.current.parameters)
+            self.proposed = Sample(parameters=parameters)
+            tt = time.time()
             self.request_observations()
-            if self.is_accepted_sample(self.log_posterior_ratio_exact):
+            tt2 = time.time()-tt
+            # print("Computation time:", tt2, flush=True)
+            tt_total += tt2
+            log_acceptance_probability_exact = self.proposal.get_log_acceptance_probability(self.proposed.posterior, self.current.posterior)
+            if self.sample_acceptance_log(log_acceptance_probability_exact):
                 self.if_accepted()
             else:
                 self.if_rejected()
             if time.time() - self.time_start > self.stage.time_limit:
-                print("SAMPLER at RANK", self.rank_world, "time limit ", self.stage.time_limit, " reached - loop", i, flush=True)
+                print("SAMPLER at rank", self.rank_world, "time limit ", self.stage.time_limit, " reached - loop", i, flush=True)
                 break
+        print("Total MH: ", tt_total, flush=True)
         self.finalize()
 
 
 class Algorithm_MH_adaptive(Algorithm_PARENT):  # initiated by SAMPLERs
+    def run(self):
+        tt_total = 0.0
+        max_steps = min(self.stage.max_samples, self.stage.max_evaluations)
+        for i in range(max_steps):
+            parameters = self.proposal.propose_sample(self.current.parameters)
+            self.proposed = Sample(parameters=parameters)
+            tt = time.time()
+            self.request_observations()
+            tt2 = time.time()-tt
+            # print("Computation time:", tt2, flush=True)
+            tt_total += tt2
+            log_acceptance_probability_exact = self.proposal.get_log_acceptance_probability(self.proposed.posterior, self.current.posterior)
+            acceptance_probability = min(1.0, np.exp(log_acceptance_probability_exact))
+            self.proposal.adapt(proposed_sample=self.proposed.parameters, acceptance_probability=acceptance_probability)
+            if self.sample_acceptance_log(log_acceptance_probability_exact):
+                self.if_accepted()
+            else:
+                self.if_rejected()
+            if time.time() - self.time_start > self.stage.time_limit:
+                print("SAMPLER at rank", self.rank_world, "time limit ", self.stage.time_limit, " reached - loop", i, flush=True)
+                break
+        print("Total MH_adaptive:", tt_total, flush=True)
+        self.finalize()
+
+
+class Algorithm_MH_adaptive_copy(Algorithm_PARENT):  # initiated by SAMPLERs
     def run(self):
         max_steps = min(self.stage.max_samples, self.stage.max_evaluations)
         self.target_rate = self.stage.adaptive_target_rate  # target acceptance rate
@@ -171,10 +204,9 @@ class Algorithm_MH_adaptive(Algorithm_PARENT):  # initiated by SAMPLERs
         self.sample_limit = self.stage.adaptive_sample_limit  # minimal number of accepted/rejected samples to evaluate acceptance rate
         if self.sample_limit is None:
             self.sample_limit = 10
-        self.prepare()
         samples = np.empty((0, self.conf.no_parameters))
         fweights = np.empty((0,), dtype=int)
-        samples = np.vstack((samples, self.current_sample))
+        samples = np.vstack((samples, self.current.parameters))
         fweights = np.append(fweights, 1)
         # idx_accepted = np.empty((0,),dtype=bool)
         counter_accepted = 0
@@ -182,19 +214,22 @@ class Algorithm_MH_adaptive(Algorithm_PARENT):  # initiated by SAMPLERs
         init_flag = True
         coef = 1
         # find initial proposal SD:
-        if self.proposal.proposal_std.ndim == 1:
-            initial_SD = self.proposal.proposal_std
+        self.proposal: GaussRandomWalk
+        if self.proposal.sd.ndim == 1:
+            initial_SD = self.proposal.sd
         else:
-            initial_SD = np.sqrt(np.diag(self.proposal.proposal_std))
+            initial_SD = np.sqrt(np.diag(self.proposal.sd))
         COV = initial_SD
         for i in range(max_steps):
-            self.proposed_sample = self.proposal.propose_sample(self.current_sample)
+            parameters = self.proposal.propose_sample(self.current.parameters)
+            self.proposed = Sample(parameters=parameters)
             self.request_observations()
-            if self.is_accepted_sample(self.log_posterior_ratio_exact):
+            log_acceptance_probability_exact = self.proposal.get_log_acceptance_probability(self.proposed.posterior, self.current.posterior)
+            if self.sample_acceptance_log(log_acceptance_probability_exact):
                 self.if_accepted()
                 # idx_accepted = np.append(idx_accepted,True)
                 fweights = np.append(fweights, 1)
-                samples = np.vstack((samples, self.current_sample))
+                samples = np.vstack((samples, self.current.parameters))
                 counter_accepted += 1
             else:
                 self.if_rejected()
@@ -216,7 +251,7 @@ class Algorithm_MH_adaptive(Algorithm_PARENT):  # initiated by SAMPLERs
                 np.fill_diagonal(CORR, 1)
                 COV = CORR*SD.reshape((self.conf.no_parameters, 1))
                 COV = COV*SD.reshape((1, self.conf.no_parameters))
-                # print(CORR)
+                print("corr:", CORR, flush=True)
                 if init_flag:
                     init_flag = False
                     coef = np.mean(initial_SD/SD)
@@ -237,7 +272,7 @@ class Algorithm_MH_adaptive(Algorithm_PARENT):  # initiated by SAMPLERs
                 counter_rejected = 0
 
             if time.time() - self.time_start > self.stage.time_limit:
-                print("SAMPLER at RANK", self.rank_world, "time limit ", self.stage.time_limit, " reached - loop", i, flush=True)
+                print("SAMPLER at rank", self.rank_world, "time limit ", self.stage.time_limit, " reached - loop", i, flush=True)
                 break
         print("RANK", self.rank_world, "FINAL COV", coef*COV, flush=True)
         self.finalize()
@@ -245,45 +280,39 @@ class Algorithm_MH_adaptive(Algorithm_PARENT):  # initiated by SAMPLERs
 
 class Algorithm_DAMH(Algorithm_PARENT):  # initiated by SAMPLERs
     def run(self):
-        self.prepare()
+        # calculate approximate observations and posterior for current (initial) sample:
+        assert self.commSurrogate is not None
         if self.conf.transform_before_surrogate:
-            sample = self.prior.transform(self.current_sample.copy())
-            self.commSurrogate.send_parameters(sample)
+            sample = self.prior.transform(self.current.parameters.copy())
+            self.commSurrogate.set_parameters(sample)
         else:
-            self.commSurrogate.send_parameters(self.current_sample)
-        tag, observation_approx_current = self.commSurrogate.recv_observations()
-        self.log_posterior_approx_current = self.calculate_log_posterior(self.current_sample, observation_approx_current)
+            self.commSurrogate.set_parameters(self.current.parameters)
+        observation_approx_current, tag = self.commSurrogate.get_observations()
+        log_posterior_approx_current = self.calculate_log_posterior(self.current.parameters, observation_approx_current)
+
         for i in range(self.stage.max_samples):
-            self.proposed_sample = self.proposal.propose_sample(self.current_sample)
-            # it is necessary to recalculate GS_current_cample,
+            parameters = self.proposal.propose_sample(self.current.parameters)
+            self.proposed = Sample(parameters=parameters)
+            # it is necessary to recalculate approximate observation for current sample
             # because the surrogate model may have changed
             if self.conf.transform_before_surrogate:
-                c_sample = self.prior.transform(self.current_sample.copy())
-                p_sample = self.prior.transform(self.proposed_sample.copy())
-                self.commSurrogate.send_parameters(np.array([c_sample, p_sample]))
+                c_sample = self.prior.transform(self.current.parameters.copy())
+                p_sample = self.prior.transform(self.proposed.parameters.copy())
+                self.commSurrogate.set_parameters(np.array([c_sample, p_sample]))
             else:
-                self.commSurrogate.send_parameters(np.array([self.current_sample, self.proposed_sample]))
-            tag, tmp = self.commSurrogate.recv_observations()
+                self.commSurrogate.set_parameters(np.array([self.current, self.proposed]))
+            tmp, tag = self.commSurrogate.get_observations()
             observation_approx_current = tmp[0, :]
-            if ANALYZE:
-                print(self.rank_world, "APPROX CURRENT", flush=True)
-            self.log_posterior_approx_current = self.calculate_log_posterior(self.current_sample, observation_approx_current)
+            log_posterior_approx_current = self.calculate_log_posterior(self.current.parameters, observation_approx_current)
             observation_approx_proposed = tmp[1, :]
-            if ANALYZE:
-                print(self.rank_world, "APPROX PROPOSED", flush=True)
-            log_posterior_approx_proposed = self.calculate_log_posterior(self.proposed_sample, observation_approx_proposed)
-            log_posterior_ratio_approx = log_posterior_approx_proposed - self.log_posterior_approx_current
+            log_posterior_approx_proposed = self.calculate_log_posterior(self.proposed.parameters, observation_approx_proposed)
+            log_posterior_ratio_approx = self.proposal.get_log_acceptance_probability(log_posterior_approx_proposed, log_posterior_approx_current)
 
-            if self.is_accepted_sample(log_posterior_ratio_approx):
+            if self.sample_acceptance_log(log_posterior_ratio_approx):
                 self.request_observations()
-                # if self.rank_world == 0:
-                # print("SURROGATE", observation_approx_proposed[:10], flush=True)
-                # print("EXACT", self.G_proposed_sample[:10], flush=True)
-                # print("DIFF", np.mean(np.abs(observation_approx_proposed-self.G_proposed_sample)), flush=True)
-                row = [log_posterior_approx_proposed, self.log_posterior_approx_current, self.log_posterior_exact_proposed, self.log_posterior_exact_current]
-                self.monitor(data_name="acceptance", row=row)
-                row = [i] + [self.log_posterior_exact_proposed] + [log_posterior_approx_proposed]
-                if self.is_accepted_sample(self.log_posterior_ratio_exact - log_posterior_ratio_approx):
+                log_acceptance_probability_exact = self.proposal.get_log_acceptance_probability(self.proposed.posterior, self.current.posterior)
+                row = [i] + [self.proposed.posterior] + [log_posterior_approx_proposed]
+                if self.sample_acceptance_log(log_acceptance_probability_exact - log_posterior_ratio_approx):
                     self.monitor(data_name="accepted", row=row, condition=self.stage.is_saved)
                     self.if_accepted()
                 else:
@@ -294,40 +323,12 @@ class Algorithm_DAMH(Algorithm_PARENT):  # initiated by SAMPLERs
                 self.no_rejected_current += 1
                 self.raw_data_to_file(type="prerejected", tag=0, observations=observation_approx_proposed)
             if time.time() - self.time_start > self.stage.time_limit:
-                print("SAMPLER at RANK", self.rank_world, "time limit ", self.stage.time_limit, " reached - loop", i, flush=True)
+                # print("SAMPLER at rank", self.rank_world, "time limit ", self.stage.time_limit, " reached - loop", i, flush=True)
                 break
             if (self.no_rejected + self.no_accepted) >= self.stage.max_evaluations:
-                print("SAMPLER at RANK", self.rank_world, "evaluations limit ", self.stage.max_evaluations, " reached - loop", i, flush=True)
+                # print("SAMPLER at RANK", self.rank_world, "evaluations limit ", self.stage.max_evaluations, " reached - loop", i, flush=True)
                 break
         self.finalize()
-
-
-class Proposal_GaussRandomWalk:  # initiated by SAMPLERs
-    def __init__(self, no_parameters, proposal_std=1.0, seed=0):
-        self.no_parameters = no_parameters
-        self._generator = np.random.RandomState(seed)
-        self.set_covariance(proposal_std)
-        self.is_symmetric = True
-        self.is_exponential = True
-
-    def set_covariance(self, proposal_sd=1.0):
-        # prior std is scalar/vector/covariance matrix:
-        if np.isscalar(proposal_sd):
-            self.sd = np.full((self.no_parameters,), proposal_sd)
-        else:
-            self.sd = np.array(proposal_sd)
-        if self.sd.ndim == 1:  # proposal - normal uncorrelated
-            self.propose_sample = self._propose_sample_uncorrelated
-        else:  # proposal - normal correlated
-            self.propose_sample = self._propose_sample_multivariate
-
-    def _propose_sample_uncorrelated(self, current_sample):
-        sample = self._generator.normal(current_sample, self.sd)
-        return sample
-
-    def _propose_sample_multivariate(self, current_sample):
-        sample = self._generator.multivariate_normal(current_sample, self.sd)
-        return sample
 
 
 class Writer:

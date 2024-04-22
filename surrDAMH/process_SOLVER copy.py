@@ -31,6 +31,7 @@ from surrDAMH.solver_specification import SolverSpec
 class CommunicationWithChild:
     def __init__(self, conf, transform, solver_spec, solver_output_dir, solver_id):
         self.pickled_observations = conf.pickled_observations
+        self.max_requests = 1
         child_process_path = os.path.dirname(os.path.abspath(__file__))
         self.comm = MPI.COMM_SELF.Spawn(sys.executable,
                                         args=[child_process_path+'/process_CHILD.py', str(solver_id), solver_output_dir],
@@ -42,8 +43,9 @@ class CommunicationWithChild:
 
     def send_parameters(self, data_par):
         self.tag += 1
+        self.data_par = data_par.copy()
         self.comm.Bcast([np.array(self.tag, 'i'), MPI.INT], root=MPI.ROOT)
-        self.comm.Bcast([data_par, MPI.DOUBLE], root=MPI.ROOT)
+        self.comm.Bcast([self.data_par, MPI.DOUBLE], root=MPI.ROOT)
 
     def recv_observations(self):
         if self.pickled_observations:
@@ -92,89 +94,74 @@ def run_SOLVER(conf: Configuration, prior: Distribution, solver_spec: SolverSpec
     received_data = np.zeros(no_parameters)
     status = MPI.Status()
     parameters_queue = deque()
+    times_start = [0.0] * conf.no_solvers
+    times_len = [0.0] * conf.no_solvers
+    counter = [0] * conf.no_solvers
 
     def receive_observations_and_resend(i):
         sent_data, solver_tag = comm_with_child[i].recv_observations()
         child_can_solve[i] = True  # mark the solver as free
-        rank_dest = occupied_by_source[i]
-        if conf.pickled_observations:
-            comm_world.send([sent_data.copy(), solver_tag], dest=rank_dest, tag=occupied_by_tag[i])
-        else:
-            comm_world.Send(sent_data.copy(), dest=rank_dest, tag=solver_tag)  # occupied_by_tag[i])
-        sampler_can_send[samplers_rank == rank_dest] = True
+        for j in range(len(occupied_by_source[i])):
+            rank_dest = occupied_by_source[i][j]
+            if conf.pickled_observations:
+                comm_world.send([sent_data[j, :].copy(), solver_tag], dest=rank_dest, tag=occupied_by_tag[i][j])
+            else:
+                comm_world.Send(sent_data[j, :].copy(), dest=rank_dest, tag=solver_tag)  # occupied_by_tag[i][j])
+            sampler_can_send[samplers_rank == rank_dest] = True
 
     def receive_parameters_from_sampler():
-        t1 = 0.0
-        t2 = 0.0
-        t3 = 0.0
-        received = False
-        # if any(sampler_can_send):  # and any(child_can_solve):
-        sources = samplers_rank[sampler_can_send]
-        sources = np.random.permutation(sources)
-        for rank in sources:
-            if False and all(child_can_solve):  # no child is busy, wait for an incoming message from any sampler
-                t1 = time.time()
+        if any(sampler_can_send) and any(child_can_solve):
+            if all(child_can_solve):  # no child is busy
                 probe = comm_world.Probe(source=MPI.ANY_SOURCE, tag=MPI.ANY_TAG, status=status)
-                t1 = time.time() - t1
-                if probe:
-                    received = True
-                    print("run_SOLVER Probe", t1, flush=True)
             else:
-                t2 = time.time()
-                probe = comm_world.Iprobe(source=rank, tag=MPI.ANY_TAG, status=status)
-                # probe = comm_world.iprobe(source=MPI.ANY_SOURCE, tag=MPI.ANY_TAG, status=status)
-                t2 = time.time() - t2
-            t3 = time.time()
+                probe = comm_world.Iprobe(source=MPI.ANY_SOURCE, tag=MPI.ANY_TAG, status=status)
             if probe:  # if there is an incoming message from any sampler
                 # receive this message (one message from one sampler)
                 rank_source = status.Get_source()
                 tag = status.Get_tag()
                 comm_world.Recv(received_data, source=rank_source, tag=tag)
-                sampler_can_send[samplers_rank == rank_source] = False
                 if tag == 0:  # if received message has tag 0, switch corresponding sampler to inactive
                     # there will be no other message from that sampler
                     sampler_is_active[samplers_rank == rank_source] = False
+                    sampler_can_send[samplers_rank == rank_source] = False
                 else:  # put the request into queue (remember source and tag)
                     parameters_queue.append([rank_source, tag, received_data.copy()])
                     # nothing else will come from this sampler until completion of this request
-            t3 = time.time() - t3
-        return t1, t2, t3, received
+                    sampler_can_send[samplers_rank == rank_source] = False
+            elif conf.debug:
+                print("debug - RANK", rank_world, "POOL Iprobe False - S:", sampler_can_send, "- CH:", child_can_solve)
 
-    time_total_1 = 0.0
-    time_total_2 = 0.0
-    time_total_3 = 0.0
-    time_total_4 = 0.0
-    time_total_5 = 0.0
-    counter = 0
-    time100 = 0.0
     while any(sampler_is_active):  # while at least 1 sampling algorithm is active
-        t1, t2, t3, received = receive_parameters_from_sampler()
-        if received:
-            counter += 1
-        time_total_1 += t1
-        time100 += t1
-        if counter == 10:
-            print(" ********************** processSOLVER time10", time100, flush=True)
-            counter = 0
-            time100 = 0.0
-        time_total_2 += t2
-        time_total_3 += t3
-        for i in range(conf.no_solvers):  # for all child solvers
-            tt = time.time()
-            if not child_can_solve[i]:  # if the child is busy, check if it finished its request
-                if comm_with_child[i].is_solved():  # if finished, send solution to sampler
+        receive_parameters_from_sampler()
+        for i in range(conf.no_solvers):
+            if not child_can_solve[i]:  # check all busy child solvers if they finished the request
+                if comm_with_child[i].is_solved():  # if so, send solution to the sampling algorithm
                     receive_observations_and_resend(i)
-            time_total_4 += time.time() - tt
-            tt = time.time()
+                    tt = time.time()-times_start[i]
+                    # print("run_SOLVER:", tt)
+                    times_len[i] += tt
+                    counter[i] += 1
+                    if counter[i] == 100:
+                        print("run_SOLVER Last 100", i, ":", times_len[i], flush=True)
+                        times_len[i] = 0
+                        counter[i] = 0
+                elif conf.debug:
+                    print("debug - RANK", rank_world, "PARENT Iprobe False - S:", sampler_can_send, "- CH:", child_can_solve, i)
             if child_can_solve[i]:
-                if parameters_queue:  # if the queue is not empty
-                    rank_source, tag, received_data = parameters_queue.popleft()
-                    occupied_by_source[i] = rank_source
-                    occupied_by_tag[i] = tag
-                    comm_with_child[i].send_parameters(received_data)
+                len_queue = len(parameters_queue)
+                if len_queue > 0:
+                    occupied_by_source[i] = []
+                    occupied_by_tag[i] = []
+                    temp_received_data = np.empty((0, no_parameters))
+                    for j in range(min(len_queue, comm_with_child[i].max_requests)):
+                        rank_source, tag, received_data = parameters_queue.popleft()
+                        temp_received_data = np.vstack((temp_received_data, received_data.copy()))
+                        occupied_by_source[i].append(rank_source)
+                        occupied_by_tag[i].append(tag)
+                    times_start[i] = time.time()
+                    comm_with_child[i].send_parameters(temp_received_data)
                     child_can_solve[i] = False
-            time_total_5 += time.time() - tt
-    print("run_SOLVER", time_total_1, time_total_2, time_total_3, time_total_4, time_total_5, "++++++++++++++++++++++++++")
+
     for i in range(conf.no_solvers):
         f = getattr(comm_with_child[i], "terminate", None)
         if callable(f):

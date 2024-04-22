@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-from typing import Literal
 import sys
-import numpy as np
 from dataclasses import dataclass
+from typing import Literal
+
+import numpy as np
+
+from surrDAMH.modules.proposals import Proposal, GaussRandomWalk
 
 
 @dataclass
 class Stage:
     algorithm_type: Literal["MH", "DAMH"] = "MH"
+    proposal: Proposal | None = None
     proposal_sd: float | None = None
     max_samples: int = sys.maxsize
     max_evaluations: int = sys.maxsize

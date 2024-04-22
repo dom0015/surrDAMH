@@ -11,7 +11,7 @@ from mpi4py import MPI
 import surrDAMH
 # import surrDAMH.post_processing as post
 import os
-from surrDAMH.priors.independent_components import Uniform, Beta, Lognormal, Normal
+from surrDAMH.distributions.independent_components import Uniform, Beta, Lognormal, Normal
 from surrDAMH.modules.tools import ensure_dir
 from surrDAMH.stages import Stage
 
@@ -29,7 +29,7 @@ updater = surrDAMH.surrogates.RBFInterpolationUpdater(conf.no_parameters, conf.n
 # prior distribution
 list_of_components = [Normal(0, 2), Normal(0, 2), Uniform(-3, 3), Beta(2, 2), Lognormal(0, 1)]
 list_of_components = list_of_components[0:conf.no_parameters]
-prior = surrDAMH.priors.PriorIndependentComponents(list_of_components)
+prior = surrDAMH.distributions.PriorIndependentComponents(list_of_components)
 
 # observations and likelihood
 observations = surrDAMH.solvers.calculate_artificial_observations(solver_spec, np.ones(conf.no_parameters,))

@@ -8,7 +8,7 @@ class Likelihood:
     def __init__(self):
         pass
 
-    def calculate_log_likelihood(self, observations):
+    def logpdf(self, observations):
         """
         Calculates logarithm of the likelihood for given observations.
         """

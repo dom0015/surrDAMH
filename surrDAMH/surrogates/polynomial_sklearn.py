@@ -34,9 +34,12 @@ class PolynomialSklearnUpdater(Updater):  # initiated by COLLECTOR
         self.par = np.empty((0, self.no_parameters))
         self.obs = np.empty((0, self.no_observations))
         self.wei = np.empty((0, 1))
-        self.current_degree = -1
-        self.no_snapshots = 0
-        self.no_included_snapshots = 0
+        self.degree = 1
+        self.num_terms = self.no_parameters + 1
+        self.terms_multiplicator = (self.no_parameters + self.degree + 1)/(self.degree + 1)
+        self.num_snapshots = 0
+        self.num_snapshots_current = 0
+        self.degree_current = 0
         self.model = None
 
     def add_data(self, parameters: int, observations: int, weights: npt.NDArray = None):
@@ -47,7 +50,7 @@ class PolynomialSklearnUpdater(Updater):  # initiated by COLLECTOR
         observations = observations.reshape(-1, self.no_observations)
 
         no_new_snapshots = parameters.shape[0]
-        self.no_snapshots += no_new_snapshots
+        self.num_snapshots += no_new_snapshots
 
         if weights is None:
             weights = np.ones((no_new_snapshots, 1))
@@ -56,15 +59,18 @@ class PolynomialSklearnUpdater(Updater):  # initiated by COLLECTOR
         self.wei = np.vstack((self.wei, weights))
 
     def get_evaluator(self):
-        # TODO: polynomial degree formula
-        degree = int(np.floor(np.log(self.no_snapshots)/np.log(self.no_parameters)))
-        degree = min(degree, self.max_degree)
-        # update the model if data (and degree) changed:
-        if self.no_snapshots > self.no_included_snapshots:
-            if degree > self.current_degree:
-                self.current_degree = degree
-                self.model = make_pipeline(PolynomialFeatures(self.current_degree), LinearRegression())
-                print("Polynomial surrogate model degree =", self.current_degree, ", no_snapshots =", self.no_snapshots, flush=True)
+        # number of terms: (no_parameters + degree choose degree)
+        # degree += 1  =>  num_terms *= (no_parameters + degree)/degree
+        while self.num_snapshots > self.num_terms*self.terms_multiplicator and self.degree < self.max_degree:
+            self.num_terms *= self.terms_multiplicator
+            self.degree += 1
+            self.terms_multiplicator = (self.no_parameters + self.degree + 1)/(self.degree + 1)
+            print("snapshots, terms, degree:", self.num_snapshots, self.num_terms, self.degree, flush=True)
+        if self.num_snapshots > self.num_snapshots_current:  # train the model if num_snapshots increased
+            if self.degree > self.degree_current:  # create new model if degree changed
+                self.model = make_pipeline(PolynomialFeatures(self.degree), LinearRegression())
+                print("Polynomial surrogate model degree =", self.degree, ", no_snapshots =", self.num_snapshots, flush=True)
+                self.degree_current = self.degree
             self.model.fit(self.par, self.obs)
-            self.no_included_snapshots = self.no_snapshots
+            self.num_snapshots_current = self.num_snapshots
         return PolynomialSklearnEvaluator(self.no_parameters, self.model)

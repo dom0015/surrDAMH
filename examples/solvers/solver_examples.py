@@ -23,7 +23,7 @@ class Solver_illustrative_local(Solver):
 
     def get_observations(self):
         res = (self.x**2-self.y)*(np.log((self.x-self.y)**2+1))
-        # time.sleep(0.01)
+        time.sleep(0.01)
         return res
         # return convergence_tag, res
 
@@ -121,7 +121,7 @@ class Solver_linela2exp_local_tag:
             convergence_tag = 1
         else:
             convergence_tag = -1
-        return convergence_tag, uL
+        return uL, convergence_tag
 
 
 class NonlinearGeneric(Solver):
