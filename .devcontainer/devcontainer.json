@@ -10,7 +10,8 @@
                 "visualstudioexptteam.vscodeintellicode",
                 "grapecity.gc-excelviewer",
                 "tomoki1207.pdf",
-                "ms-toolsai.jupyter-keymap"
+                "ms-toolsai.jupyter-keymap",
+                "ms-python.vscode-pylance"
             ]
         },
         "codespaces": {

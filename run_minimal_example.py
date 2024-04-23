@@ -21,7 +21,8 @@ conf = surrDAMH.Configuration(output_dir="minimal_example", no_parameters=2, no_
                               pickled_observations=True,
                               initial_sample_type="user_specified", initial_samples_distribution=D)
 solver_spec = surrDAMH.solver_specification.SolverSpecExample1()
-updater = surrDAMH.surrogates.RBFInterpolationUpdater(conf.no_parameters, conf.no_observations)
+# updater = surrDAMH.surrogates.RBFInterpolationUpdater(conf.no_parameters, conf.no_observations)
+updater = surrDAMH.surrogates.PolynomialSklearnUpdater(no_parameters=conf.no_parameters, no_observations=conf.no_observations)
 prior = surrDAMH.distributions.Normal(mean=[0.0, 0.0], sd=1.0)
 # prior = scipy.stats.multivariate_normal(mean=[0.0, 0.0], cov=1.0)  # type: ignore
 
