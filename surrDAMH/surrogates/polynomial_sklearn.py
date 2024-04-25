@@ -6,12 +6,15 @@ Created on Wed Jan 22 10:15:50 2020
 @author: simona
 """
 
+import time
+
 import numpy as np
 import numpy.typing as npt
-from surrDAMH.surrogates.parent import Updater, Evaluator
-from sklearn.preprocessing import PolynomialFeatures
 from sklearn.linear_model import LinearRegression
 from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import PolynomialFeatures
+
+from surrDAMH.surrogates.parent import Evaluator, Updater
 
 
 class PolynomialSklearnEvaluator(Evaluator):

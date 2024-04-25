@@ -125,15 +125,15 @@ class SurrogateLocal_CollectorMPI(Communicator):
             self.request_evaluator_from_collector()
 
     def wait_for_evaluator_and_request_new(self, ):
-        evaluator_instance = self.request_recv.wait()
+        evaluator_instance = self.request_irecv.wait()
         self.evaluators_buffer[1 - self.evaluators_buffer_idx] = evaluator_instance
         self.evaluators_buffer_idx = 1 - self.evaluators_buffer_idx
         self.request_evaluator_from_collector()
 
     def request_evaluator_from_collector(self, ):
         assert self.conf.rank_collector is not None
-        # sampler expects to receive evaluator later:
-        self.request_recv = self.comm_world.irecv(self.conf.max_buffer_size, source=self.conf.rank_collector, tag=TAG_DATA)
+        # sampler expects to receive evaluator instance later:
+        self.request_irecv = self.comm_world.irecv(self.conf.max_buffer_size, source=self.conf.rank_collector, tag=TAG_DATA)
         # sends signal to collector that the sampler is ready to receive evaluator
         if self.request_Isend_signal is not None:
             self.request_Isend_signal.Wait()
@@ -191,7 +191,7 @@ class SurrogateLocal_CollectorMPI(Communicator):
 
         # check COMM_WORLD if there is an incoming message with TAG_DATA,
         # if so, receive updated surrogate model evaluator:
-        status = self.request_recv.Get_status()
+        status = self.request_irecv.Get_status()
         if status:
             self.wait_for_evaluator_and_request_new()
 

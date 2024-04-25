@@ -9,7 +9,6 @@ Created on Tue Oct 22 15:00:39 2019
 import csv
 import os
 import time
-# from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, List
 
@@ -29,6 +28,17 @@ class Sample:
     observations: npt.NDArray | None = None  # G(parameters)
     posterior: float | None = None  # logarithm of posterior
     solver_tag: int = 0
+
+    # copy method:
+    def copy(self):
+        if self.observations is None:
+            new_instance = type(self)(parameters=self.parameters.copy(),
+                                      posterior=self.posterior, solver_tag=self.solver_tag)
+        else:
+            new_instance = type(self)(parameters=self.parameters.copy(),
+                                      observations=self.observations.copy(),
+                                      posterior=self.posterior, solver_tag=self.solver_tag)
+        return new_instance
 
 
 class Algorithm_PARENT:
@@ -67,8 +77,7 @@ class Algorithm_PARENT:
         self.current.posterior = self.calculate_log_posterior(self.current.parameters, self.current.observations, self.current.solver_tag)
 
     def request_observations(self) -> None:
-        parameters = self.proposed.parameters.copy()
-        self.commSolver.set_parameters(parameters)
+        self.commSolver.set_parameters(self.proposed.parameters)
         self.proposed.observations, self.proposed.solver_tag = self.commSolver.get_observations()
         self.proposed.posterior = self.calculate_log_posterior(self.proposed.parameters, self.proposed.observations, self.proposed.solver_tag)
 
@@ -78,8 +87,9 @@ class Algorithm_PARENT:
         self.no_accepted += 1
         self.no_rejected_current = 0
         # self.current = deepcopy(self.proposed)
-        self.current = Sample(parameters=self.proposed.parameters.copy(), observations=self.proposed.observations.copy(),
-                              posterior=self.proposed.posterior, solver_tag=self.proposed.solver_tag)
+        self.current = self.proposed.copy()
+        # self.current = Sample(parameters=self.proposed.parameters.copy(), observations=self.proposed.observations.copy(),
+        #                      posterior=self.proposed.posterior, solver_tag=self.proposed.solver_tag)
         self.raw_data_to_file(type="accepted", tag=self.current.solver_tag, observations=self.current.observations)
 
     def if_rejected(self):

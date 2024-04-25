@@ -93,12 +93,11 @@ def run_COLLECTOR(conf: Configuration, surrogate_updater: Updater, surrogate_del
                     # the message is one of these: new snapshot, terminate signal, ready_to_receive signal
                     tag = status.Get_tag()
                     if tag > TAG_STAGE_FINISHED:
-                        collected += 1
-                        num_snapshots += 1
                         # if received message is a new snapshot, it is added to the list
                         received_snapshot = comm_world.recv(source=rank, tag=tag)
-                        # print("COLLECTOR:", received_snapshot, flush=True)
                         list_received_snapshots = [np.vstack((list_received_snapshots[j], received_snapshot[j])) for j in range(3)]
+                        collected += 1
+                        num_snapshots += 1
                     else:
                         if tag == TAG_TERMINATE:
                             # if received message has tag_terminate, switch corresponding sampler to inactive,

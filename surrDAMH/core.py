@@ -62,7 +62,7 @@ class SamplingFramework:
         self.solver_spec = solver_spec
         self.list_of_stages = list_of_stages
 
-    @profile(filename="profile_out3ad")
+    @profile(filename="profile_out")
     def run(self):
         comm_world = MPI.COMM_WORLD
         rank_world = comm_world.Get_rank()
