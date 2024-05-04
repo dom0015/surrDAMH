@@ -6,10 +6,13 @@ Created on Wed Jan 22 10:15:50 2020
 @author: simona
 """
 
+import time
+
 import numpy as np
 import numpy.typing as npt
-from surrDAMH.surrogates.parent import Updater, Evaluator
 from scipy.interpolate import RBFInterpolator
+
+from surrDAMH.surrogates.parent import Evaluator, Updater
 
 
 class RBFInterpolationEvaluator(Evaluator):
@@ -56,6 +59,7 @@ class RBFInterpolationUpdater(Updater):  # initiated by COLLECTOR
         self.obs = np.vstack((self.obs, observations))
 
     def get_evaluator(self):
+        tt = time.time()
         try:
             rbf_interpolator = RBFInterpolator(self.par, self.obs, neighbors=self.neighbors, smoothing=self.smoothing,
                                                kernel=self.kernel, epsilon=self.epsilon, degree=self.degree)
@@ -68,4 +72,5 @@ class RBFInterpolationUpdater(Updater):  # initiated by COLLECTOR
                 par = np.vstack((par, self.par+i+1))
                 obs = np.vstack((obs, self.obs))
             rbf_interpolator = RBFInterpolator(par, obs, kernel="linear", smoothing=1)
+        print("RBF model constructed, time, par:", time.time()-tt, self.par.shape, flush=True)
         return RBFInterpolationEvaluator(self.no_parameters, rbf_interpolator)

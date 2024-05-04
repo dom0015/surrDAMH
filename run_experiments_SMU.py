@@ -36,12 +36,12 @@ noise_sd = 1.0  # np.abs(observations)*0.1  # TODO: cannot be zero
 likelihood = surrDAMH.likelihoods.LikelihoodNormal(conf.no_observations, observations, sd=noise_sd)
 
 list_of_stages = []
-list_of_stages.append(Stage(algorithm_type="MH", proposal_sd=0.5, max_evaluations=25, surrogate_is_updated=True))
+list_of_stages.append(Stage(algorithm_type="MH", proposal_sd=0.5, max_evaluations=25, surrogate_model_updates=True))
 no_test_stages = 5
 for i in range(no_test_stages):
     if i > 0:
-        list_of_stages.append(Stage(algorithm_type="DAMH", proposal_sd=0.5, max_evaluations=25, surrogate_is_updated=True))
-    list_of_stages.append(Stage(algorithm_type="DAMH", proposal_sd=0.5, max_evaluations=1000, surrogate_is_updated=False, is_excluded=True))
+        list_of_stages.append(Stage(algorithm_type="DAMH", proposal_sd=0.5, max_evaluations=25, surrogate_model_updates=True))
+    list_of_stages.append(Stage(algorithm_type="DAMH", proposal_sd=0.5, max_evaluations=1000, surrogate_model_updates=False, is_excluded=True))
 
 sam = surrDAMH.SamplingFramework(conf, surrogate_updater=updater, prior=prior, likelihood=likelihood, solver_spec=solver_spec, list_of_stages=list_of_stages)
 data_for_analysis = sam.run()

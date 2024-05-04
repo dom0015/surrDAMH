@@ -35,7 +35,7 @@ class Configuration:
     initial_samples_distribution: Distribution | None = None  # only if initial_sample_type == "user_specified"
     lhs_scale: float | npt.NDArray = 1.0  # only if initial_sample_type == "lhs"
     min_snapshots_to_update: int = 1  # how many snapshots (at least) have to be added to update the surrogate model
-    num_snapshots_initial: int = 1  # minimal number of snapshots for the construction of initial surrogate model
+    min_snapshots_initial: int = 1  # minimal number of snapshots for the construction of initial surrogate model
     max_collected_snapshots_per_loop: int = 50  # maximal number of snapshots to collected in one loop
     max_sampler_isend_requests: int = 100  # size of the buffer for isend requests (sending snapshots from samplers to collector)
     debug: bool = False

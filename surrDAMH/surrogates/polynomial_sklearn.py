@@ -76,4 +76,5 @@ class PolynomialSklearnUpdater(Updater):  # initiated by COLLECTOR
                 self.degree_current = self.degree
             self.model.fit(self.par, self.obs)
             self.num_snapshots_current = self.num_snapshots
+        print("Polynomial surrogate model degree, snapshots =", self.degree, self.num_snapshots, flush=True)
         return PolynomialSklearnEvaluator(self.no_parameters, self.model)

@@ -18,7 +18,7 @@ from surrDAMH.stages import Stage
 # basic configuration
 conf = surrDAMH.Configuration(output_dir="output_dir", no_parameters=4, no_observations=1,
                               use_collector=True, initial_sample_type="prior", transform_before_surrogate=True, save_raw_data=True,
-                              num_snapshots_initial=5, min_snapshots_to_update=5)
+                              min_snapshots_initial=5, min_snapshots_to_update=5)
 
 # solver spacification
 solver_spec = surrDAMH.solver_specification.SolverSpecNonlinearGeneric(no_parameters=conf.no_parameters, no_observations=conf.no_observations, sleep=1e-2)
@@ -42,8 +42,8 @@ likelihood = surrDAMH.likelihoods.LikelihoodNormal(conf.no_observations, observa
 # stages of sampling process
 list_of_stages = []
 list_of_stages.append(Stage(algorithm_type="MH", proposal_sd=0.2, max_evaluations=100))
-list_of_stages.append(Stage(algorithm_type="DAMH", proposal_sd=0.2, max_evaluations=100, surrogate_is_updated=True))
-list_of_stages.append(Stage(algorithm_type="DAMH", proposal_sd=0.2, max_evaluations=500, surrogate_is_updated=False))
+list_of_stages.append(Stage(algorithm_type="DAMH", proposal_sd=0.2, max_evaluations=100, surrogate_model_updates=True))
+list_of_stages.append(Stage(algorithm_type="DAMH", proposal_sd=0.2, max_evaluations=500, surrogate_model_updates=False))
 
 # run the sampling process
 sam = surrDAMH.SamplingFramework(conf, surrogate_updater=updater, prior=prior, likelihood=likelihood, solver_spec=solver_spec, list_of_stages=list_of_stages)

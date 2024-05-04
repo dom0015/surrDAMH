@@ -46,8 +46,8 @@ likelihood = surrDAMH.likelihoods.LikelihoodNormal(conf.no_observations, observa
 
 list_of_stages = []
 list_of_stages.append(Stage(algorithm_type="MH", proposal_sd=0.5, max_evaluations=100))
-list_of_stages.append(Stage(algorithm_type="DAMH", proposal_sd=0.5, max_evaluations=200, surrogate_is_updated=True))
-list_of_stages.append(Stage(algorithm_type="DAMH", proposal_sd=0.5, max_evaluations=2000, surrogate_is_updated=False))
+list_of_stages.append(Stage(algorithm_type="DAMH", proposal_sd=0.5, max_evaluations=200, surrogate_model_updates=True))
+list_of_stages.append(Stage(algorithm_type="DAMH", proposal_sd=0.5, max_evaluations=2000, surrogate_model_updates=False))
 
 sam = surrDAMH.SamplingFramework(conf, surrogate_updater=updater, prior=prior, likelihood=likelihood, solver_spec=solver_spec, list_of_stages=list_of_stages)
 data_for_analysis = sam.run()

@@ -17,11 +17,11 @@ from surrDAMH.stages import Stage
 
 D = surrDAMH.distributions.Normal(mean=[1.0, -1.0], sd=0.001)
 # D = surrDAMH.distributions.FromScipy(scipy.stats.multivariate_normal(mean=[0.0, 0.0], cov=0.001))  # type: ignore
-conf = surrDAMH.Configuration(output_dir="minimal_example", no_parameters=2, no_observations=1, no_solvers=2,
-                              pickled_observations=True, num_snapshots_initial=5, min_snapshots_to_update=10, max_sampler_isend_requests=100,
-                              initial_sample_type="user_specified", initial_samples_distribution=D)
+conf = surrDAMH.Configuration(output_dir="minimal_example", no_parameters=2, no_observations=1, no_solvers=2, use_collector=True,
+                              pickled_observations=True, min_snapshots_initial=5, min_snapshots_to_update=1, max_sampler_isend_requests=100,
+                              initial_sample_type="user_specified", initial_samples_distribution=D, max_collected_snapshots_per_loop=10000)
 solver_spec = surrDAMH.solver_specification.SolverSpecExample1()
-# updater = surrDAMH.surrogates.RBFInterpolationUpdater(conf.no_parameters, conf.no_observations)
+# updater = surrDAMH.surrogates.RBFInterpolationUpdater(conf.no_parameters, conf.no_observations)  # , neighbors=1000)
 updater = surrDAMH.surrogates.PolynomialSklearnUpdater(no_parameters=conf.no_parameters, no_observations=conf.no_observations)
 prior = surrDAMH.distributions.Normal(mean=[0.0, 0.0], sd=1.0)
 # prior = scipy.stats.multivariate_normal(mean=[0.0, 0.0], cov=1.0)  # type: ignore
@@ -31,12 +31,13 @@ likelihood = surrDAMH.distributions.Normal(mean=observations, sd=1.0)
 # likelihood = scipy.stats.multivariate_normal(mean=observations, cov=1.0)  # type: ignore
 
 list_of_stages = []
-list_of_stages.append(Stage(algorithm_type="MH", proposal_sd=0.5, max_evaluations=1000, is_adaptive=False))
-list_of_stages.append(Stage(algorithm_type="MH", proposal_sd=0.5, max_evaluations=1000, is_adaptive=True))
-# list_of_stages.append(Stage(algorithm_type="MH", proposal_sd=0.5, max_evaluations=500, is_adaptive=False))
-# list_of_stages.append(Stage(algorithm_type="MH", proposal_sd=0.5, max_evaluations=500, is_adaptive=False))
-# list_of_stages.append(Stage(algorithm_type="DAMH", proposal_sd=0.5, max_evaluations=600, surrogate_is_updated=True))
-# list_of_stages.append(Stage(algorithm_type="DAMH", proposal_sd=0.5, max_evaluations=2000, surrogate_is_updated=False))
+list_of_stages.append(Stage(algorithm_type="MH", proposal_sd=0.5, max_evaluations=500, is_adaptive=False))
+list_of_stages.append(Stage(algorithm_type="MH", proposal_sd=0.5, max_evaluations=500, is_adaptive=False))
+list_of_stages.append(Stage(algorithm_type="MH", proposal_sd=0.5, max_evaluations=500, is_adaptive=False))
+list_of_stages.append(Stage(algorithm_type="DAMH", proposal_sd=0.5, max_evaluations=500, surrogate_model_updates=True))
+list_of_stages.append(Stage(algorithm_type="MH", proposal_sd=0.5, max_evaluations=500, is_adaptive=False))
+list_of_stages.append(Stage(algorithm_type="MH", proposal_sd=0.5, max_evaluations=500, is_adaptive=False))
+list_of_stages.append(Stage(algorithm_type="DAMH", proposal_sd=0.5, max_evaluations=500, surrogate_model_updates=True))
 
 sam = surrDAMH.SamplingFramework(conf, surrogate_updater=updater, prior=prior, likelihood=likelihood, solver_spec=solver_spec, list_of_stages=list_of_stages)
 sam.run()

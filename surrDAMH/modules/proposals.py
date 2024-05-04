@@ -30,17 +30,17 @@ class Proposal:
 
 
 class GaussRandomWalk(Proposal):  # initiated by SAMPLERs
-    def __init__(self, no_parameters, proposal_sd=1.0, seed=0) -> None:
+    def __init__(self, no_parameters, sd_or_cov=1.0, seed=0) -> None:
         self.no_parameters = no_parameters
         self._generator = np.random.RandomState(seed=seed)
-        self.set_covariance(proposal_sd=proposal_sd)
+        self.set_covariance(sd_or_cov=sd_or_cov)
 
-    def set_covariance(self, proposal_sd=1.0) -> None:
-        # proporsal_sd is scalar/vector/covariance matrix:
-        if np.isscalar(proposal_sd):
-            self.sd = np.full((self.no_parameters,), proposal_sd)
+    def set_covariance(self, sd_or_cov: npt.ArrayLike) -> None:
+        # sd_or_cov is scalar/vector/covariance matrix:
+        if np.isscalar(sd_or_cov):
+            self.sd = np.full((self.no_parameters,), sd_or_cov)
         else:
-            self.sd = np.array(proposal_sd)
+            self.sd = np.array(sd_or_cov)
         if self.sd.ndim == 1:  # proposal - normal uncorrelated
             self.propose_sample = self._propose_sample_uncorrelated
         else:  # proposal - normal correlated
@@ -59,8 +59,8 @@ class GaussRandomWalk(Proposal):  # initiated by SAMPLERs
         return log_posterior_proposed - log_posterior_current
 
 
-class GaussRandomWalk_adaptive(Proposal):  # initiated by SAMPLERs
-    def __init__(self, no_parameters: int, proposal_sd: npt.ArrayLike = 1.0, seed: int = 0,
+class GaussRandomWalk_adaptive(GaussRandomWalk):  # initiated by SAMPLERs
+    def __init__(self, no_parameters: int, sd_or_cov: npt.ArrayLike = 1.0, seed: int = 0,
                  target_rate: float = 0.25, corr_limit: float = 0.3,
                  period: int = 10) -> None:
         """
@@ -71,7 +71,7 @@ class GaussRandomWalk_adaptive(Proposal):  # initiated by SAMPLERs
         """
         self.no_parameters = no_parameters
         self._generator = np.random.RandomState(seed=seed)
-        self.set_covariance(proposal_sd=proposal_sd)
+        self.set_covariance(sd_or_cov=sd_or_cov)
 
         self.target_rate = target_rate
         self.corr_limit = corr_limit
@@ -117,12 +117,13 @@ class GaussRandomWalk_adaptive(Proposal):  # initiated by SAMPLERs
                 self.coef = self.coef*max(ratio**(2/self.no_parameters), 0.5)
                 self.set_covariance(self.coef*sample_cov)
 
-    def set_covariance(self, proposal_sd: npt.ArrayLike) -> None:
+"""
+    def set_covariance(self, sd_or_cov: npt.ArrayLike) -> None:
         # proporsal_sd is scalar/vector/covariance matrix:
-        if np.isscalar(proposal_sd):
-            self.sd = np.full((self.no_parameters,), proposal_sd)
+        if np.isscalar(sd_or_cov):
+            self.sd = np.full((self.no_parameters,), sd_or_cov)
         else:
-            self.sd = np.array(proposal_sd)
+            self.sd = np.array(sd_or_cov)
         if self.sd.ndim == 1:  # proposal - normal uncorrelated
             self.propose_sample = self._propose_sample_uncorrelated
         else:  # proposal - normal correlated
@@ -140,3 +141,4 @@ class GaussRandomWalk_adaptive(Proposal):  # initiated by SAMPLERs
         # simple since the proposal distribution is symmetrical
         log_probability = log_posterior_proposed - log_posterior_current
         return log_probability
+"""

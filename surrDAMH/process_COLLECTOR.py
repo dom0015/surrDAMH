@@ -13,20 +13,9 @@ import numpy as np
 from mpi4py import MPI
 
 from surrDAMH.configuration import Configuration
+from surrDAMH.modules.communication import (CommEvaluator_collector,
+                                            CommSnapshot_collector)
 from surrDAMH.surrogates.parent import Updater
-
-# communicates with: SAMPLERs
-# sends evaluator instances (isend, tag=2)
-# receives snapshots (irecv, tag=2)
-# receives signals that sampler is ready to receive evaluator instance (Recv, tag=1)
-# receives signal that sampler terminated (Recv, tag=0)
-
-TAG_TERMINATE = 0
-TAG_READY_TO_RECEIVE = 1
-TAG_DATA = 2
-TAG_STAGE_FINISHED = 3
-
-ANALYZE = False
 
 
 def run_COLLECTOR(conf: Configuration, surrogate_updater: Updater, surrogate_delayed_init_data=None):
@@ -35,168 +24,87 @@ def run_COLLECTOR(conf: Configuration, surrogate_updater: Updater, surrogate_del
     comm_world = MPI.COMM_WORLD
     rank_world = comm_world.Get_rank()
     comm_world.Split(color=2, key=rank_world)
-    status = MPI.Status()
 
-    # general:
+    comms_snapshots: list[CommSnapshot_collector] = []  # communicators for receiving snapshots
+    comms_evaluators: list[CommEvaluator_collector] = []  # communicators for sending evaluators
     sampler_ranks = conf.sampler_ranks
-    sampler_is_active = np.array([True] * conf.no_samplers)  # active until it terminates
-    num_snapshots = 0  # how many snapshots the surrogate model updater got
-    num_snapshots_used = 0  # using how many snapshots the current evaluator was created
+    for r in sampler_ranks:
+        comms_snapshots.append(CommSnapshot_collector(r))
+        comms_evaluators.append(CommEvaluator_collector(r))
+
+    # indicates if the samplers will require evaluator update later:
+    needs_evaluator = [True] * conf.no_samplers
+
+    no_snapshots_total = 0  # how many snapshots the surrogate model updater got
+    no_snapshots_used = 0  # using how many snapshots the current evaluator was created
 
     # related to surrogate evaluators:
-    buffers_evaluator: List[Any] = [None] * conf.no_samplers
-    sampler_can_recv_evaluator = np.array([False] * conf.no_samplers)  # ready to receive updated evaluator
-    sampler_got_current_evaluator = np.array([True] * conf.no_samplers)
-    request_isend_evaluator: List[Any] = [None] * conf.no_samplers
+    sampler_got_last_evaluator = np.array([True] * conf.no_samplers)
 
     # related to received snapshots
-    list_received_snapshots = [np.empty((0, conf.no_parameters)), np.empty((0, conf.no_observations)), np.empty((0, 1))]
-    # request_irecv_snapshots = [None] * conf.no_samplers
+    list_new_snapshots = [np.empty((0, conf.no_parameters)), np.empty((0, conf.no_observations)), np.empty((0, 1))]
 
-    # related to signals
-    buffer_empty_signal = np.zeros((1,))
-    buffers_empty_signal: List[Any] = [None] * conf.no_samplers  # when only tag is important
-    for i in range(conf.no_samplers):
-        buffers_empty_signal[i] = np.zeros((1,))
-    # request_Isend_signal = [None] * conf.no_samplers
+    while any(needs_evaluator):  # while at least 1 sampling algorithm still requires updates
 
-    # PREVIOUS VERSION
-    # def request_snapshot_from_sampler():
-    #     # collector expects to receive snapshot from this (active) sampler later:
-    #     request_irecv_snapshots[i] = comm_world.irecv(conf.max_buffer_size, source=rank, tag=TAG_DATA)
-    #     # sends signal to this (active) sampler that collector is ready to receive snapshots:
-    #     if request_Isend_signal[i] is not None:
-    #         request_Isend_signal[i].Wait()
-    #     request_Isend_signal[i] = comm_world.Isend(buffers_empty_signal[i], dest=rank, tag=TAG_READY_TO_RECEIVE)
-
-    # if any(sampler_is_active):
-    #     for rank in sampler_ranks[sampler_is_active]:
-    #         i = sampler_ranks[sampler_ranks == rank][0]
-    #         request_snapshot_from_sampler()
-    ################################
-
-    if ANALYZE:
-        list_all_snapshots = []
-        list_all_evaluators = []
-
-    while any(sampler_is_active):  # while at least 1 sampling algorithm is active
-
-        # SIMPLE VERSION
-        collected = 0
+        # receiving snapshots from samplers:
+        num_new_snapshots = 0
         while True:
-            message_not_received = ~sampler_is_active
-            for rank in sampler_ranks[sampler_is_active]:
-                i = sampler_ranks[sampler_ranks == rank][0]
-                # check if there is an incoming message from this active sampler;
-                if comm_world.iprobe(source=rank, tag=MPI.ANY_TAG, status=status):
-                    # it is expected that only samplers send messages to collector
-                    # the message is one of these: new snapshot, terminate signal, ready_to_receive signal
-                    tag = status.Get_tag()
-                    if tag > TAG_STAGE_FINISHED:
-                        # if received message is a new snapshot, it is added to the list
-                        received_snapshot = comm_world.recv(source=rank, tag=tag)
-                        list_received_snapshots = [np.vstack((list_received_snapshots[j], received_snapshot[j])) for j in range(3)]
-                        collected += 1
-                        num_snapshots += 1
-                    else:
-                        if tag == TAG_TERMINATE:
-                            # if received message has tag_terminate, switch corresponding sampler to inactive,
-                            # there will be no other incoming message from this sampler
-                            sampler_is_active[i] = False
-                            comm_world.Recv(buffer_empty_signal, source=rank, tag=tag)  # TODO: cancel message
-                        elif tag == TAG_STAGE_FINISHED:
-                            # the sampler waits for receiving this message at the end of each stage
-                            comm_world.Recv(buffer_empty_signal, source=rank, tag=tag)  # TODO: cancel message
-                        elif tag == TAG_READY_TO_RECEIVE:
-                            # if received message has tag_ready_to_receive,
-                            # the corresponding sampler is ready to receive (updated) evaluator
-                            sampler_can_recv_evaluator[i] = True
-                            comm_world.Recv(buffer_empty_signal, source=rank, tag=tag)  # TODO: cancel message
-                else:
-                    message_not_received[i] = True
-            if collected > conf.max_collected_snapshots_per_loop:
-                # print("COLLECTOR", len(list_received_snapshots[2]), flush=True)
+            # try to receive one snapshot from each sampler
+            counter = 0
+            for comm_s in comms_snapshots:
+                if not comm_s.all_snapshots_received():
+                    if comm_s.snapshot_is_available():
+                        snapshot = comm_s.get_snapshot_and_request_new()
+                        # TODO: likelihood
+                        list_new_snapshots = [np.vstack((list_new_snapshots[j], snapshot[j])) for j in range(3)]
+                        counter += 1
+            num_new_snapshots += counter
+            if counter == 0:  # if no snapshots received (from any sampler), break
                 break
-            if all(message_not_received):  # no incoming messages
+            if num_new_snapshots > conf.max_collected_snapshots_per_loop:
                 break
+        # add received snapshots to the surorgate model updater:
+        if num_new_snapshots > 0:
+            # print("++++++++++++ new:",  num_new_snapshots, flush=True)
+            no_snapshots_total += num_new_snapshots
+            surrogate_updater.add_data(list_new_snapshots[0], list_new_snapshots[1], list_new_snapshots[2])
+            list_new_snapshots = [np.empty((0, conf.no_parameters)), np.empty((0, conf.no_observations)), np.empty((0, 1))]
+        # create initial evaluator or update:
+        cond_init = no_snapshots_used == 0 and no_snapshots_total >= conf.min_snapshots_initial  # initial surrogate model
+        cond_update = no_snapshots_used > 0 and no_snapshots_total - no_snapshots_used >= conf.min_snapshots_to_update
+        if (cond_init or cond_update):
+            # surrogate_updater.train()
+            no_snapshots_used = no_snapshots_total
+            # evaluator changed
+            sampler_got_last_evaluator = [False] * conf.no_samplers
+            evaluator_instance = None
+        # send evaluator to samplers:
+        for i in range(conf.no_samplers):
+            if needs_evaluator[i]:
+                comm: CommEvaluator_collector = comms_evaluators[i]
+                if not sampler_got_last_evaluator[i]:
+                    if comm.sampler_requests_evaluator():
+                        print("COLLECTOR: sampler requests evaluator", flush=True)
+                        if evaluator_instance is None:
+                            evaluator_instance = surrogate_updater.get_evaluator()
+                        # add: evaluator_instance = surrogate_updater.get_evaluator()
+                        comm.send_evaluator(evaluator_instance)
+                        # print("COLLECTOR - evaluator sent", no_snapshots_used, no_snapshots_total)
+                        sampler_got_last_evaluator[i] = True
+                # print("COLLECTOR: no_snapshots used, total", no_snapshots_used, no_snapshots_total)
+                if no_snapshots_used > 0:
+                    if comm.sampler_stops():
+                        print("COLLECTOR: SAMPLER stopped", i, flush=True)
+                        needs_evaluator[i] = False
+                        if sampler_got_last_evaluator[i]:
+                            comm.terminate(None)
+                        else:
+                            if evaluator_instance is None:
+                                evaluator_instance = surrogate_updater.get_evaluator()
+                            comm.terminate(evaluator_instance)
 
-            ################################
-
-        # PREVIOUS VERSION
-        # for rank in sampler_ranks[sampler_is_active]:
-        #     i = sampler_ranks[sampler_ranks == rank][0]
-        #     # check if there are incoming snapshots from this active sampler;
-        #     # if so, receive the snapshots and create new request:
-        #     if request_irecv_snapshots[i].Get_status():
-        #         # receive snapshots and add to list:
-        #         list_received_part = request_irecv_snapshots[i].wait()
-        #         if list_received_snapshots:
-        #             list_received_snapshots = [np.vstack((list_received_snapshots[j], list_received_part[j])) for j in range(3)]
-        #         else:
-        #             list_received_snapshots = list_received_part.copy()
-        #         request_snapshot_from_sampler()
-        #     # check if there is an incoming signal from this active sampler
-        #     # (tag_terminate | tag_ready_to_receive (updated) evaluator):
-        #     status = MPI.Status()
-        #     probe = comm_world.Iprobe(source=rank, tag=MPI.ANY_TAG, status=status)
-        #     tag = status.Get_tag()
-        #     if probe:  # there is an incomming signal from this sampler
-        #         if tag == TAG_TERMINATE:
-        #             # if received message has tag_terminate, switch corresponding sampler to inactive,
-        #             # there will be no other incoming message from this sampler
-        #             sampler_is_active[i] = False
-        #             comm_world.Recv(buffer_empty_signal, source=rank, tag=TAG_TERMINATE)  # TODO: cancel message
-        #         elif tag == TAG_READY_TO_RECEIVE:
-        #             # if received message has tag_ready_to_receive,
-        #             # the corresponding sampler is ready to receive (updated) evaluator
-        #             sampler_can_recv_evaluator[i] = True
-        #             comm_world.Recv(buffer_empty_signal, source=rank, tag=TAG_READY_TO_RECEIVE)  # TODO: cancel message
-            ################################
-
-        # use received snapshots to update the surorgate model, the updater instance is local:
-        if num_snapshots > 0 and any(sampler_is_active):
-            surrogate_updater.add_data(list_received_snapshots[0], list_received_snapshots[1], list_received_snapshots[2])
-            if ANALYZE:
-                if list_all_snapshots:
-                    list_all_snapshots = [np.vstack((list_all_snapshots[j], list_received_snapshots[j])) for j in range(3)]
-                else:
-                    list_all_snapshots = list_received_snapshots.copy()
-            list_received_snapshots = [np.empty((0, conf.no_parameters)), np.empty((0, conf.no_observations)), np.empty((0, 1))]
-        cond_init = num_snapshots_used == 0 and num_snapshots >= conf.num_snapshots_initial  # initial surrogate model
-        # update if at least NO_SNAPSHOTS_TO_UPDATE was added:
-        cond_update = num_snapshots_used > 0 and num_snapshots - num_snapshots_used >= conf.min_snapshots_to_update
-        # TODO: if any(sampler_can_recv_evaluator)
-        if (cond_init or cond_update) and any(sampler_can_recv_evaluator):
-            evaluator_instance = surrogate_updater.get_evaluator()
-            num_snapshots_used = num_snapshots
-            if ANALYZE:
-                list_all_evaluators.append(evaluator_instance)
-            sampler_got_current_evaluator = np.array([False] * conf.no_samplers)
-        for rank in sampler_ranks[sampler_is_active & sampler_can_recv_evaluator & ~sampler_got_current_evaluator]:
-            i = sampler_ranks[sampler_ranks == rank][0]
-            if request_isend_evaluator[i] is not None:
-                request_isend_evaluator[i].wait()
-            buffers_evaluator[i] = evaluator_instance  # TODO: copy?
-            request_isend_evaluator[i] = comm_world.isend(buffers_evaluator[i], dest=rank, tag=TAG_DATA)
-            sampler_can_recv_evaluator[i] = False
-            sampler_got_current_evaluator[i] = True
+    for comm_s in comms_snapshots:
+        comm_s.terminate()
 
     comm_world.Barrier()
-
-    while comm_world.iprobe(source=MPI.ANY_SOURCE, tag=MPI.ANY_TAG, status=status):
-        tag = status.Get_tag()
-        source = status.Get_source()
-        print("COLLECTOR Barrier", tag, source)
-        comm_world.recv(source=source, tag=tag)
-
     comm_world.Barrier()
-
-    if ANALYZE:
-        @dataclass
-        class Output:
-            list_all_snapshots: list
-            list_all_evaluators: list
-        output = Output(list_all_snapshots, list_all_evaluators)
-        return output
-    else:
-        return []

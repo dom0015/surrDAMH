@@ -17,7 +17,7 @@ import numpy.typing as npt
 
 from surrDAMH.configuration import Configuration
 from surrDAMH.distributions.parent import Distribution
-from surrDAMH.modules.communication import Communicator
+from surrDAMH.modules.communication import Communicator, CommEvaluator_sampler, CommSnapshot_sampler
 from surrDAMH.modules.proposals import GaussRandomWalk, Proposal, GaussRandomWalk_adaptive
 from surrDAMH.stages import Stage
 
@@ -44,7 +44,8 @@ class Sample:
 class Algorithm_PARENT:
     def __init__(self, stage: Stage, proposal: Proposal, initial_sample: Sample, rank_world: int,
                  conf: Configuration, prior: Distribution, likelihood: Distribution,
-                 commSolver: Communicator, commSurrogate: Communicator | None = None, seed: int = 0) -> None:
+                 commSolver: Communicator, commSnapshot: CommSnapshot_sampler | None = None,
+                 commEvaluator: CommEvaluator_sampler | None = None, seed: int = 0) -> None:
         self.stage = stage
         self.proposal = proposal
         # self.current = Sample(parameters=initial_sample)
@@ -54,9 +55,10 @@ class Algorithm_PARENT:
         self.prior = prior
         self.likelihood = likelihood
         self.commSolver = commSolver
-        self.commSurrogate = commSurrogate
+        self.commSnapshot = commSnapshot
+        self.commEvaluator = commEvaluator
         self.seed = seed
-        if conf.use_collector and stage.surrogate_is_updated:
+        if self.commSnapshot is not None and stage.send_snapshots_to_collector:
             self.send_to_collector = self._send_to_collector
         else:
             self.send_to_collector = self._empty_function
@@ -120,7 +122,7 @@ class Algorithm_PARENT:
         else:
             row: List[Any] = [1+self.no_rejected_current] + list(self.current.parameters)
         row.append(self.current.posterior)
-        self.monitor(data_name="samples", row=row, condition=self.stage.is_saved)
+        self.monitor(data_name="samples", row=row, condition=self.stage.save_to_file)
 
     def raw_data_to_file(self, type: str, tag, observations):
         if self.conf.save_raw_data:
@@ -137,18 +139,18 @@ class Algorithm_PARENT:
         observations = sample.observations.copy()
         if self.conf.transform_before_surrogate:
             parameters = self.prior.transform(parameters)
-        assert self.commSurrogate is not None
-        self.commSurrogate.send_to_collector([parameters, observations, weight])
+        assert self.commSnapshot is not None
+        self.commSnapshot.send_to_collector([parameters, observations, weight])
 
     def _empty_function(self, **kw):
         return
 
     def finalize(self):
         self.current_sample_to_file()
-        self.monitor(data_name="notes", row=["accepted", "rejected", "pre-rejected", "sum", "seed"], condition=self.stage.is_saved)
+        self.monitor(data_name="notes", row=["accepted", "rejected", "pre-rejected", "sum", "seed"], condition=self.stage.save_to_file)
         no_all = self.no_accepted + self.no_rejected + self.no_prerejected
         notes = [self.no_accepted, self.no_rejected, self.no_prerejected, no_all, self.seed]
-        self.monitor(data_name="notes", row=notes, condition=self.stage.is_saved)
+        self.monitor(data_name="notes", row=notes, condition=self.stage.save_to_file)
         self.monitor.close_files()
 
 
@@ -291,42 +293,41 @@ class Algorithm_MH_adaptive_copy(Algorithm_PARENT):  # initiated by SAMPLERs
 class Algorithm_DAMH(Algorithm_PARENT):  # initiated by SAMPLERs
     def run(self):
         # calculate approximate observations and posterior for current (initial) sample:
-        assert self.commSurrogate is not None
-        if self.conf.transform_before_surrogate:
-            sample = self.prior.transform(self.current.parameters.copy())
-            self.commSurrogate.set_parameters(sample)
-        else:
-            self.commSurrogate.set_parameters(self.current.parameters)
-        observation_approx_current, tag = self.commSurrogate.get_observations()
+        assert self.commEvaluator is not None
+        self.surrogate_evaluator = self.commEvaluator.evaluator
+        if self.surrogate_evaluator is None:
+            self.surrogate_evaluator = self.commEvaluator.get_evaluator()
+            self.commEvaluator.request_evaluator()
+        observation_approx_current = self.get_approximate_observations(self.current.parameters)
         log_posterior_approx_current = self.calculate_log_posterior(self.current.parameters, observation_approx_current)
 
         for i in range(self.stage.max_samples):
+            surrogate_evaluator_changed = False  # TODO: check this
             parameters = self.proposal.propose_sample(self.current.parameters)
             self.proposed = Sample(parameters=parameters)
-            # it is necessary to recalculate approximate observation for current sample
-            # because the surrogate model may have changed
-            if self.conf.transform_before_surrogate:
-                c_sample = self.prior.transform(self.current.parameters.copy())
-                p_sample = self.prior.transform(self.proposed.parameters.copy())
-                self.commSurrogate.set_parameters(np.array([c_sample, p_sample]))
+            if self.stage.surrogate_model_updates:
+                if self.commEvaluator.evaluator_is_available():
+                    self.surrogate_evaluator = self.commEvaluator.get_evaluator()
+                    self.commEvaluator.request_evaluator()
+                    surrogate_evaluator_changed = True
+            # if the surrogate model changed, it it necessary to recalculate
+            # approximate observation for current sample
+            if surrogate_evaluator_changed:
+                observation_approx_current, observation_approx_proposed = self.get_approximate_observations(self.current.parameters, self.proposed.parameters)
+                log_posterior_approx_current = self.calculate_log_posterior(self.current.parameters, observation_approx_current)
             else:
-                self.commSurrogate.set_parameters(np.array([self.current, self.proposed]))
-            tmp, tag = self.commSurrogate.get_observations()
-            observation_approx_current = tmp[0, :]
-            log_posterior_approx_current = self.calculate_log_posterior(self.current.parameters, observation_approx_current)
-            observation_approx_proposed = tmp[1, :]
+                observation_approx_proposed = self.get_approximate_observations(self.proposed.parameters)
             log_posterior_approx_proposed = self.calculate_log_posterior(self.proposed.parameters, observation_approx_proposed)
             log_posterior_ratio_approx = self.proposal.get_log_acceptance_probability(log_posterior_approx_proposed, log_posterior_approx_current)
-
             if self.sample_acceptance_log(log_posterior_ratio_approx):
                 self.request_observations()
                 log_acceptance_probability_exact = self.proposal.get_log_acceptance_probability(self.proposed.posterior, self.current.posterior)
                 row = [i] + [self.proposed.posterior] + [log_posterior_approx_proposed]
                 if self.sample_acceptance_log(log_acceptance_probability_exact - log_posterior_ratio_approx):
-                    self.monitor(data_name="accepted", row=row, condition=self.stage.is_saved)
+                    self.monitor(data_name="accepted", row=row, condition=self.stage.save_to_file)
                     self.if_accepted()
                 else:
-                    self.monitor(data_name="rejected", row=row, condition=self.stage.is_saved)
+                    self.monitor(data_name="rejected", row=row, condition=self.stage.save_to_file)
                     self.if_rejected()
             else:
                 self.no_prerejected += 1
@@ -339,6 +340,23 @@ class Algorithm_DAMH(Algorithm_PARENT):  # initiated by SAMPLERs
                 # print("SAMPLER at RANK", self.rank_world, "evaluations limit ", self.stage.max_evaluations, " reached - loop", i, flush=True)
                 break
         self.finalize()
+
+    def get_approximate_observations(self, parameters0: npt.NDArray, parameters1: npt.NDArray | None = None):
+        if self.conf.transform_before_surrogate:
+            par0_tr = self.prior.transform(parameters0.copy())
+            argument = [par0_tr]
+            if parameters1 is not None:
+                par1_tr = self.prior.transform(parameters1.copy())
+                argument.append(par1_tr)
+        else:
+            argument = [parameters0.copy()]
+            if parameters1 is not None:
+                argument.append(parameters1.copy())
+        res = self.surrogate_evaluator(np.array(argument))
+        if parameters1 is None:
+            return res
+        else:
+            return res[0, :], res[1, :]
 
 
 class Writer:
