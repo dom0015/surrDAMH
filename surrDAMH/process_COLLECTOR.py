@@ -73,7 +73,7 @@ def run_COLLECTOR(conf: Configuration, surrogate_updater: Updater, surrogate_del
         cond_init = no_snapshots_used == 0 and no_snapshots_total >= conf.min_snapshots_initial  # initial surrogate model
         cond_update = no_snapshots_used > 0 and no_snapshots_total - no_snapshots_used >= conf.min_snapshots_to_update
         if (cond_init or cond_update):
-            # surrogate_updater.train()
+            surrogate_updater.train()
             no_snapshots_used = no_snapshots_total
             # evaluator changed
             sampler_got_last_evaluator = [False] * conf.no_samplers
@@ -84,7 +84,7 @@ def run_COLLECTOR(conf: Configuration, surrogate_updater: Updater, surrogate_del
                 comm: CommEvaluator_collector = comms_evaluators[i]
                 if not sampler_got_last_evaluator[i]:
                     if comm.sampler_requests_evaluator():
-                        print("COLLECTOR: sampler requests evaluator", flush=True)
+                        # print("COLLECTOR: sampler requests evaluator", flush=True)
                         if evaluator_instance is None:
                             evaluator_instance = surrogate_updater.get_evaluator()
                         # add: evaluator_instance = surrogate_updater.get_evaluator()
@@ -94,7 +94,7 @@ def run_COLLECTOR(conf: Configuration, surrogate_updater: Updater, surrogate_del
                 # print("COLLECTOR: no_snapshots used, total", no_snapshots_used, no_snapshots_total)
                 if no_snapshots_used > 0:
                     if comm.sampler_stops():
-                        print("COLLECTOR: SAMPLER stopped", i, flush=True)
+                        # print("COLLECTOR: SAMPLER stopped", i, flush=True)
                         needs_evaluator[i] = False
                         if sampler_got_last_evaluator[i]:
                             comm.terminate(None)

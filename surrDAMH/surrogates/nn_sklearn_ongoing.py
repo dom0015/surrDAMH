@@ -56,6 +56,7 @@ class NNSklearnOngoingUpdater(Updater):  # initiated by COLLECTOR
         self.par = np.vstack((self.par, parameters))
         self.obs = np.vstack((self.obs, observations))
 
+    def train(self):
         if self.no_observations == 1:
             train_obs = self.obs.ravel()
         else:

@@ -17,7 +17,7 @@ import matplotlib.pyplot as plt
 
 # basic configuration
 conf = surrDAMH.Configuration(output_dir="output_TSX2", no_parameters=8, no_observations=104, no_solvers=3,
-                              use_collector=True, initial_sample_type="prior", transform_before_surrogate=True, save_raw_data=True,
+                              use_collector=True, initial_sample_type="prior", transform_before_surrogate=True, save_snapshots_to_file=True,
                               min_snapshots_initial=9, min_snapshots_to_update=1)
 
 # prior distribution

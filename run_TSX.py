@@ -28,7 +28,7 @@ initial_sample = ref_par-prior_mean
 # basic configuration
 conf = surrDAMH.Configuration(output_dir="output_TSX2", no_parameters=8, no_observations=104, no_solvers=2,
                               use_collector=True, initial_sample_type="user_specified", initial_sample=initial_sample,
-                              transform_before_surrogate=False, save_raw_data=True,
+                              transform_before_surrogate=False, save_snapshots_to_file=True,
                               min_snapshots_initial=9, min_snapshots_to_update=20,
                               max_collected_snapshots_per_loop=200, max_sampler_isend_requests=100)
 
@@ -89,10 +89,10 @@ likelihood = surrDAMH.likelihoods.LikelihoodNormal(conf.no_observations, observa
 
 # stages of sampling process
 list_of_stages = []
-list_of_stages.append(Stage(algorithm_type="MH", proposal_sd=0.2, max_evaluations=250))
-list_of_stages.append(Stage(algorithm_type="DAMH", proposal_sd=0.3, max_evaluations=250, surrogate_model_updates=True))
-list_of_stages.append(Stage(algorithm_type="DAMH", proposal_sd=0.3, max_evaluations=1000, surrogate_model_updates=True))
-list_of_stages.append(Stage(algorithm_type="DAMH", proposal_sd=0.3, max_evaluations=10000, surrogate_model_updates=False))
+list_of_stages.append(Stage(algorithm_type="MH", proposal_sd_or_cov=0.2, max_evaluations=250))
+list_of_stages.append(Stage(algorithm_type="DAMH", proposal_sd_or_cov=0.3, max_evaluations=250, surrogate_model_updates=True))
+list_of_stages.append(Stage(algorithm_type="DAMH", proposal_sd_or_cov=0.3, max_evaluations=1000, surrogate_model_updates=True))
+list_of_stages.append(Stage(algorithm_type="DAMH", proposal_sd_or_cov=0.3, max_evaluations=10000, surrogate_model_updates=False))
 
 # run the sampling process
 sam = surrDAMH.SamplingFramework(conf, surrogate_updater=updater, prior=prior, likelihood=likelihood, solver_spec=solver_spec, list_of_stages=list_of_stages)

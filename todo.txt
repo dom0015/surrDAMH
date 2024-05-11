@@ -40,6 +40,8 @@ list of Stage
 """
 
 """
+! - vlastní surrogate model evaluator - bez použití collectoru
+! - distriboutions should get seeds
 ? - prior po skupinách parametrů
 ? - OK initial_sample - pokud je to prior mean, nevolit tentýž snímek, ale s malým rozptylem náhodně
 ? - transform bere i více samplů najednou (np array) ? není třeba

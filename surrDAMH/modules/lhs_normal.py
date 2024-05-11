@@ -7,11 +7,12 @@ Created on Tue Jul 24 13:55:07 2018
 """
 
 import numpy as np
+import numpy.matlib as matlib
 import numpy.typing as npt
 from scipy.stats import norm
 
 
-def lhs_normal(loc:  npt.NDArray, scale:  npt.NDArray | float = 1.0,
+def lhs_normal(loc:  npt.ArrayLike, scale:  npt.NDArray | float = 1.0,
                n: int = 10, seed: int = 0):
     """
     Returns a Latin hypercube sample of size n from normal distribution
@@ -23,6 +24,7 @@ def lhs_normal(loc:  npt.NDArray, scale:  npt.NDArray | float = 1.0,
         n (int): size of LHS sample (i.e. number of generated points from R^d)
         seed (int): random generator seed
     """
+    loc = np.array(loc)
     no_parameters = len(loc)
     LHS_final = np.zeros([n, n])
     maxmin = 0
@@ -38,7 +40,7 @@ def lhs_normal(loc:  npt.NDArray, scale:  npt.NDArray | float = 1.0,
 
         distances = np.zeros([n, n])
         for j in range(no_parameters):
-            temp = np.matlib.repmat(np.reshape(LHS_uni[:, j], (1, n)), n, 1)-np.matlib.repmat(np.reshape(LHS_uni[:, j], (n, 1)), 1, n)
+            temp = matlib.repmat(np.reshape(LHS_uni[:, j], (1, n)), n, 1)-matlib.repmat(np.reshape(LHS_uni[:, j], (n, 1)), 1, n)
             distances = distances + np.multiply(temp, temp)
 
         quality = np.min(distances+np.eye(n)*1000)

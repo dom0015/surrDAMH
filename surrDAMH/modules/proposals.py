@@ -21,7 +21,7 @@ class Proposal:
         Returns logarithm of acceptance probability.
         """
         raise NotImplementedError
-    
+
     def adapt(self, **kwargs):
         """
         Adapts the proposal distribution.
@@ -116,29 +116,3 @@ class GaussRandomWalk_adaptive(GaussRandomWalk):  # initiated by SAMPLERs
             elif (1/ratio) > 1.2:  # acceptance rate is too low:
                 self.coef = self.coef*max(ratio**(2/self.no_parameters), 0.5)
                 self.set_covariance(self.coef*sample_cov)
-
-"""
-    def set_covariance(self, sd_or_cov: npt.ArrayLike) -> None:
-        # proporsal_sd is scalar/vector/covariance matrix:
-        if np.isscalar(sd_or_cov):
-            self.sd = np.full((self.no_parameters,), sd_or_cov)
-        else:
-            self.sd = np.array(sd_or_cov)
-        if self.sd.ndim == 1:  # proposal - normal uncorrelated
-            self.propose_sample = self._propose_sample_uncorrelated
-        else:  # proposal - normal correlated
-            self.propose_sample = self._propose_sample_multivariate
-
-    def _propose_sample_uncorrelated(self, current_sample: npt.NDArray) -> npt.NDArray:
-        proposed_sample = self._generator.normal(current_sample, self.sd)
-        return proposed_sample
-
-    def _propose_sample_multivariate(self, current_sample: npt.NDArray) -> npt.NDArray:
-        proposed_sample = self._generator.multivariate_normal(current_sample, self.sd)
-        return proposed_sample
-
-    def get_log_acceptance_probability(self, log_posterior_proposed, log_posterior_current) -> float:
-        # simple since the proposal distribution is symmetrical
-        log_probability = log_posterior_proposed - log_posterior_current
-        return log_probability
-"""

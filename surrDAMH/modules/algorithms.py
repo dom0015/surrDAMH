@@ -17,8 +17,10 @@ import numpy.typing as npt
 
 from surrDAMH.configuration import Configuration
 from surrDAMH.distributions.parent import Distribution
-from surrDAMH.modules.communication import Communicator, CommEvaluator_sampler, CommSnapshot_sampler
-from surrDAMH.modules.proposals import GaussRandomWalk, Proposal, GaussRandomWalk_adaptive
+from surrDAMH.modules.communication import (CommEvaluator_sampler,
+                                            CommSnapshot_sampler, Communicator)
+from surrDAMH.modules.proposals import (GaussRandomWalk,
+                                        GaussRandomWalk_adaptive, Proposal)
 from surrDAMH.stages import Stage
 
 
@@ -75,12 +77,20 @@ class Algorithm_PARENT:
         self.time_start = time.time()
         if self.current.observations is None:
             self.commSolver.set_parameters(self.current.parameters)
-            self.current.observations, self.current.solver_tag = self.commSolver.get_observations()
+            result = self.commSolver.get_observations()
+            if isinstance(result, tuple):
+                self.current.observations, self.current.solver_tag = result
+            else:
+                self.current.observations = result
         self.current.posterior = self.calculate_log_posterior(self.current.parameters, self.current.observations, self.current.solver_tag)
 
     def request_observations(self) -> None:
         self.commSolver.set_parameters(self.proposed.parameters)
-        self.proposed.observations, self.proposed.solver_tag = self.commSolver.get_observations()
+        result = self.commSolver.get_observations()
+        if isinstance(result, tuple):
+            self.proposed.observations, self.proposed.solver_tag = result
+        else:
+            self.proposed.observations = result
         self.proposed.posterior = self.calculate_log_posterior(self.proposed.parameters, self.proposed.observations, self.proposed.solver_tag)
 
     def if_accepted(self) -> None:
@@ -125,7 +135,7 @@ class Algorithm_PARENT:
         self.monitor(data_name="samples", row=row, condition=self.stage.save_to_file)
 
     def raw_data_to_file(self, type: str, tag, observations):
-        if self.conf.save_raw_data:
+        if self.conf.save_snapshots_to_file:
             if self.conf.transform_before_saving:
                 row = [type] + list(self.prior.transform(self.proposed.parameters))
             else:
@@ -156,40 +166,11 @@ class Algorithm_PARENT:
 
 class Algorithm_MH(Algorithm_PARENT):  # initiated by SAMPLERs
     def run(self):
-        tt_total = 0.0
         max_steps = min(self.stage.max_samples, self.stage.max_evaluations)
         for i in range(max_steps):
             parameters = self.proposal.propose_sample(self.current.parameters)
             self.proposed = Sample(parameters=parameters)
-            tt = time.time()
             self.request_observations()
-            tt2 = time.time()-tt
-            # print("Computation time:", tt2, flush=True)
-            tt_total += tt2
-            log_acceptance_probability_exact = self.proposal.get_log_acceptance_probability(self.proposed.posterior, self.current.posterior)
-            if self.sample_acceptance_log(log_acceptance_probability_exact):
-                self.if_accepted()
-            else:
-                self.if_rejected()
-            if time.time() - self.time_start > self.stage.time_limit:
-                print("SAMPLER at rank", self.rank_world, "time limit ", self.stage.time_limit, " reached - loop", i, flush=True)
-                break
-        print("Total MH: ", tt_total, flush=True)
-        self.finalize()
-
-
-class Algorithm_MH_adaptive(Algorithm_PARENT):  # initiated by SAMPLERs
-    def run(self):
-        tt_total = 0.0
-        max_steps = min(self.stage.max_samples, self.stage.max_evaluations)
-        for i in range(max_steps):
-            parameters = self.proposal.propose_sample(self.current.parameters)
-            self.proposed = Sample(parameters=parameters)
-            tt = time.time()
-            self.request_observations()
-            tt2 = time.time()-tt
-            # print("Computation time:", tt2, flush=True)
-            tt_total += tt2
             log_acceptance_probability_exact = self.proposal.get_log_acceptance_probability(self.proposed.posterior, self.current.posterior)
             acceptance_probability = min(1.0, np.exp(log_acceptance_probability_exact))
             self.proposal.adapt(proposed_sample=self.proposed.parameters, acceptance_probability=acceptance_probability)
@@ -200,93 +181,6 @@ class Algorithm_MH_adaptive(Algorithm_PARENT):  # initiated by SAMPLERs
             if time.time() - self.time_start > self.stage.time_limit:
                 print("SAMPLER at rank", self.rank_world, "time limit ", self.stage.time_limit, " reached - loop", i, flush=True)
                 break
-        print("Total MH_adaptive:", tt_total, flush=True)
-        self.finalize()
-
-
-class Algorithm_MH_adaptive_copy(Algorithm_PARENT):  # initiated by SAMPLERs
-    def run(self):
-        max_steps = min(self.stage.max_samples, self.stage.max_evaluations)
-        self.target_rate = self.stage.adaptive_target_rate  # target acceptance rate
-        if self.target_rate is None:
-            self.target_rate = 0.25
-        self.corr_limit = self.stage.adaptive_corr_limit  # maximal alowed correlation of proposal distribution
-        if self.corr_limit is None:
-            self.corr_limit = 0.3
-        self.sample_limit = self.stage.adaptive_sample_limit  # minimal number of accepted/rejected samples to evaluate acceptance rate
-        if self.sample_limit is None:
-            self.sample_limit = 10
-        samples = np.empty((0, self.conf.no_parameters))
-        fweights = np.empty((0,), dtype=int)
-        samples = np.vstack((samples, self.current.parameters))
-        fweights = np.append(fweights, 1)
-        # idx_accepted = np.empty((0,),dtype=bool)
-        counter_accepted = 0
-        counter_rejected = 0
-        init_flag = True
-        coef = 1
-        # find initial proposal SD:
-        self.proposal: GaussRandomWalk
-        if self.proposal.sd.ndim == 1:
-            initial_SD = self.proposal.sd
-        else:
-            initial_SD = np.sqrt(np.diag(self.proposal.sd))
-        COV = initial_SD
-        for i in range(max_steps):
-            parameters = self.proposal.propose_sample(self.current.parameters)
-            self.proposed = Sample(parameters=parameters)
-            self.request_observations()
-            log_acceptance_probability_exact = self.proposal.get_log_acceptance_probability(self.proposed.posterior, self.current.posterior)
-            if self.sample_acceptance_log(log_acceptance_probability_exact):
-                self.if_accepted()
-                # idx_accepted = np.append(idx_accepted,True)
-                fweights = np.append(fweights, 1)
-                samples = np.vstack((samples, self.current.parameters))
-                counter_accepted += 1
-            else:
-                self.if_rejected()
-                # idx_accepted = np.append(idx_accepted,False)
-                fweights[-1] += 1
-                counter_rejected += 1
-            if counter_rejected >= self.sample_limit and counter_accepted >= self.sample_limit:
-                current_rate = counter_accepted/(counter_accepted+counter_rejected)
-                # print("ACCEPTED:", counter_accepted, "REJECTED", counter_rejected, "-> RATE", current_rate)
-                COV = np.cov(samples, fweights=fweights, rowvar=False)
-                SD = np.sqrt(np.diag(COV))
-                CORR = COV/SD.reshape((self.conf.no_parameters, 1))
-                CORR = CORR/SD.reshape((1, self.conf.no_parameters))
-                # print(COV)
-                # print(CORR)
-                # correction of covariance matrix (maximal alowed correlation):
-                CORR[CORR < -self.corr_limit] = -self.corr_limit
-                CORR[CORR > self.corr_limit] = self.corr_limit
-                np.fill_diagonal(CORR, 1)
-                COV = CORR*SD.reshape((self.conf.no_parameters, 1))
-                COV = COV*SD.reshape((1, self.conf.no_parameters))
-                print("corr:", CORR, flush=True)
-                if init_flag:
-                    init_flag = False
-                    coef = np.mean(initial_SD/SD)
-                ratio = current_rate/self.target_rate
-                if ratio > 1.2:  # acceptance rate is too high:
-                    coef = coef*min(ratio**(2/self.conf.no_parameters), 2.0)
-                    self.proposal.set_covariance(coef*COV)
-                    # print("COVARIANCE CHANGED (rate too high):", ratio, self.Proposal.proposal_std)
-                elif (1/ratio) > 1.2:  # acceptance rate is too low:
-                    coef = coef*max(ratio**(2/self.conf.no_parameters), 0.5)
-                    self.proposal.set_covariance(coef*COV)
-                #     print("COVARIANCE CHANGED (rate too low):", ratio, self.Proposal.proposal_std)
-                # else:
-                #     print("COVARIANCE NOT CHANGED:", ratio)
-                # print("RANK", MPI.COMM_WORLD.Get_rank(), "acceptance rate:", counter_accepted, "/",
-                #       counter_rejected+counter_accepted, "=", np.round(current_rate, 4), "coef:", coef)
-                counter_accepted = 0
-                counter_rejected = 0
-
-            if time.time() - self.time_start > self.stage.time_limit:
-                print("SAMPLER at rank", self.rank_world, "time limit ", self.stage.time_limit, " reached - loop", i, flush=True)
-                break
-        print("RANK", self.rank_world, "FINAL COV", coef*COV, flush=True)
         self.finalize()
 
 

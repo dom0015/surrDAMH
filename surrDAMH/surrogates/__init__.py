@@ -8,6 +8,7 @@ from .nearest_kdtree import KDTreeUpdater
 from .evaluator_constant import ConstantEvaluator
 from .nn_sklearn import NNSklearnUpdater
 from .nn_sklearn_ongoing import NNSklearnOngoingUpdater
+from .torch_perceptron import PyTorchNNOngoingUpdater
 
 __all__ = ["PolynomialSklearnUpdater", "RBFInterpolationUpdater", "NearestInterpolationUpdater", "KDTreeUpdater",
-           "ConstantEvaluator", "NNSklearnUpdater", "NNSklearnOngoingUpdater"]
+           "ConstantEvaluator", "NNSklearnUpdater", "NNSklearnOngoingUpdater", "PyTorchNNOngoingUpdater"]

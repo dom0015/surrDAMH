@@ -14,8 +14,8 @@ from surrDAMH.modules.proposals import Proposal, GaussRandomWalk
 class Stage:
     algorithm_type: Literal["MH", "DAMH"] = "MH"  # DAMH uses delayed acceptance, MH does not
     proposal: Proposal | None = None
-    proposal_sd: float | None = None
-    is_adaptive: bool = False
+    proposal_sd_or_cov: float | None = None
+    adaptive: bool = False
     max_samples: int = sys.maxsize  # termination condition - total number of samples
     max_evaluations: int = sys.maxsize  # termination condition - total number of full model evaluations
     time_limit: float = np.inf  # termination condition - total time

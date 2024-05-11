@@ -20,27 +20,28 @@ from surrDAMH.distributions.parent import Distribution
 
 @dataclass
 class Configuration:
-    output_dir: str
-    no_parameters: int
-    no_observations: int
-    use_collector: bool = True
-    no_solvers: int = 2
-    solver_maxprocs: int = 1
-    solver_returns_tag: bool = False
-    pickled_observations: bool = True
-    save_raw_data: bool = False
-    transform_before_saving: bool = True
-    transform_before_surrogate: bool = True
-    initial_sample_type: Literal["lhs", "prior", "user_specified"] = "prior"  # specifies how togenerate initial samples
+    no_parameters: int  # number of unknowns (i.e. parameters of the forward model)
+    no_observations: int  # number of observed values (i.e. outputs of the forward model)
+    output_dir: str  # directory where samples and other outputs will be saved
+    use_solvers_pool: bool = True  # if False, the solver runs locally on each sampler process
+    no_solvers: int = 2  # number of child solvers spawned by solvers pool
+    solver_maxprocs: int = 1  # processed used by spawned solvers
+    solver_returns_tag: bool = False  # if True, solver returns Tuple(observations, tag:int), negative tag indicates solver error
+    use_collector: bool = True  # if False, no surrogate model will be constructed
+    save_snapshots_to_file: bool = False  # save all obtained snapshots to file
+    transform_before_saving: bool = True  # if False, save samples based on internal distribution
+    transform_before_surrogate: bool = False  # if False, construct surrogate on internal distribution
+    initial_sample_type: Literal["lhs", "prior", "user_specified"] = "prior"  # specifies how to generate initial samples
     initial_samples_distribution: Distribution | None = None  # only if initial_sample_type == "user_specified"
     lhs_scale: float | npt.NDArray = 1.0  # only if initial_sample_type == "lhs"
-    min_snapshots_to_update: int = 1  # how many snapshots (at least) have to be added to update the surrogate model
     min_snapshots_initial: int = 1  # minimal number of snapshots for the construction of initial surrogate model
-    max_collected_snapshots_per_loop: int = 50  # maximal number of snapshots to collected in one loop
+    min_snapshots_to_update: int = 1  # how many snapshots (at least) have to be added to update the surrogate model
+    max_collected_snapshots_per_loop: int = 1000  # maximal number of snapshots to be collected in one loop
     max_sampler_isend_requests: int = 100  # size of the buffer for isend requests (sending snapshots from samplers to collector)
-    debug: bool = False
-    max_buffer_size: int = 1 << 30
     paths_to_append: list[str] | None = None
+    pickled_observations: bool = True
+    max_buffer_size: int = 1 << 30
+    debug: bool = False
 
     def __post_init__(self) -> None:
         if self.paths_to_append is None:
@@ -51,16 +52,24 @@ class Configuration:
         size_world = MPI.COMM_WORLD.Get_size()
 
         # ranks of samplers, collector, solvers pool:
-        if self.use_collector:
+        if self.use_collector and self.use_solvers_pool:
             self.no_samplers = size_world - 2
-            self.rank_collector = self.no_samplers + 1
-        else:
+            self.rank_solvers_pool = size_world - 2
+            self.rank_collector = size_world - 1
+        elif self.use_collector:  # without solvers pool, solver is local
             self.no_samplers = size_world - 1
+            self.rank_solvers_pool = None
+            self.rank_collector = size_world - 1
+        elif self.use_solvers_pool:  # without collector
+            self.no_samplers = size_world - 1
+            self.rank_solvers_pool = size_world - 1
             self.rank_collector = None
-        if self.no_samplers < 1:
-            print("Number of MPI processes is too low. Use at least \"mpirun -n 4\".")
+        else:  # no collector, no solvers pool
+            self.no_samplers = size_world
+            self.rank_collector = None
+            self.rank_solvers_pool = None
+        assert self.no_samplers > 0, "number of MPI processes is too low, use at least 'mpirun -n 4'"
         self.sampler_ranks = np.arange(self.no_samplers)  # ranks 0, 1, ..., no_samplers-1
-        self.solver_pool_rank = self.no_samplers  # rank no_smplers
 
     def set_from_dict(self, conf_dict: dict | None = None, conf_dict_path: str | None = None) -> None:
         """

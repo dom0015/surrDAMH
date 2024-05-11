@@ -4,6 +4,19 @@
 import numpy as np
 import numpy.typing as npt
 
+from surrDAMH.solvers import Solver
+
+
+class SurrogateAsSolver(Solver):
+    def __init__(self, call_method) -> None:
+        self.call_method = call_method
+
+    def set_parameters(self, parameters: npt.NDArray) -> None:
+        self.parameters = parameters
+
+    def get_observations(self) -> npt.NDArray:
+        return self.call_method(self.parameters)
+
 
 class Evaluator:
     def __init__(self) -> None:
@@ -17,7 +30,10 @@ class Evaluator:
 
         output NDArray shape: (number of datapoints, no_observations)
         """
-        pass
+        raise NotImplementedError
+
+    def as_solver(self):
+        return SurrogateAsSolver(self.__call__)
 
 
 class Updater:
@@ -43,11 +59,18 @@ class Updater:
         """
         pass
 
+    def train(self,):
+        """
+        Trains the surrogate model, e.g. neurai network.
+        Called periodically by collector, regardless of whether new data have been added.
+        """
+
     def get_evaluator(self) -> Evaluator:
         """
+        Called by collector, when a new evaluator is requested by a sampler.
         Returns Evaluator instance.
         """
-        pass
+        raise NotImplementedError
 
 
 def closest_point_distance(par, point):

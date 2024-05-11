@@ -3,7 +3,7 @@
 
 # from os import listdir
 import os
-from typing import List, Literal, Tuple
+from typing import Any, List, Literal
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -16,14 +16,14 @@ class StageSamples:
         filenames = [f for f in os.listdir(samples_dir) if os.path.isfile(os.path.join(samples_dir, f))]
         filenames.sort()
         self.no_chains = len(filenames)
-        self.samples_compressed = [None] * self.no_chains
-        self.weights = [None] * self.no_chains
+        self.samples_compressed: list[Any] = [None] * self.no_chains
+        self.weights: list[Any] = [None] * self.no_chains
         if decompress_samples:
-            self.samples = [None] * self.no_chains
+            self.samples: list[Any] = [None] * self.no_chains
         if load_posterior:
-            self.posterior = [None] * self.no_chains
+            self.posterior: list[Any] = [None] * self.no_chains
         if load_posterior_surrogate:
-            self.posterior_surrogate = [None] * self.no_chains
+            self.posterior_surrogate: list[Any] = [None] * self.no_chains
         self.no_unique_samples = [0] * self.no_chains
         for i in range(self.no_chains):
             file_path = os.path.join(samples_dir, filenames[i])
@@ -57,7 +57,31 @@ class Samples:
             stage_path = os.path.join(self.samples_dir, stage)
             self.list_of_stages.append(StageSamples(no_parameters, stage_path, decompress_samples, load_posterior, load_posterior_surrogate))
 
-    def _plot_hist_1d(self, axis, burn_in=None, param_no=0, stages_to_disp=None, bins=20, show=True, scale="linear"):
+    def load_notes(self):
+        self.notes = [pd.DataFrame()] * self.no_stages
+        for n, stage_name in enumerate(self.stage_names):
+            dirname = os.path.join(self.sampling_output_dir, "notes", stage_name)
+            files = [f for f in os.listdir(dirname) if os.path.isfile(os.path.join(dirname, f))]
+            files.sort()
+            no_samplers = len(files)
+            for i in range(no_samplers):
+                filepath = os.path.join(dirname, files[i])
+                data = pd.read_csv(filepath)
+                self.notes[n] = pd.concat([self.notes[n], data])
+
+    def print_summary(self):
+        self.load_notes()
+        # create pandas data frame containing sums of dataframes in self.notes:
+        summary = pd.DataFrame()
+        for notes in self.notes:
+            summary = pd.concat([summary, notes.iloc[:, :-1].sum()], axis=1)
+        # transpose data frame:
+        summary = summary.T
+        # name the rows with self.stage_names:
+        summary = summary.set_axis(labels=self.stage_names, axis=0)
+        print(summary)
+
+    def _plot_hist_1d(self, axis, burn_in: List[List[int]], param_no: int, stages_to_disp: List[int], bins: int, show: bool, scale=str):
         # use weighted data (compressed)
         all_x = np.zeros((0,))
         no_unique_samples_sum = 0
@@ -84,7 +108,8 @@ class Samples:
         if show:
             plt.show()
 
-    def _plot_hist_2d(self, axis, burn_in=None, param_no=[0, 1], stages_to_disp=None, bins=20, show=True, colorbar=False, scale=[False, False]):
+    def _plot_hist_2d(self, axis, burn_in: List[List[int]], param_no: List[int], stages_to_disp: List[int],
+                      bins: int, show: bool,  scale: List[str], colorbar: bool = False):
         # use weighted data
         all_x = np.zeros((0,))
         all_y = np.zeros((0,))

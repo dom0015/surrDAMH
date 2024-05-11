@@ -9,7 +9,7 @@ Created on Tue Oct 29 14:55:37 2019
 import os
 import sys
 from collections import deque
-from typing import Any, List
+from typing import Any, List, Callable
 import time
 
 import numpy as np
@@ -29,7 +29,7 @@ from surrDAMH.solver_specification import SolverSpec
 
 
 class CommunicationWithChild:
-    def __init__(self, conf, transform, solver_spec, solver_output_dir, solver_id):
+    def __init__(self, conf: Configuration, transform: Callable, solver_spec: SolverSpec, solver_output_dir: str, solver_id: int) -> None:
         self.pickled_observations = conf.pickled_observations
         child_process_path = os.path.dirname(os.path.abspath(__file__))
         self.comm = MPI.COMM_SELF.Spawn(sys.executable,
@@ -104,27 +104,14 @@ def run_SOLVER(conf: Configuration, prior: Distribution, solver_spec: SolverSpec
         sampler_can_send[samplers_rank == rank_dest] = True
 
     def receive_parameters_from_sampler():
-        t1 = 0.0
-        t2 = 0.0
-        t3 = 0.0
-        received = False
-        # if any(sampler_can_send):  # and any(child_can_solve):
         sources = samplers_rank[sampler_can_send]
         sources = np.random.permutation(sources)
         for rank in sources:
+            # if any(sampler_can_send):  # and any(child_can_solve):
             if False and all(child_can_solve):  # no child is busy, wait for an incoming message from any sampler
-                t1 = time.time()
                 probe = comm_world.Probe(source=MPI.ANY_SOURCE, tag=MPI.ANY_TAG, status=status)
-                t1 = time.time() - t1
-                if probe:
-                    received = True
-                    print("run_SOLVER Probe", t1, flush=True)
             else:
-                t2 = time.time()
                 probe = comm_world.Iprobe(source=rank, tag=MPI.ANY_TAG, status=status)
-                # probe = comm_world.iprobe(source=MPI.ANY_SOURCE, tag=MPI.ANY_TAG, status=status)
-                t2 = time.time() - t2
-            t3 = time.time()
             if probe:  # if there is an incoming message from any sampler
                 # receive this message (one message from one sampler)
                 rank_source = status.Get_source()
@@ -137,35 +124,13 @@ def run_SOLVER(conf: Configuration, prior: Distribution, solver_spec: SolverSpec
                 else:  # put the request into queue (remember source and tag)
                     parameters_queue.append([rank_source, tag, received_data.copy()])
                     # nothing else will come from this sampler until completion of this request
-            t3 = time.time() - t3
-        return t1, t2, t3, received
 
-    time_total_1 = 0.0
-    time_total_2 = 0.0
-    time_total_3 = 0.0
-    time_total_4 = 0.0
-    time_total_5 = 0.0
-    counter = 0
-    time100 = 0.0
     while any(sampler_is_active):  # while at least 1 sampling algorithm is active
-        t1, t2, t3, received = receive_parameters_from_sampler()
-        if received:
-            counter += 1
-        time_total_1 += t1
-        time100 += t1
-        if counter == 10:
-            print(" ********************** processSOLVER time10", time100, flush=True)
-            counter = 0
-            time100 = 0.0
-        time_total_2 += t2
-        time_total_3 += t3
+        receive_parameters_from_sampler()
         for i in range(conf.no_solvers):  # for all child solvers
-            tt = time.time()
             if not child_can_solve[i]:  # if the child is busy, check if it finished its request
                 if comm_with_child[i].is_solved():  # if finished, send solution to sampler
                     receive_observations_and_resend(i)
-            time_total_4 += time.time() - tt
-            tt = time.time()
             if child_can_solve[i]:
                 if parameters_queue:  # if the queue is not empty
                     rank_source, tag, received_data = parameters_queue.popleft()
@@ -173,8 +138,6 @@ def run_SOLVER(conf: Configuration, prior: Distribution, solver_spec: SolverSpec
                     occupied_by_tag[i] = tag
                     comm_with_child[i].send_parameters(received_data)
                     child_can_solve[i] = False
-            time_total_5 += time.time() - tt
-    print("run_SOLVER", time_total_1, time_total_2, time_total_3, time_total_4, time_total_5, "++++++++++++++++++++++++++")
     for i in range(conf.no_solvers):
         f = getattr(comm_with_child[i], "terminate", None)
         if callable(f):

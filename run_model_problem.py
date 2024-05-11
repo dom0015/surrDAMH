@@ -18,7 +18,7 @@ import matplotlib.pyplot as plt
 
 
 conf = surrDAMH.Configuration(output_dir="output_nonlinear2_nn_relu20", no_parameters=2, no_observations=1,
-                              use_collector=True, initial_sample_type="prior", transform_before_surrogate=True, save_raw_data=True)
+                              use_collector=True, initial_sample_type="prior", transform_before_surrogate=True, save_snapshots_to_file=True)
 
 # solver_spec = surrDAMH.solver_specification.SolverSpecExample1()
 solver_spec = surrDAMH.solver_specification.SolverSpecNonlinearGeneric(no_parameters=conf.no_parameters, no_observations=conf.no_observations)
@@ -45,9 +45,9 @@ noise_sd = 1.0  # np.abs(observations)*0.1  # TODO: cannot be zero
 likelihood = surrDAMH.likelihoods.LikelihoodNormal(conf.no_observations, observations, sd=noise_sd)
 
 list_of_stages = []
-list_of_stages.append(Stage(algorithm_type="MH", proposal_sd=0.5, max_evaluations=100))
-list_of_stages.append(Stage(algorithm_type="DAMH", proposal_sd=0.5, max_evaluations=200, surrogate_model_updates=True))
-list_of_stages.append(Stage(algorithm_type="DAMH", proposal_sd=0.5, max_evaluations=2000, surrogate_model_updates=False))
+list_of_stages.append(Stage(algorithm_type="MH", proposal_sd_or_cov=0.5, max_evaluations=100))
+list_of_stages.append(Stage(algorithm_type="DAMH", proposal_sd_or_cov=0.5, max_evaluations=200, surrogate_model_updates=True))
+list_of_stages.append(Stage(algorithm_type="DAMH", proposal_sd_or_cov=0.5, max_evaluations=2000, surrogate_model_updates=False))
 
 sam = surrDAMH.SamplingFramework(conf, surrogate_updater=updater, prior=prior, likelihood=likelihood, solver_spec=solver_spec, list_of_stages=list_of_stages)
 data_for_analysis = sam.run()

@@ -68,7 +68,7 @@ class PolynomialSklearnUpdater(Updater):  # initiated by COLLECTOR
             self.num_terms *= self.terms_multiplicator
             self.degree += 1
             self.terms_multiplicator = (self.no_parameters + self.degree + 1)/(self.degree + 1)
-            print("snapshots, terms, degree:", self.num_snapshots, self.num_terms, self.degree, flush=True)
+            # print("snapshots, terms, degree:", self.num_snapshots, self.num_terms, self.degree, flush=True)
         if self.num_snapshots > self.num_snapshots_current:  # train the model if num_snapshots increased
             if self.degree > self.degree_current:  # create new model if degree changed
                 self.model = make_pipeline(PolynomialFeatures(self.degree), LinearRegression())
@@ -76,5 +76,5 @@ class PolynomialSklearnUpdater(Updater):  # initiated by COLLECTOR
                 self.degree_current = self.degree
             self.model.fit(self.par, self.obs)
             self.num_snapshots_current = self.num_snapshots
-        print("Polynomial surrogate model degree, snapshots =", self.degree, self.num_snapshots, flush=True)
+        # print("Polynomial surrogate model degree, snapshots =", self.degree, self.num_snapshots, flush=True)
         return PolynomialSklearnEvaluator(self.no_parameters, self.model)
