@@ -1,7 +1,10 @@
 sampling_output/
 solver_output/
 post_processing_output/
+ignored_folder/
 
 __pycache__/
 
-configuration_as_object/
+ratio_rejected.csv
+sampling_framework.pkl
+sampling_framework.yaml

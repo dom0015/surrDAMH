@@ -26,9 +26,8 @@ rank = parent_comm.Get_rank()
 
 # new:
 tmp = None
-[conf, transform, solver_spec] = parent_comm.bcast(tmp, root=0)
+[conf, solver_spec] = parent_comm.bcast(tmp, root=0)
 conf: Configuration
-transform: Callable
 solver_spec: SolverSpec
 
 """ INITIALIZATION OF THE SOLVER """
@@ -51,8 +50,7 @@ while solver_is_active:
         solver_is_active = False
     else:
         parent_comm.Bcast([received_data, MPI.DOUBLE], root=0)
-        transformed_data: npt.NDArray = transform(received_data)
-        solver_instance.set_parameters(transformed_data.reshape((conf.no_parameters,)))
+        solver_instance.set_parameters(received_data.reshape((conf.no_parameters,)))
         if conf.solver_returns_tag:
             [sent_data, solver_tag] = solver_instance.get_observations()
             if solver_tag < 0:

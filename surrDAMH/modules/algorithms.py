@@ -76,7 +76,7 @@ class Algorithm_PARENT:
     def prepare(self) -> None:
         self.time_start = time.time()
         if self.current.observations is None:
-            self.commSolver.set_parameters(self.current.parameters)
+            self.commSolver.set_parameters(self.prior.transform(self.current.parameters))
             result = self.commSolver.get_observations()
             if isinstance(result, tuple):
                 self.current.observations, self.current.solver_tag = result
@@ -85,7 +85,7 @@ class Algorithm_PARENT:
         self.current.posterior = self.calculate_log_posterior(self.current.parameters, self.current.observations, self.current.solver_tag)
 
     def request_observations(self) -> None:
-        self.commSolver.set_parameters(self.proposed.parameters)
+        self.commSolver.set_parameters(self.prior.transform(self.proposed.parameters))
         result = self.commSolver.get_observations()
         if isinstance(result, tuple):
             self.proposed.observations, self.proposed.solver_tag = result

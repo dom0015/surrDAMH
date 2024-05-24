@@ -16,9 +16,9 @@ from surrDAMH.configuration import Configuration
 from surrDAMH.distributions.parent import Distribution
 from surrDAMH.modules.tools import ensure_dir
 from surrDAMH.solver_specification import SolverSpec
+from surrDAMH.solvers import Solver, get_solver_from_spec
 from surrDAMH.stages import Stage
 from surrDAMH.surrogates.parent import Evaluator, Updater
-from surrDAMH.solvers import Solver, get_solver_from_spec
 
 
 def identity(sample):
@@ -69,7 +69,7 @@ class SamplingFramework:
 
         if rank_world == self.conf.rank_solvers_pool:
             assert self.solver_spec is not None, "solver_spec must be given"
-            optional_output = surrDAMH.process_SOLVER.run_SOLVER(self.conf, self.prior, self.solver_spec)
+            optional_output = surrDAMH.process_SOLVER.run_SOLVER(self.conf, self.solver_spec)
         elif rank_world == self.conf.rank_collector:
             assert self.surrogate_updater is not None
             optional_output = surrDAMH.process_COLLECTOR.run_COLLECTOR(self.conf, surrogate_updater=self.surrogate_updater)

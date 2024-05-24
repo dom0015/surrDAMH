@@ -45,7 +45,6 @@ class StageSamples:
 class Samples:
     def __init__(self, no_parameters: int, samples_dir: str,
                  decompress_samples: bool = True, load_posterior: bool = False, load_posterior_surrogate: bool = False):
-        # TODO: samples organized in folders by stages
         self.no_parameters = no_parameters
         self.sampling_output_dir = os.path.join(samples_dir, "sampling_output")
         self.samples_dir = os.path.join(samples_dir, "sampling_output", "samples")
@@ -80,6 +79,72 @@ class Samples:
         # name the rows with self.stage_names:
         summary = summary.set_axis(labels=self.stage_names, axis=0)
         print(summary)
+
+    def plot_chains(self, average=False, parameters_to_disp: List[int] | None = None,
+                    stages_to_disp: List[int] | None = None, scale: List[Literal["linear", "log", "ln"]] | None = None,
+                    par_names: List[str] | None = None, burn_in: List[List[int]] | None = None):
+        """
+        Plot generated chains.
+        If average==True, serves to analyze the convergence af averages for several chains generated in parallel.
+
+        Args:
+            parameters_to_disp (list of int of length N): Parameters to display. If None, all parameters are displayed.
+            stages_to_disp (list of int of length S): Stages to display. If None, all stages are displayed.
+            scale (list of "linear", "log" of length N): Scale of the plots. If None, all set to "linear".
+            par_names (list of str of length N): Parameter names. If None, "par. 0", "par. 1", ... is used.
+            burn_in (list of list of int): Burn-in for each stage and each chain. If None, set to [[0] * no_chains] * S.
+
+        Returns:
+            tuple[Figure, array of Axes]
+        """
+        if parameters_to_disp is None:
+            parameters_to_disp = range(self.no_parameters)
+        no_parameters_to_disp = len(parameters_to_disp)
+        if stages_to_disp is None:
+            stages_to_disp = range(self.no_stages)
+        if scale is None:
+            scale = ["linear"] * no_parameters_to_disp
+        if burn_in is None:
+            burn_in = []
+            for i in stages_to_disp:
+                burn_in.append([0] * self.list_of_stages[i].no_chains)
+
+        fig, axes = plt.subplots(no_parameters_to_disp, 1, sharex=False, sharey=False, figsize=(15, 15))
+        plt.subplots_adjust(wspace=0.5, hspace=0.3)
+        for idi, i in enumerate(parameters_to_disp):
+            axis = axes[idi]
+            all_x = []
+            for _ in range(self.list_of_stages[0].no_chains):  # assumes equal number of chains in each stage
+                all_x.append(np.zeros((0,)))
+            for idj, j in enumerate(stages_to_disp):
+                for s in range(self.list_of_stages[j].no_chains):
+                    try:
+                        tmp = self.list_of_stages[j].samples[s][burn_in[idj][s]:, i]
+                    except:
+                        print("HISTOGRAM 1D: CHAIN", self.stage_names[j], s, "NOT AVAILABLE")
+                        continue
+                    all_x[s] = np.concatenate((all_x[s], tmp))
+            for chain in all_x:
+                if average:
+                    chain_cumsum = np.cumsum(chain)
+                    indices = np.arange(1, len(chain) + 1)
+                    axis.plot(chain_cumsum/indices)
+                else:
+                    axis.plot(chain)
+                plt.yscale(scale[i])
+            # determine parameter name
+            if par_names is not None:
+                par_name = par_names[i].replace('_', '\_')
+                label = "${0}$".format(par_name)
+            else:
+                label = "$par. {0}$".format(j)
+            if scale[idi] == "log":
+                label += "\n(log10)"
+            elif scale[idi] == "ln":
+                label += "\n(ln)"
+            axis.set_title(label, x=1.05, multialignment='center')
+            axis.grid(True)
+        return fig, axes
 
     def _plot_hist_1d(self, axis, burn_in: List[List[int]], param_no: int, stages_to_disp: List[int], bins: int, show: bool, scale=str):
         # use weighted data (compressed)

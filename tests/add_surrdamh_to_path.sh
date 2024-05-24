@@ -10,3 +10,6 @@ FOLDER_PATH="/workspaces/surrDAMH"
 export PYTHONPATH=$PYTHONPATH:$FOLDER_PATH
 
 echo $PYTHONPATH
+
+
+# PYTHONPATH=$PYTHONPATH:"/workspaces/surrDAMH"

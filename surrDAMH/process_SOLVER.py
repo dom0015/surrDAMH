@@ -8,9 +8,9 @@ Created on Tue Oct 29 14:55:37 2019
 
 import os
 import sys
-from collections import deque
-from typing import Any, List, Callable
 import time
+from collections import deque
+from typing import Any, Callable, List
 
 import numpy as np
 from mpi4py import MPI
@@ -29,7 +29,7 @@ from surrDAMH.solver_specification import SolverSpec
 
 
 class CommunicationWithChild:
-    def __init__(self, conf: Configuration, transform: Callable, solver_spec: SolverSpec, solver_output_dir: str, solver_id: int) -> None:
+    def __init__(self, conf: Configuration, solver_spec: SolverSpec, solver_output_dir: str, solver_id: int) -> None:
         self.pickled_observations = conf.pickled_observations
         child_process_path = os.path.dirname(os.path.abspath(__file__))
         self.comm = MPI.COMM_SELF.Spawn(sys.executable,
@@ -38,7 +38,7 @@ class CommunicationWithChild:
         self.tag = 0
         self.received_data = np.zeros(conf.no_observations)
         self.status = MPI.Status()
-        self.comm.bcast([conf, transform, solver_spec], root=MPI.ROOT)
+        self.comm.bcast([conf, solver_spec], root=MPI.ROOT)
 
     def send_parameters(self, data_par):
         self.tag += 1
@@ -72,7 +72,7 @@ class CommunicationWithChild:
         print("Solver spawned by rank", MPI.COMM_WORLD.Get_rank(), "disconnected.")
 
 
-def run_SOLVER(conf: Configuration, prior: Distribution, solver_spec: SolverSpec):
+def run_SOLVER(conf: Configuration, solver_spec: SolverSpec):
     comm_world = MPI.COMM_WORLD
     rank_world = comm_world.Get_rank()
     comm_world.Split(color=1, key=rank_world)
@@ -80,7 +80,7 @@ def run_SOLVER(conf: Configuration, prior: Distribution, solver_spec: SolverSpec
     comm_with_child = []
     for i in range(conf.no_solvers):
         solver_output_dir = ensure_dir(os.path.join(conf.output_dir, "solver_output", "rank{}".format(i)))
-        comm_with_child.append(CommunicationWithChild(conf=conf, transform=prior.transform, solver_spec=solver_spec,
+        comm_with_child.append(CommunicationWithChild(conf=conf, solver_spec=solver_spec,
                                                       solver_output_dir=solver_output_dir, solver_id=i))
     samplers_rank = np.arange(conf.no_samplers)
     sampler_is_active = np.array([True] * conf.no_samplers)
