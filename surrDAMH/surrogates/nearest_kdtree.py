@@ -8,8 +8,9 @@ Created on Wed Jan 22 10:15:50 2020
 
 import numpy as np
 import numpy.typing as npt
-from surrDAMH.surrogates.parent import Updater, Evaluator
 from scipy.spatial import cKDTree
+
+from surrDAMH.surrogates.parent import Evaluator, Updater
 
 
 class KDTreeEvaluator(Evaluator):
@@ -59,7 +60,7 @@ class KDTreeUpdater(Updater):  # initiated by COLLECTOR
         self.par = np.empty((0, self.no_parameters))
         self.obs = np.empty((0, self.no_observations))
 
-    def add_data(self, parameters: int, observations: int, weights: npt.NDArray = None):
+    def add_data(self, parameters: npt.NDArray, observations: npt.NDArray, weights: npt.NDArray | None = None):
         # add new data
         # WEIGHTS ARE NOT USED
         parameters = parameters.reshape(-1, self.no_parameters)

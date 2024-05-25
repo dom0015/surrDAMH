@@ -6,7 +6,6 @@ Created on Wed Jan 22 10:15:50 2020
 @author: simona
 """
 
-import time
 
 import numpy as np
 import numpy.typing as npt
@@ -45,7 +44,7 @@ class PolynomialSklearnUpdater(Updater):  # initiated by COLLECTOR
         self.degree_current = 0
         self.model = None
 
-    def add_data(self, parameters: int, observations: int, weights: npt.NDArray = None):
+    def add_data(self, parameters: npt.NDArray, observations: npt.NDArray, weights: npt.NDArray | None = None):
         # add new data to matrices of non-processed data
         # TODO: polynomial surrogate weights
         weights = None  # WEIGHTS ARE NOT USED

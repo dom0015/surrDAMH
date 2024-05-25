@@ -7,8 +7,8 @@ Created on Fri Aug  6 14:07:23 2021
 """
 
 import numpy as np
-import scipy.linalg
 import numpy.typing as npt
+import scipy.linalg
 
 
 def autocorr_function_default(distances, corr_length):
@@ -65,6 +65,7 @@ def assemble_covariance_matrix(block_spec_list: list) -> npt.NDArray:
 
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
+
     # N = 100
     # grid = np.linspace(0,365,N).reshape((N,1))
     # parameters = [[30,50],[30,166],[50,166]]

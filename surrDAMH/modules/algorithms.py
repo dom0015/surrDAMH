@@ -19,8 +19,7 @@ from surrDAMH.configuration import Configuration
 from surrDAMH.distributions.parent import Distribution
 from surrDAMH.modules.communication import (CommEvaluator_sampler,
                                             CommSnapshot_sampler, Communicator)
-from surrDAMH.modules.proposals import (GaussRandomWalk,
-                                        GaussRandomWalk_adaptive, Proposal)
+from surrDAMH.modules.proposals import Proposal
 from surrDAMH.stages import Stage
 
 
@@ -172,6 +171,8 @@ class Algorithm_MH(Algorithm_PARENT):  # initiated by SAMPLERs
             parameters = self.proposal.propose_sample(self.current.parameters)
             self.proposed = Sample(parameters=parameters)
             self.request_observations()
+            assert self.proposed.posterior is not None
+            assert self.current.posterior is not None
             log_acceptance_probability_exact = self.proposal.get_log_acceptance_probability(self.proposed.posterior, self.current.posterior)
             acceptance_probability = min(1.0, np.exp(log_acceptance_probability_exact))
             self.proposal.adapt(proposed_sample=self.proposed.parameters, acceptance_probability=acceptance_probability)
@@ -193,7 +194,7 @@ class Algorithm_DAMH(Algorithm_PARENT):  # initiated by SAMPLERs
         if self.surrogate_evaluator is None:
             self.surrogate_evaluator = self.commEvaluator.get_evaluator()
             self.commEvaluator.request_evaluator()
-        observation_approx_current = self.get_approximate_observations(self.current.parameters)
+        observation_approx_current: npt.NDArray = self.get_approximate_observations(self.current.parameters)
         log_posterior_approx_current = self.calculate_log_posterior(self.current.parameters, observation_approx_current)
 
         for i in range(self.stage.max_samples):
@@ -247,6 +248,7 @@ class Algorithm_DAMH(Algorithm_PARENT):  # initiated by SAMPLERs
             argument0 = [parameters0.copy()]
             if parameters1 is not None:
                 argument1 = [parameters1.copy()]
+        assert self.surrogate_evaluator is not None
         if parameters1 is None:  # TODO: evaluate both together?
             res = self.surrogate_evaluator(np.array(argument0))
             return res

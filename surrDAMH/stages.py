@@ -7,7 +7,7 @@ from typing import Literal
 
 import numpy as np
 
-from surrDAMH.modules.proposals import Proposal, GaussRandomWalk
+from surrDAMH.modules.proposals import Proposal
 
 
 @dataclass

@@ -3,6 +3,7 @@
 
 import numpy as np
 import numpy.typing as npt
+
 from surrDAMH.distributions.parent import Distribution
 
 

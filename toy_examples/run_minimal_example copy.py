@@ -9,14 +9,14 @@ mpirun -n 6 python3 -m mpi4py run_minimal_example.py
 import os
 
 import scipy.stats
-from mpi4py import MPI
-
+import solver_examples
 import solver_examples.solver_examples
 import solver_examples.solver_spec_examples
+from mpi4py import MPI
+
 import surrDAMH
 from surrDAMH.modules.tools import ensure_dir
 from surrDAMH.stages import Stage
-import solver_examples
 
 dist_norm = surrDAMH.distributions.Normal(mean=[1.0, -1.0], sd=0.001)
 # D = surrDAMH.distributions.FromScipy(scipy.stats.multivariate_normal(mean=[0.0, 0.0], cov=0.001))  # type: ignore

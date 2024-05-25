@@ -7,10 +7,8 @@ Created on Tue Oct 29 12:47:09 2019
 """
 
 import sys
-from typing import Callable
 
 import numpy as np
-import numpy.typing as npt
 from mpi4py import MPI
 
 from surrDAMH.configuration import Configuration

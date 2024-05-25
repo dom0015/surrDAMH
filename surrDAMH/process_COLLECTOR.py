@@ -6,9 +6,6 @@ Created on Thu Nov  7 13:26:55 2019
 @author: simona
 """
 
-from dataclasses import dataclass
-from typing import Any, List
-
 import numpy as np
 from mpi4py import MPI
 

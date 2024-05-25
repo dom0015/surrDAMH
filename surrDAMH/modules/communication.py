@@ -61,7 +61,7 @@ class CommEvaluator_sampler:
         self.evaluator = evaluator
         return evaluator
 
-    def get_evaluator_and_terminate(self) -> Evaluator:
+    def get_evaluator_and_terminate(self) -> Evaluator | None:
         """
         Sends termination signal to the collector.
         Receives last evaluator (or None if a new evaluator is not available).

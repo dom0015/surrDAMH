@@ -8,8 +8,9 @@ Created on Wed Jan 22 10:15:50 2020
 
 import numpy as np
 import numpy.typing as npt
-from surrDAMH.surrogates.parent import Updater, Evaluator
 from scipy.interpolate import NearestNDInterpolator
+
+from surrDAMH.surrogates.parent import Evaluator, Updater
 
 
 class NearestInterpolationEvaluator(Evaluator):

@@ -8,15 +8,13 @@ Created on Tue Oct 29 14:55:37 2019
 
 import os
 import sys
-import time
 from collections import deque
-from typing import Any, Callable, List
+from typing import Any, List
 
 import numpy as np
 from mpi4py import MPI
 
 from surrDAMH.configuration import Configuration
-from surrDAMH.distributions.parent import Distribution
 from surrDAMH.modules.tools import ensure_dir
 from surrDAMH.solver_specification import SolverSpec
 

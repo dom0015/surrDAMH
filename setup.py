@@ -1,6 +1,6 @@
 import setuptools
-from setuptools import find_packages
-__version__ = "0.1.0"
+
+__version__ = "0.1.1"
 
 with open("README.md", "r") as fh:
     long_description = fh.read()
@@ -11,7 +11,7 @@ setuptools.setup(
     version=__version__,
     license='GPL 3.0',
     description='Surrogate accelerated Markov chain Monte Carlo methods for Bayesian inversion,'
-                'including Delayed-Acceptance Metropolis-Hastings algorithm.',
+                'based on the delayed acceptance Metropolis-Hastings algorithm',
     long_description=long_description,
     long_description_content_type="text/markdown",
     author='Simona Bérešová',
@@ -29,17 +29,14 @@ setuptools.setup(
     ],
 
     keywords=[
-        'Bayes inversion', 'Surrogate', 'Metropolis-Hastings', 'Markov chain', 'Monte Carlo',
+        'Bayesian inversion', 'Surrogate', 'Metropolis-Hastings', 'Markov chain', 'Monte Carlo',
     ],
     # include_package_data=True, # package includes all files of the package directory
     zip_safe=False,
-    install_requires=['pyyaml', 'numpy>=1.13.4', 'scipy', 'pandas', 'matplotlib', 'mpi4py'],
+    install_requires=['numpy>=1.13.4', 'scipy', 'pandas', 'matplotlib', 'mpi4py'],
     python_requires='>=3',
 
-    # according to setuptols documentation
-    # the including 'endorse.flow123d_inputs' should not be neccessary,
-    # however packege_data 'endorse.flow123d_inputs' doesn't work without it
-    packages=['surrDAMH', 'surrDAMH.modules', 'examples', 'examples.visualization'],
+    packages=setuptools.find_packages(),
     # package_dir={
     #     '': '.',
     # },

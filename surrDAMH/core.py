@@ -7,7 +7,6 @@ from typing import List
 
 # import yaml
 from mpi4py import MPI
-# from scipy.stats import rv_continuous
 
 import surrDAMH.process_COLLECTOR
 import surrDAMH.process_SAMPLER
@@ -20,6 +19,8 @@ from surrDAMH.solvers import Solver, get_solver_from_spec
 from surrDAMH.stages import Stage
 from surrDAMH.surrogates.parent import Evaluator, Updater
 
+# from scipy.stats import rv_continuous
+
 
 def identity(sample):
     return sample
@@ -27,7 +28,7 @@ def identity(sample):
 
 class SamplingFramework:
     """
-    Created on each MPI rank (except spawned solvers). 
+    Created on each MPI rank (except spawned solvers).
     Forward model solver (mapping from parameters fo observations) must be specified,
     if solvers pool is used, solver must be specified using solver_spec,
     if solvers pool is not used, solver can be specified using solver_spec or solver_instance.
@@ -82,7 +83,8 @@ class SamplingFramework:
             else:
                 self.solver_instance = None
             optional_output = surrDAMH.process_SAMPLER.run_SAMPLER(
-                self.conf, self.prior, self.likelihood, self.list_of_stages, solver_instance=self.solver_instance, surrogate_evaluator=self.surrogate_evaluator)
+                self.conf, self.prior, self.likelihood, self.list_of_stages,
+                solver_instance=self.solver_instance, surrogate_evaluator=self.surrogate_evaluator)
 
         comm_world.Barrier()
 

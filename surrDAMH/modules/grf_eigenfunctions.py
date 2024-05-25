@@ -6,12 +6,13 @@ Created on Wed May  6 09:19:41 2020
 @author: simona
 """
 
+import time
+
+import matplotlib.pyplot as plt
 import numpy as np
+import scipy.interpolate
 import scipy.linalg
 import scipy.sparse.linalg
-import scipy.interpolate
-import matplotlib.pyplot as plt
-import time
 
 
 def cov_function(r, sigma, lam):

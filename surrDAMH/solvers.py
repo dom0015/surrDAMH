@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import numpy.typing as npt
 import importlib.util as iu
+
+import numpy.typing as npt
+
 from surrDAMH.solver_specification import SolverSpec
 
 

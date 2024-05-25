@@ -3,7 +3,7 @@
 
 # from os import listdir
 import os
-from typing import Any, List, Literal
+from typing import Any, Iterable, List, Literal
 
 import emcee
 import matplotlib.pyplot as plt
@@ -71,7 +71,7 @@ class Samples:
                     load_posterior_surrogate))
         self.summarize()
 
-    def get_mean_and_cov(self, stages_to_disp: List[int] | None = None, burn_in: List[List[int]] | None = None,
+    def get_mean_and_cov(self, stages_to_disp: Iterable | None = None, burn_in: List[List[int]] | None = None,
                          npy_filepath: str | None = None):
         if stages_to_disp is None:
             stages_to_disp = range(self.no_stages)
@@ -153,7 +153,7 @@ class Samples:
         self.summary["CpUS"] = cpus_stages
         return self.summary
 
-    def load_snapshots(self, no_observations: int, chains_to_disp: List[int] | None = None,
+    def load_snapshots(self, no_observations: int, chains_to_disp: Iterable | None = None,
                        stages_to_disp: List[int] | None = None):
         """
         Loads snapshots (parameters, observations).
@@ -203,8 +203,8 @@ class Samples:
             print("loaded - stage", stage_name, flush=True)
         return par_all, G_all, weights_all
 
-    def plot_chains(self, average=False, parameters_to_disp: List[int] | None = None,
-                    stages_to_disp: List[int] | None = None, scale: List[Literal["linear", "log", "ln"]] | None = None,
+    def plot_chains(self, average=False, parameters_to_disp: Iterable | None = None,
+                    stages_to_disp: Iterable | None = None, scale: List[Literal["linear", "log", "ln"]] | None = None,
                     par_names: List[str] | None = None, burn_in: List[List[int]] | None = None):
         """
         Plot generated chains.
@@ -335,8 +335,8 @@ class Samples:
         if show:
             plt.show()
 
-    def plot_hist_grid(self, bins1d: int = 20, bins2d: int = 20, parameters_to_disp: List[int] | None = None,
-                       stages_to_disp: List[int] | None = None, scale: List[Literal["linear", "log", "ln"]] | None = None,
+    def plot_hist_grid(self, bins1d: int = 20, bins2d: int = 20, parameters_to_disp: Iterable | None = None,
+                       stages_to_disp: Iterable | None = None, scale: List[Literal["linear", "log", "ln"]] | None = None,
                        par_names: List[str] | None = None, burn_in: List[List[int]] | None = None):
         """
         Plots a N x N grid of 1d and 2d histograms, where N is the number of displayed parameters.
@@ -398,7 +398,7 @@ class Samples:
         return fig, axes
 
     def hist_observations(self, no_observations: int, chosen_observations: np.ndarray | None = None, grid: np.ndarray | None = None,
-                          grid_interp: np.ndarray | None = None, bins: List[int] | None = None, chains_to_disp: List[int] | None = None,
+                          grid_interp: np.ndarray | None = None, bins: List[int] | None = None, chains_to_disp: Iterable | None = None,
                           stages_to_disp: List[int] | None = None, observations: np.ndarray | None = None, cmap="viridis_r"):
         """
         Creates 2d histogram of observations.
@@ -512,8 +512,7 @@ class Samples:
 
 
 class Autocorrelation:
-    def __init__(self, samples: Samples, stages_to_disp: List[int]
-                 | None = None, burn_in: List[List[int]] | None = None):
+    def __init__(self, samples: Samples, stages_to_disp: Iterable, burn_in: List[List[int]] | None = None):
         """
         Autocorrelation analysis for a subset of stages.
         Using emcee (Foreman-Mackey).
@@ -578,7 +577,7 @@ class Autocorrelation:
             autocorr_time[i] = tmp
         return autocorr_time
 
-    def calculate_autocorr_time_mean(self, c=5):
+    def calculate_autocorr_time_mean(self, c: int = 5):
         autocorr_time_mean = [None] * self.samples.no_parameters
         autocorr_time_mean_beta = [None] * self.samples.no_parameters
         length = min(self.length)
@@ -665,7 +664,7 @@ def auto_window(taus, c):
     return len(taus) - 1
 
 
-def autocorr_FM(f, c=5.0):
+def autocorr_FM(f, c: int = 5):
     # from https://dfm.io/posts/autocorr/ Foreman-Mackey
     # first calculates all autocorr. functions, than averages them
     taus = 2.0 * np.cumsum(f) - 1.0

@@ -8,8 +8,10 @@ Created on Wed Jan 22 10:15:50 2020
 
 import numpy as np
 import numpy.typing as npt
-from surrDAMH.surrogates.parent import Updater, Evaluator
 from sklearn.gaussian_process import GaussianProcessRegressor
+
+from surrDAMH.surrogates.parent import Evaluator, Updater
+
 # from sklearn.gaussian_process.kernels import DotProduct, WhiteKernel
 
 
@@ -41,7 +43,7 @@ class GaussianSklearnUpdater(Updater):  # initiated by COLLECTOR
         self.obs = np.empty((0, self.no_observations))
         self.model = None
 
-    def add_data(self, parameters: int, observations: int, weights: npt.NDArray = None):
+    def add_data(self, parameters: npt.NDArray, observations: npt.NDArray, weights: npt.NDArray | None = None):
         # WEIGHTS ARE NOT USED
         parameters = parameters.reshape(-1, self.no_parameters)
         observations = observations.reshape(-1, self.no_observations)

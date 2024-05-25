@@ -2,8 +2,9 @@
 # -*- coding: utf-8 -*-
 
 import numpy as np
-from surrDAMH.distributions.parent import Distribution
+
 import surrDAMH.distributions.transformations as transformations
+from surrDAMH.distributions.parent import Distribution
 
 
 class UnivariateComponent:

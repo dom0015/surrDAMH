@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 from typing import List
+
 from surrDAMH.solver_specification import SolverSpec
 
 

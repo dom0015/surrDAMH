@@ -6,11 +6,13 @@ Created on Wed Jan 22 10:00:23 2020
 @author: simona
 """
 
+import time
+
 import numpy as np
 import numpy.typing as npt
 from mpi4py import MPI
+
 from surrDAMH.solvers import Solver
-import time
 
 
 class Solver_illustrative_local(Solver):
