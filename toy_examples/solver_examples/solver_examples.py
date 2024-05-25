@@ -26,7 +26,7 @@ class Solver_illustrative_local(Solver):
     def get_observations(self):
         res = (self.x**2-self.y)*(np.log((self.x-self.y)**2+1))
         time.sleep(self.sleep_time)
-        return res
+        return np.array([res])
 
 
 class Nonlinear(Solver):
@@ -42,7 +42,7 @@ class Nonlinear(Solver):
         linear_function1 = self.coef[0]*self.par[0] + self.coef[1]*self.par[1] + self.coef[2]
         linear_function2 = self.coef[3]*self.par[0] + self.coef[4]*self.par[1] + self.coef[5]
         res = min(linear_function1, linear_function2)
-        return res
+        return np.array([res])
 
 
 class Solver_linela2exp_local(Solver):
@@ -62,7 +62,7 @@ class Solver_linela2exp_local(Solver):
         C1 = D1*self.k2/self.k1
         D2 = -self.f/(2*self.k1)*(self.M*self.M)+C1*self.M+self.f/(2*self.k2)*(self.M*self.M)-D1*self.M
         uL = -self.f/(2*self.k2)*(self.L*self.L)+D1*self.L+D2
-        return uL
+        return np.array(object=[uL])
 
 
 class Solver_linela2exp_MPI:
@@ -121,7 +121,7 @@ class Solver_linela2exp_local_tag:
             convergence_tag = 1
         else:
             convergence_tag = -1
-        return uL, convergence_tag
+        return np.array(object=[uL]), convergence_tag
 
 
 class NonlinearGeneric(Solver):

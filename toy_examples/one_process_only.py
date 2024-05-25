@@ -10,6 +10,12 @@ from solver_examples.solver_examples import Solver_illustrative_local
 
 import surrDAMH
 
+"""
+Solver is local (i.e. solvers pool is not used),
+no surrogate model is used (i.e. no collector is used
+and samples are generated using the basic MH algorithm).
+"""
+
 solver_instance = Solver_illustrative_local()
 conf = surrDAMH.Configuration(output_dir="out_one_process_only", no_parameters=2, no_observations=1,
                               use_collector=False, use_solvers_pool=False)

@@ -29,6 +29,7 @@ class Configuration:
     solver_returns_tag: bool = False  # if True, solver returns Tuple(observations, tag:int), negative tag indicates solver error
     use_collector: bool = True  # if False, no surrogate model will be constructed
     save_snapshots_to_file: bool = False  # save all obtained snapshots to file
+    # TODO: save snapshots only for accepted samples
     transform_before_saving: bool = True  # if False, save samples based on internal distribution
     transform_before_surrogate: bool = False  # if False, construct surrogate on internal distribution
     initial_sample_type: Literal["lhs", "prior", "user_specified"] = "prior"  # specifies how to generate initial samples

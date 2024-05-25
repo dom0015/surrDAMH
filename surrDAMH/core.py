@@ -2,12 +2,12 @@
 # -*- coding: utf-8 -*-
 
 import os
-import pickle
+# import pickle
 from typing import List
 
-import yaml
+# import yaml
 from mpi4py import MPI
-from scipy.stats import rv_continuous
+# from scipy.stats import rv_continuous
 
 import surrDAMH.process_COLLECTOR
 import surrDAMH.process_SAMPLER
@@ -58,10 +58,10 @@ class SamplingFramework:
         comm_world = MPI.COMM_WORLD
         rank_world = comm_world.Get_rank()
 
-        if rank_world == 0:  # serialize to file
-            ensure_dir(self.conf.output_dir)
-            with open(os.path.join(self.conf.output_dir, "sampling_framework.yaml"), 'w') as f:
-                yaml.dump(self, f)
+        # if rank_world == 0:  # serialize to file
+        #     ensure_dir(self.conf.output_dir)
+        #     with open(os.path.join(self.conf.output_dir, "sampling_framework.yaml"), 'w') as f:
+        #         yaml.dump(self, f)
 
         # check if prior has the "transform" method:
         if not hasattr(self.prior, "transform"):

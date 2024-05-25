@@ -141,7 +141,8 @@ class Algorithm_PARENT:
             else:
                 row = [type] + list(self.proposed.parameters)
             row += [tag]
-            row += list(observations.flatten())
+            if observations is not None:
+                row += list(observations.flatten())
             self.monitor(data_name="raw_data", row=row)
 
     def _send_to_collector(self, sample, weight):
@@ -238,19 +239,21 @@ class Algorithm_DAMH(Algorithm_PARENT):  # initiated by SAMPLERs
     def get_approximate_observations(self, parameters0: npt.NDArray, parameters1: npt.NDArray | None = None):
         if self.conf.transform_before_surrogate:
             par0_tr = self.prior.transform(parameters0.copy())
-            argument = [par0_tr]
+            argument0 = [par0_tr]
             if parameters1 is not None:
                 par1_tr = self.prior.transform(parameters1.copy())
-                argument.append(par1_tr)
+                argument1 = [par1_tr]
         else:
-            argument = [parameters0.copy()]
+            argument0 = [parameters0.copy()]
             if parameters1 is not None:
-                argument.append(parameters1.copy())
-        res = self.surrogate_evaluator(np.array(argument))
-        if parameters1 is None:
+                argument1 = [parameters1.copy()]
+        if parameters1 is None:  # TODO: evaluate both together?
+            res = self.surrogate_evaluator(np.array(argument0))
             return res
         else:
-            return res[0, :], res[1, :]
+            res0 = self.surrogate_evaluator(np.array(argument0))
+            res1 = self.surrogate_evaluator(np.array(argument1))
+            return res0, res1
 
 
 class Writer:

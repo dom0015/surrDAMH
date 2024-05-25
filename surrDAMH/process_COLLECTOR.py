@@ -99,12 +99,15 @@ def run_COLLECTOR(conf: Configuration, surrogate_updater: Updater, surrogate_del
                         if sampler_got_last_evaluator[i]:
                             comm.terminate(None)
                         else:
+                            """
                             if evaluator_instance is None:
+                                print("COLLECTOR DEBUG", 444, flush=True)
                                 evaluator_instance = surrogate_updater.get_evaluator()
+                                """
                             comm.terminate(evaluator_instance)
-
+    idx = 0
     for comm_s in comms_snapshots:
+        idx += 1
         comm_s.terminate()
-
     comm_world.Barrier()
     comm_world.Barrier()

@@ -67,8 +67,7 @@ class CommEvaluator_sampler:
         Receives last evaluator (or None if a new evaluator is not available).
         """
         buf = np.array([self.idx], dtype=int)
-        # thw following Isend request has no Wait()
-        self.comm_world.Isend(buf=buf, dest=self.rank_collector, tag=TAG_STOP_UPDATING)
+        self.comm_world.Send(buf=buf, dest=self.rank_collector, tag=TAG_STOP_UPDATING)  # TODO: Isend?
         evaluator = self.request_irecv.wait()
         if evaluator is None:  # this means that at least one evaluator has been received before
             return self.evaluator
@@ -137,8 +136,8 @@ class CommEvaluator_collector():
         if self.current_idx == self.max_idx:
             self.request_update_signal.Cancel()
         else:
-            # the following isend request has no wait()
-            self.comm_world.isend(obj=last_evaluator, dest=self.rank_sampler, tag=TAG_EVALUATOR_OBJECT)
+            # TODO: isend?
+            self.comm_world.send(obj=last_evaluator, dest=self.rank_sampler, tag=TAG_EVALUATOR_OBJECT)
             self.request_update_signal.Wait()
 
 
@@ -184,8 +183,8 @@ class CommSnapshot_sampler:
         MPI.Request.waitall(self.requests)
         # sends the number of sent snapshots
         buf = np.array([self.idx-1], dtype=int)
-        # thw following Isend request has no Wait()
-        self.comm_world.Isend(buf=buf, dest=self.rank_collector, tag=TAG_TERMINATE)
+        # TODO: Isend?
+        self.comm_world.Send(buf=buf, dest=self.rank_collector, tag=TAG_TERMINATE)
 
 
 class CommSnapshot_collector:
@@ -270,10 +269,12 @@ class CommSnapshot_collector:
         # the total number of snapshots is known.
         # If they were all received, the last request was cancelled
         # and active was set to False.
-        # If not, it is necessary to receive remaining snapshots and cancel the last request.
+        # TODO: If not, is it necessary to receive remaining snapshots? Cancel the last request.
         if not self.all_snapshots_were_received:
+            """
             while self.current_idx < self.max_idx:
                 self.get_snapshot_and_request_new()
+            """
             self.request_snapshot.cancel()
 
 

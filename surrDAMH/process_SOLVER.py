@@ -36,7 +36,7 @@ class CommunicationWithChild:
                                         args=[child_process_path+'/process_CHILD.py', str(solver_id), solver_output_dir],
                                         maxprocs=conf.solver_maxprocs)
         self.tag = 0
-        self.received_data = np.zeros(conf.no_observations)
+        self.received_data = np.zeros((conf.no_observations,))
         self.status = MPI.Status()
         self.comm.bcast([conf, solver_spec], root=MPI.ROOT)
 
@@ -51,7 +51,7 @@ class CommunicationWithChild:
         else:
             self.comm.Recv(self.received_data, source=0, tag=MPI.ANY_TAG, status=self.status)
             solver_tag = self.status.Get_tag()
-        return self.received_data.reshape((1, -1)).copy(), solver_tag
+        return self.received_data.flatten().copy(), solver_tag
 
     def is_solved(self):
         # check the parent-child communicator if there is an incoming message
@@ -69,7 +69,7 @@ class CommunicationWithChild:
         self.comm.Bcast([np.array(0, 'i'), MPI.INT], root=MPI.ROOT)
         self.comm.Barrier()
         self.comm.Disconnect()
-        print("Solver spawned by rank", MPI.COMM_WORLD.Get_rank(), "disconnected.")
+        # print("Solver spawned by rank", MPI.COMM_WORLD.Get_rank(), "disconnected.", flush=True)
 
 
 def run_SOLVER(conf: Configuration, solver_spec: SolverSpec):

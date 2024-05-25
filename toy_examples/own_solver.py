@@ -2,8 +2,11 @@
 # -*- coding: utf-8 -*-
 
 """
-Run with:
+Run with (replace 4 with required number of MPI processes):
 mpirun -n 4 python3 -m mpi4py own_solver.py
+
+(Here, one process will be used as collector,
+and the remaining processes will be used as samplers.)
 """
 
 import os
@@ -14,8 +17,8 @@ from mpi4py import MPI
 
 import surrDAMH
 from surrDAMH.modules.tools import ensure_dir
-from surrDAMH.stages import Stage
 from surrDAMH.solvers import Solver
+from surrDAMH.stages import Stage
 
 
 # create instance of own local solver
@@ -72,7 +75,7 @@ if rank_world == 0:
     samples = surrDAMH.post_processing.Samples(conf.no_parameters, conf.output_dir)
 
     # print summary:
-    samples.print_summary()
+    samples.get_summary()
 
     # save histograms grid to file:
     fig, _ = samples.plot_hist_grid(bins1d=30, bins2d=30)

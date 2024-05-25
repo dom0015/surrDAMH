@@ -38,7 +38,8 @@ class RBFInterpolationUpdater(Updater):  # initiated by COLLECTOR
                  smoothing: float = 0.0,
                  kernel: str = "thin_plate_spline",
                  epsilon: float | None = None,
-                 degree: int | None = None):
+                 degree: int | None = None,
+                 verbose: bool = False):
         self.no_parameters = no_parameters
         self.no_observations = no_observations
         self.neighbors = neighbors
@@ -46,6 +47,7 @@ class RBFInterpolationUpdater(Updater):  # initiated by COLLECTOR
         self.kernel = kernel
         self.epsilon = epsilon
         self.degree = degree
+        self.verbose = verbose
         # snapshots used for surrogate model construction:
         self.par = np.empty((0, self.no_parameters))
         self.obs = np.empty((0, self.no_observations))
@@ -72,5 +74,6 @@ class RBFInterpolationUpdater(Updater):  # initiated by COLLECTOR
                 par = np.vstack((par, self.par+i+1))
                 obs = np.vstack((obs, self.obs))
             rbf_interpolator = RBFInterpolator(par, obs, kernel="linear", smoothing=1)
-        print("RBF model constructed, time, par:", time.time()-tt, self.par.shape, flush=True)
+        if self.verbose:
+            print("RBF model constructed, time, par:", time.time()-tt, self.par.shape, flush=True)
         return RBFInterpolationEvaluator(self.no_parameters, rbf_interpolator)

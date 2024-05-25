@@ -58,9 +58,9 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
     # TODO: train method for surrogate updater
     # TODO: examples with simple visualization
     # TODO: readme
-    # TODO: local solver - without using solvers pool and child solvers
     # TODO: join MH and MH_adaptive
     # TODO: user_specified proposal, předávání dat mezi nimi?
+    # TODO: use pre-collected snapshots
 
     proposal_cov_adaptive = None
     no_stages = len(list_of_stages)
@@ -154,16 +154,13 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
         print('Stage', alg_instance.stage.name, 'at MPI rank', rank_world, 'finished - acc/rej/prerej samples:',
               alg_instance.no_accepted, alg_instance.no_rejected, alg_instance.no_prerejected, flush=True)
         comm_sampler.Barrier()
-
     f = getattr(commSolver, "terminate", None)
     if callable(f):
         commSolver.terminate()
-
     f = getattr(commSnapshot, "terminate", None)
     if callable(f):
         assert commSnapshot is not None
         commSnapshot.terminate()
-
     comm_world.Barrier()
     comm_world.Barrier()
     return []
