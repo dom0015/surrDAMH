@@ -12,7 +12,6 @@ from typing import Literal
 
 import numpy as np
 import numpy.typing as npt
-import ruamel.yaml as yaml
 from mpi4py import MPI
 
 from surrDAMH.distributions.parent import Distribution
@@ -70,21 +69,6 @@ class Configuration:
             self.rank_solvers_pool = None
         assert self.no_samplers > 0, "number of MPI processes is too low, use at least 'mpirun -n 4'"
         self.sampler_ranks = np.arange(self.no_samplers)  # ranks 0, 1, ..., no_samplers-1
-
-    def set_from_dict(self, conf_dict: dict | None = None, conf_dict_path: str | None = None) -> None:
-        """
-        Input: conf_dict or path to yaml/json file have to be specified.
-        """
-        if conf_dict is None:
-            assert conf_dict_path is not None
-            with open(conf_dict_path) as f:
-                conf_dict = yaml.safe_load(f)
-
-        assert conf_dict is not None
-        for key, value in conf_dict.items():
-            setattr(self, key, value)
-
-        self._append_path()
 
     def _append_path(self) -> None:
         assert self.paths_to_append is not None

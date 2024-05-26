@@ -6,7 +6,7 @@ Python implementation of surrogate-accelerated Markov chain Monte Carlo methods 
 - scipy
 - mpi4py
 - matplotlib
-- pytorch (for neural network surrogate model)
+- torch (for neural network surrogate model)
 - scikit-learn (for polynomial surrogate model)
 - pandas (for post-processing)
 - emcee (for post-processing)

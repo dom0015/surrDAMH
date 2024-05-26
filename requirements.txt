@@ -3,3 +3,6 @@ scipy
 pandas
 matplotlib
 mpi4py
+emcee
+scikit-learn
+torch
