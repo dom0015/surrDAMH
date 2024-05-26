@@ -48,7 +48,6 @@ def calculate_artificial_observations(parameters: npt.ArrayLike,
     if solver_instance is None:
         assert solver_spec is not None, "to calculate artificial observations, solver must be given"
         solver_instance = get_solver_from_spec(solver_spec)
-    # artificial observations and noise std
     solver_instance.set_parameters(parameters)
     observations = solver_instance.get_observations()
     return observations

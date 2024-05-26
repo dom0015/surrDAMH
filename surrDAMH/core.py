@@ -2,10 +2,8 @@
 # -*- coding: utf-8 -*-
 
 import os
-# import pickle
 from typing import List
 
-# import yaml
 from mpi4py import MPI
 
 import surrDAMH.process_COLLECTOR
@@ -18,8 +16,6 @@ from surrDAMH.solver_specification import SolverSpec
 from surrDAMH.solvers import Solver, get_solver_from_spec
 from surrDAMH.stages import Stage
 from surrDAMH.surrogates.parent import Evaluator, Updater
-
-# from scipy.stats import rv_continuous
 
 
 def identity(sample):
@@ -58,11 +54,6 @@ class SamplingFramework:
     def run(self):
         comm_world = MPI.COMM_WORLD
         rank_world = comm_world.Get_rank()
-
-        # if rank_world == 0:  # serialize to file
-        #     ensure_dir(self.conf.output_dir)
-        #     with open(os.path.join(self.conf.output_dir, "sampling_framework.yaml"), 'w') as f:
-        #         yaml.dump(self, f)
 
         # check if prior has the "transform" method:
         if not hasattr(self.prior, "transform"):

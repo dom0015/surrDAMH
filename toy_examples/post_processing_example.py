@@ -1,4 +1,7 @@
 """
+Run with:
+python3 post_processing_example.py
+
 Solver is local (i.e. solvers pool is not used),
 no surrogate model is used (i.e. no collector is used
 and samples are generated using the basic MH algorithm).

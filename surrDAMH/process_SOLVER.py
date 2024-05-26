@@ -18,13 +18,6 @@ from surrDAMH.configuration import Configuration
 from surrDAMH.modules.tools import ensure_dir
 from surrDAMH.solver_specification import SolverSpec
 
-# SOLVERS POOL communicates with SAMPLERs and CHILD SOLVERs
-# with SAMPLER:
-# receives parameters ( , tag=1,2,...)
-# receives signal that sampler terminated ( , tag=0)
-# sends observations and conv_tag ( , tag=1,2,...) or ( , tag=conv_tag)
-# with CHILD:
-
 
 class CommunicationWithChild:
     def __init__(self, conf: Configuration, solver_spec: SolverSpec, solver_output_dir: str, solver_id: int) -> None:
@@ -56,18 +49,16 @@ class CommunicationWithChild:
         if self.pickled_observations:
             tmp = self.comm.Iprobe(source=0, tag=self.tag)
         else:
-            tmp = self.comm.Iprobe(source=0, tag=MPI.ANY_TAG)  # tag=self.tag)
+            tmp = self.comm.Iprobe(source=0, tag=MPI.ANY_TAG)
         if tmp:
             return True
         else:
             return False
 
     def terminate(self):
-        # self.comm.Barrier()
         self.comm.Bcast([np.array(0, 'i'), MPI.INT], root=MPI.ROOT)
         self.comm.Barrier()
         self.comm.Disconnect()
-        # print("Solver spawned by rank", MPI.COMM_WORLD.Get_rank(), "disconnected.", flush=True)
 
 
 def run_SOLVER(conf: Configuration, solver_spec: SolverSpec):
@@ -105,7 +96,6 @@ def run_SOLVER(conf: Configuration, solver_spec: SolverSpec):
         sources = samplers_rank[sampler_can_send]
         sources = np.random.permutation(sources)
         for rank in sources:
-            # if any(sampler_can_send):  # and any(child_can_solve):
             if False and all(child_can_solve):  # no child is busy, wait for an incoming message from any sampler
                 probe = comm_world.Probe(source=MPI.ANY_SOURCE, tag=MPI.ANY_TAG, status=status)
             else:

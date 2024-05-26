@@ -80,7 +80,6 @@ class GaussRandomWalk_adaptive(GaussRandomWalk):  # initiated by SAMPLERs
 
         self.samples = np.empty((0, self.no_parameters))
         self.aweights = np.empty((0,), dtype=float)
-        # idx_accepted = np.empty((0,),dtype=bool)
         self.init_flag = True
         self.coef = 1
 
@@ -112,7 +111,6 @@ class GaussRandomWalk_adaptive(GaussRandomWalk):  # initiated by SAMPLERs
             if ratio > 1.2:  # acceptance rate is too high:
                 self.coef = self.coef*min(ratio**(2/self.no_parameters), 2.0)
                 self.set_covariance(self.coef*sample_cov)
-                # print("COVARIANCE CHANGED (rate too high):", ratio, self.Proposal.proposal_std)
             elif (1/ratio) > 1.2:  # acceptance rate is too low:
                 self.coef = self.coef*max(ratio**(2/self.no_parameters), 0.5)
                 self.set_covariance(self.coef*sample_cov)

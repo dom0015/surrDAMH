@@ -97,10 +97,7 @@ class Algorithm_PARENT:
         self.send_to_collector(sample=self.current, weight=self.no_rejected_current+1)
         self.no_accepted += 1
         self.no_rejected_current = 0
-        # self.current = deepcopy(self.proposed)
         self.current = self.proposed.copy()
-        # self.current = Sample(parameters=self.proposed.parameters.copy(), observations=self.proposed.observations.copy(),
-        #                      posterior=self.proposed.posterior, solver_tag=self.proposed.solver_tag)
         self.raw_data_to_file(type="accepted", tag=self.current.solver_tag, observations=self.current.observations)
 
     def if_rejected(self):
@@ -198,7 +195,7 @@ class Algorithm_DAMH(Algorithm_PARENT):  # initiated by SAMPLERs
         log_posterior_approx_current = self.calculate_log_posterior(self.current.parameters, observation_approx_current)
 
         for i in range(self.stage.max_samples):
-            surrogate_evaluator_changed = False  # TODO: check this
+            surrogate_evaluator_changed = False
             parameters = self.proposal.propose_sample(self.current.parameters)
             self.proposed = Sample(parameters=parameters)
             if self.stage.surrogate_model_updates:
@@ -230,10 +227,8 @@ class Algorithm_DAMH(Algorithm_PARENT):  # initiated by SAMPLERs
                 self.no_rejected_current += 1
                 self.raw_data_to_file(type="prerejected", tag=0, observations=observation_approx_proposed)
             if time.time() - self.time_start > self.stage.time_limit:
-                # print("SAMPLER at rank", self.rank_world, "time limit ", self.stage.time_limit, " reached - loop", i, flush=True)
                 break
             if (self.no_rejected + self.no_accepted) >= self.stage.max_evaluations:
-                # print("SAMPLER at RANK", self.rank_world, "evaluations limit ", self.stage.max_evaluations, " reached - loop", i, flush=True)
                 break
         self.finalize()
 
@@ -249,7 +244,7 @@ class Algorithm_DAMH(Algorithm_PARENT):  # initiated by SAMPLERs
             if parameters1 is not None:
                 argument1 = [parameters1.copy()]
         assert self.surrogate_evaluator is not None
-        if parameters1 is None:  # TODO: evaluate both together?
+        if parameters1 is None:
             res = self.surrogate_evaluator(np.array(argument0))
             return res
         else:

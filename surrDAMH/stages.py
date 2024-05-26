@@ -25,7 +25,7 @@ class Stage:
     save_to_file: bool = True  # samples are saved to file
     is_excluded: bool = False  # if True, the next stage starts from the same sample as this one
     adaptive_target_rate: float | None = None  # target acceptance rate of the adaptive algorithm
-    adaptive_corr_limit = None  # TODO
+    adaptive_corr_limit = None
     adaptive_sample_limit: int | None = None
     name: str | None = None  # will be set later
 

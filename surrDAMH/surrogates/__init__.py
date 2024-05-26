@@ -1,14 +1,6 @@
-from .evaluator_constant import ConstantEvaluator
 from .nearest_kdtree import KDTreeUpdater
-from .nearest_scipy import NearestInterpolationUpdater
-from .nn_sklearn import NNSklearnUpdater
-from .nn_sklearn_ongoing import NNSklearnOngoingUpdater
 from .polynomial_sklearn import PolynomialSklearnUpdater
-# from .polynomial_sklearn_sigmoid import PolynomialSklearnSigmoidUpdater
-# from .gaussian_sklearn import GaussianSklearnUpdater
-# from .polynomial_new import PolynomialProjectionUpdater
 from .rbf_scipy import RBFInterpolationUpdater
 from .torch_perceptron import PyTorchNNOngoingUpdater
 
-__all__ = ["PolynomialSklearnUpdater", "RBFInterpolationUpdater", "NearestInterpolationUpdater", "KDTreeUpdater",
-           "ConstantEvaluator", "NNSklearnUpdater", "NNSklearnOngoingUpdater", "PyTorchNNOngoingUpdater"]
+__all__ = ["PolynomialSklearnUpdater", "RBFInterpolationUpdater", "KDTreeUpdater", "PyTorchNNOngoingUpdater"]

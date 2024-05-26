@@ -91,11 +91,3 @@ def closest_point_distance_kdtree(par, kdtree, point):
     closest_index = kdtree.query(point)[1]
     smallest_distance = np.linalg.norm(par[closest_index] - point)
     return smallest_distance
-
-
-def sigmoid_wrapper(y: npt.NDArray, y_approx: npt.NDArray, dist: float, scale: float):
-    # y = vector of observations
-    # y_approx = approximation of y obtained using a surrogate model
-    # dist = distance to the closest point used for surrogate model construction
-    # scale = determines how far from the closest point the surrogate model is considered reliable
-    return y_approx + (y - y_approx) / (1 + np.exp(-10 * (dist - 2*scale)/scale))

@@ -77,9 +77,9 @@ class PyTorchNNOngoingUpdater(Updater):
         self.model = PyTorchMLP(no_parameters, no_observations, hidden_layer_sizes, activation)
         self.model.to(self.device)
         if solver == "adam":
-            self.optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate_init)  # lr=1e-3
+            self.optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate_init)
         else:
-            self.optimizer = optim.LBFGS(self.model.parameters(), lr=self.learning_rate_init)  # lr=0.5
+            self.optimizer = optim.LBFGS(self.model.parameters(), lr=self.learning_rate_init)
         self.criterion = nn.MSELoss()  # nn.MSELoss() or nn.L1Loss()
         self.criterionMSE = nn.MSELoss()
 

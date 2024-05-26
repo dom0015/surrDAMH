@@ -67,7 +67,7 @@ class CommEvaluator_sampler:
         Receives last evaluator (or None if a new evaluator is not available).
         """
         buf = np.array([self.idx], dtype=int)
-        self.comm_world.Send(buf=buf, dest=self.rank_collector, tag=TAG_STOP_UPDATING)  # TODO: Isend?
+        self.comm_world.Send(buf=buf, dest=self.rank_collector, tag=TAG_STOP_UPDATING)
         evaluator = self.request_irecv.wait()
         if evaluator is None:  # this means that at least one evaluator has been received before
             return self.evaluator
@@ -136,7 +136,6 @@ class CommEvaluator_collector():
         if self.current_idx == self.max_idx:
             self.request_update_signal.Cancel()
         else:
-            # TODO: isend?
             self.comm_world.send(obj=last_evaluator, dest=self.rank_sampler, tag=TAG_EVALUATOR_OBJECT)
             self.request_update_signal.Wait()
 
@@ -183,7 +182,6 @@ class CommSnapshot_sampler:
         MPI.Request.waitall(self.requests)
         # sends the number of sent snapshots
         buf = np.array([self.idx-1], dtype=int)
-        # TODO: Isend?
         self.comm_world.Send(buf=buf, dest=self.rank_collector, tag=TAG_TERMINATE)
 
 
@@ -269,12 +267,7 @@ class CommSnapshot_collector:
         # the total number of snapshots is known.
         # If they were all received, the last request was cancelled
         # and active was set to False.
-        # TODO: If not, is it necessary to receive remaining snapshots? Cancel the last request.
         if not self.all_snapshots_were_received:
-            """
-            while self.current_idx < self.max_idx:
-                self.get_snapshot_and_request_new()
-            """
             self.request_snapshot.cancel()
 
 
@@ -331,16 +324,16 @@ class SolverMPI(Communicator):
     def set_parameters(self, parameters: npt.ArrayLike) -> None:
         self.tag_solver += 1
         tmp = time.time()
-        self.comm_world.Send(parameters, dest=self.rank_solvers_pool, tag=self.tag_solver)  # TODO fixed tag
+        self.comm_world.Send(parameters, dest=self.rank_solvers_pool, tag=self.tag_solver)
         tmp2 = time.time() - tmp
         self.tt_send = self.tt_send + tmp2
 
     def get_observations(self, ):
         tmp = time.time()
         if self.pickled_observations:
-            [self.observations, solver_tag] = self.comm_world.recv(source=self.rank_solvers_pool)  # , tag=self.tag_solver)
+            [self.observations, solver_tag] = self.comm_world.recv(source=self.rank_solvers_pool)
         else:
-            self.comm_world.Recv(self.observations, source=self.rank_solvers_pool, tag=MPI.ANY_TAG, status=self.status)  # tag=self.tag_solver)
+            self.comm_world.Recv(self.observations, source=self.rank_solvers_pool, tag=MPI.ANY_TAG, status=self.status)
             solver_tag = self.status.Get_tag()
         tmp2 = time.time() - tmp
         self.tt_recv = self.tt_recv + tmp2

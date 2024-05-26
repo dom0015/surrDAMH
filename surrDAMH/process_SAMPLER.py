@@ -55,13 +55,6 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
         initial_sample = alg.Sample(parameters=prior.rvs())
     print("Sampler at rank", rank_world, "- initial sample:", initial_sample.parameters, flush=True)
 
-    # TODO: train method for surrogate updater
-    # TODO: examples with simple visualization
-    # TODO: readme
-    # TODO: join MH and MH_adaptive
-    # TODO: user_specified proposal, předávání dat mezi nimi?
-    # TODO: use pre-collected snapshots
-
     proposal_cov_adaptive = None
     no_stages = len(list_of_stages)
     for i, stage in enumerate(list_of_stages):
@@ -94,7 +87,6 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
             assert commEvaluator is not None, "use_only_surrogate is True but no surrogate has been constructed yet"
             assert commEvaluator.evaluator is not None, "use_only_surrogate is True but no surrogate has been constructed yet"
             commSolver_stage = commEvaluator.evaluator.as_solver()
-            # TODO: !!! test this
         else:
             commSolver_stage = commSolver
 

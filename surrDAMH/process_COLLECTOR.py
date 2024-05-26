@@ -52,7 +52,6 @@ def run_COLLECTOR(conf: Configuration, surrogate_updater: Updater, surrogate_del
                 if not comm_s.all_snapshots_received():
                     if comm_s.snapshot_is_available():
                         snapshot = comm_s.get_snapshot_and_request_new()
-                        # TODO: likelihood
                         list_new_snapshots = [np.vstack((list_new_snapshots[j], snapshot[j])) for j in range(3)]
                         counter += 1
             num_new_snapshots += counter
@@ -62,7 +61,6 @@ def run_COLLECTOR(conf: Configuration, surrogate_updater: Updater, surrogate_del
                 break
         # add received snapshots to the surorgate model updater:
         if num_new_snapshots > 0:
-            # print("++++++++++++ new:",  num_new_snapshots, flush=True)
             no_snapshots_total += num_new_snapshots
             surrogate_updater.add_data(list_new_snapshots[0], list_new_snapshots[1], list_new_snapshots[2])
             list_new_snapshots = [np.empty((0, conf.no_parameters)), np.empty((0, conf.no_observations)), np.empty((0, 1))]
@@ -81,26 +79,16 @@ def run_COLLECTOR(conf: Configuration, surrogate_updater: Updater, surrogate_del
                 comm: CommEvaluator_collector = comms_evaluators[i]
                 if not sampler_got_last_evaluator[i]:
                     if comm.sampler_requests_evaluator():
-                        # print("COLLECTOR: sampler requests evaluator", flush=True)
                         if evaluator_instance is None:
                             evaluator_instance = surrogate_updater.get_evaluator()
-                        # add: evaluator_instance = surrogate_updater.get_evaluator()
                         comm.send_evaluator(evaluator_instance)
-                        # print("COLLECTOR - evaluator sent", no_snapshots_used, no_snapshots_total)
                         sampler_got_last_evaluator[i] = True
-                # print("COLLECTOR: no_snapshots used, total", no_snapshots_used, no_snapshots_total)
                 if no_snapshots_used > 0:
                     if comm.sampler_stops():
-                        # print("COLLECTOR: SAMPLER stopped", i, flush=True)
                         needs_evaluator[i] = False
                         if sampler_got_last_evaluator[i]:
                             comm.terminate(None)
                         else:
-                            """
-                            if evaluator_instance is None:
-                                print("COLLECTOR DEBUG", 444, flush=True)
-                                evaluator_instance = surrogate_updater.get_evaluator()
-                                """
                             comm.terminate(evaluator_instance)
     idx = 0
     for comm_s in comms_snapshots:

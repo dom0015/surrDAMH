@@ -32,12 +32,6 @@ class KDTreeEvaluator(Evaluator):
             # Use inverse distances as weights for the weighted average
             weights = 1 / distances
             weights /= np.sum(weights, axis=1, keepdims=True)  # Normalize weights to sum to 1
-            # Perform the weighted average of values from the two nearest neighbors
-            # print("???", weights.shape, self.obs[indices].shape, indices.shape)
-            # print(weights)
-            # print(weights.reshape((no_datapoints, self.no_nearest_neighbors, 1)))
-            # print(indices)
-            # print(self.obs[indices])
             weights = weights.reshape((no_datapoints, self.no_nearest_neighbors, 1))
             interpolated_values = np.sum(self.obs[indices] * weights, axis=1)
 
@@ -62,7 +56,6 @@ class KDTreeUpdater(Updater):  # initiated by COLLECTOR
 
     def add_data(self, parameters: npt.NDArray, observations: npt.NDArray, weights: npt.NDArray | None = None):
         # add new data
-        # WEIGHTS ARE NOT USED
         parameters = parameters.reshape(-1, self.no_parameters)
         observations = observations.reshape(-1, self.no_observations)
         self.par = np.vstack((self.par, parameters))

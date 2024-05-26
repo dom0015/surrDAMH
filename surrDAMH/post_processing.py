@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-# from os import listdir
 import os
 from typing import Any, Iterable, List, Literal
 
@@ -328,7 +327,7 @@ class Samples:
             bins = np.floor(np.sqrt(no_unique_samples_sum / 4))
             bins = min(bins, 100)
             bins = max(bins, 10)
-        axis.hist2d(all_x, all_y, bins=int(bins), cmap="binary")  # , density = True)
+        axis.hist2d(all_x, all_y, bins=int(bins), cmap="binary")
         axis.grid(True)
         if colorbar:
             axis.colorbar()
@@ -458,9 +457,6 @@ class Samples:
                     for i in range(no_accepted):
                         G_interp[i, :] = np.interp(grid_interp, grid, G_values[i, :])
                     G_all = np.vstack((G_all, G_interp))
-                    # param = np.array(df_samples.iloc[:, 1:self.no_parameters+1])
-                    # param = param[idx]
-                    # param_all = np.vstack((param_all, param))
                     weights = weights.reshape((-1, 1))
                     weights = np.repeat(weights, len_grid, 1)
                     x = np.repeat(grid_interp.reshape((1, -1)), no_accepted, 0)
@@ -482,18 +478,8 @@ class Samples:
         else:
             output = plt.hist2d(x_all.flatten(), G_all, bins=bins, range=hist_range, weights=weights_all.flatten(), cmap=cmap)  # , vmin=1, vmax=n_samples/10)
             plt.colorbar(output[3])
-        # img = np.flipud(output[0].transpose())
-        # img[img > 0] = 1
-        # print(img.shape)
-        # xx = output[1]
-        # yy = output[2]
-        # plt.figure()
-        # plt.imshow(img, extent=[xx[0], xx[-1], yy[0], yy[-1]], aspect='auto', cmap="viridis_r")
-
         plt.grid()
-        # lbl_fontsize = "large"
-        # plt.xlabel("time [d]", fontsize=lbl_fontsize)
-        # plt.ylabel("pressure head [m]", fontsize=lbl_fontsize)
+
         if observations is not None:
             if len_grid == 1:
                 plt.plot(observations[chosen_observations], 0, 'ro', label="observation",)
@@ -502,6 +488,7 @@ class Samples:
             plt.legend()
         return fig
 
+
 # AUTOCORRELATION:
 # Autocorrelation analysis using emcee, Foreman-Mackey,
 # adapted for the needs of the DAMH-SMU framework.
@@ -509,7 +496,6 @@ class Samples:
 # each of the chains has "n = no_parameters" components.
 # The samples in one chain form a numpy array of shape (l_i, n).
 # All samples form a python list of length N.
-
 
 class Autocorrelation:
     def __init__(self, samples: Samples, stages_to_disp: Iterable, burn_in: List[List[int]] | None = None):
@@ -588,31 +574,6 @@ class Autocorrelation:
             f = autocorr_function_mean[:, j]
             autocorr_time_mean_beta[j] = autocorr_FM(f, c)
         return autocorr_time_mean, autocorr_time_mean_beta
-
-    # def plot_autocorr_function(self, length_disp, plot_mean=False, parameters_disp=None,
-    #                            chains_disp=None, show_legend=False):
-    #     if parameters_disp is None:
-    #         parameters_disp = range(self.no_parameters)
-    #     no_parameters_disp = len(parameters_disp)
-    #     if chains_disp is None:
-    #         chains_disp = range(self.no_chains)
-    #     fig, axes = plt.subplots(1, no_parameters_disp, figsize=(12, 3), sharey=True)
-    #     for idj, j in enumerate(parameters_disp):
-    #         length_disp[idj] = min(max(self.length), length_disp[idj])
-    #     for idj, j in enumerate(parameters_disp):
-    #         for idi, i in enumerate(chains_disp):
-    #             axes[idj].plot(self.autocorr_function[i][:length_disp[idj], j], label=i)
-    #         if plot_mean:
-    #             axes[idj].plot(self.autocorr_function_mean[:, j], label="mean")
-    #         axes[idj].set_xlim(0, length_disp[idj] - 1)
-    #         if show_legend:
-    #             axes[idj].legend(loc=1)
-    #         axes[idj].set_xlabel("$par. {0}$".format(j))
-    #         axes[idj].grid(True)
-    #         if self.known_autocorr_time:
-    #             axes[idj].set_title("$\\tau_\\mathrm{{true}} = {0:.0f}$".format(self.autocorr_time_true[j]))
-    #     axes[0].set_ylabel("autocorr. function")
-    #     plt.show()
 
 
 def add_normal_dist_grid(axes, mean: List[float], sd: List[float],
