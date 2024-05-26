@@ -22,7 +22,7 @@ Input parameters $u\in\mathbb{R}^{n}$ are unknown.
 
 Additive noise is considered; therefore, the posterior pdf is given by the following formula:
 
-$f_{U|Y}\left(u|y\right)=\frac{f_{Z}\left(y-G\left(u\right)\right)f_{U}\left(u\right)}{\intop_{\mathbb{R}^{n}}f_{Z}\left(y-G\left(v\right)\right)f_{U}\left(v\right)\text{d}v}\propto\underbrace{f_{Z}\left(y-G\left(u\right)\right)}_{\text{likelihood}}\underbrace{f_{U}\left(u\right)}_{\text{prior}}$
+$f_{U|Y}\left(u|y\right)\propto{f_{Z}\left(y-G\left(u\right)\right)}{f_{U}\left(u\right)}$
 
 ## Parallel processes:
  - several Markov chains generated in parallel
