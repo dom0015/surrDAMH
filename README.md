@@ -32,7 +32,10 @@ $f_{U|Y}\left(u|y\right)\propto{f_{Z}\left(y-G\left(u\right)\right)}{f_{U}\left(
     - a solver is typically a linked numerical library
     - number of solvers is typically lower than number of chains
 
-## Usage:
+## Getting started:
+ - open repository in the Docker container (e.g. using the Dev Containers extension of Visual Studio Code)
+ - `pip install .`
+
 Before running the sampling process, it is necessary to specify:
  - configuration (basic settings, e.g. number of solvers, initial samples, ...)
  - prior
@@ -41,7 +44,9 @@ Before running the sampling process, it is necessary to specify:
  - surrogate model updater
  - list of stages
 
-See examples in the **/toy_examples** folder.
+See examples in the **toy_examples** folder, e.g.:
+ - `cd toy_examples/`
+ - `mpiexec -n 4 python3 -m mpi4py minimal_example.py`
 
 ## Surrogate models:
 The following non-intrusive surrogate models are implemented. They are constructed from snapshots $\left(u^{\left(k\right)},G\left(u^{\left(k\right)}\right)\right)$ and they can be adaptively refined during the sampling process.
