@@ -78,7 +78,7 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
             commSnapshot_stage = None
         if stage.algorithm_type == 'DAMH':  # or stage.use_only_surrogate:
             # the stage evaluates surrogate model
-            assert i > 0, "initial stage cannot use surrogate model"
+            # assert i > 0, "initial stage cannot use surrogate model"
             assert commEvaluator is not None
             commEvaluator_stage = commEvaluator
         else:
@@ -124,6 +124,7 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
             recvbuf = sendbuf.copy()
             comm_sampler.Allreduce(sendbuf, recvbuf)
             proposal_cov_adaptive = recvbuf/conf.no_samplers
+            print('Stage', alg_instance.stage.name, 'at MPI rank', rank_world, 'prop_cov', my_Prop.sd)
 
         # set initial sample for next stage:
         if not stage.is_excluded:

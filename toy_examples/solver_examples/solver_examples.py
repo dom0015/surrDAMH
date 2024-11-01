@@ -144,6 +144,23 @@ class NonlinearGeneric(Solver):
         return val*np.ones((self.no_observations,))
 
 
+class SinProdGeneric(Solver):
+    def __init__(self, solver_id=0, no_parameters=3, no_observations=3,  output_dir=None, sleep: float = 0.0):
+        self.no_parameters = no_parameters
+        self.no_observations = no_observations
+        self.sleep = sleep
+
+    def set_parameters(self, parameters: npt.NDArray):
+        self.par = parameters
+
+    def get_observations(self):
+        val = 1.0
+        time.sleep(self.sleep)
+        for i in range(self.no_parameters):
+            val = val * np.sin(self.par[i])
+        return val*np.ones((self.no_observations,))
+
+
 class Generic(Solver):
     def __init__(self, solver_id=0, no_parameters=3, no_observations=3, output_dir=None):
         self.no_parameters = no_parameters

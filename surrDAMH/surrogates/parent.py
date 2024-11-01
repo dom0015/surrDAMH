@@ -61,7 +61,7 @@ class Updater:
 
     def train(self,):
         """
-        Trains the surrogate model, e.g. neurai network.
+        Trains the surrogate model, e.g. neural network.
         Called periodically by collector, regardless of whether new data have been added.
         """
 

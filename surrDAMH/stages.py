@@ -20,6 +20,8 @@ class Stage:
     max_evaluations: int = sys.maxsize  # termination condition - total number of full model evaluations
     time_limit: float = np.inf  # termination condition - total time
     send_snapshots_to_collector: bool = True  # use snapshots from this stage for surrogate updates
+    subchain_max_length: int = 1  # only with DAMH, length of MH subchain using only surrogate
+    subchain_max_accepted: int = 0  # only with DAMH, how many proposals have to be accepted to stop subchain
     surrogate_model_updates: bool = True  # only with DAMH, surrogate changes during the stage (DAMH-SMU)
     use_only_surrogate: bool = False  # if True, surrogate is used instead of full model
     save_to_file: bool = True  # samples are saved to file

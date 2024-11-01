@@ -33,6 +33,7 @@ class Configuration:
     initial_sample_type: Literal["lhs", "prior", "user_specified"] = "prior"  # specifies how to generate initial samples
     initial_samples_distribution: Distribution | None = None  # only if initial_sample_type == "user_specified"
     lhs_scale: float | npt.NDArray = 1.0  # only if initial_sample_type == "lhs"
+    state_dependent_approximation: bool = True  # shift posterior approximation by surrogate model error in current sample
     min_snapshots_initial: int = 1  # minimal number of snapshots for the construction of initial surrogate model
     min_snapshots_to_update: int = 1  # how many snapshots (at least) have to be added to update the surrogate model
     max_collected_snapshots_per_loop: int = 1000  # maximal number of snapshots to be collected in one loop

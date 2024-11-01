@@ -128,7 +128,7 @@ class Samples:
             self.summary.to_csv(csv_filepath, index=True)
         return self.summary
 
-    def calculate_CpUS(self, list_of_stages_groups, surrogate_cost_ratio: float = 0.0):
+    def calculate_CpUS(self, list_of_stages_groups: List[List[int]], surrogate_cost_ratio: float = 0.0):
         """
         Calculates the cost per uncorrelated sample (CpUS)
         for all groups of stages. Returns extended summary.

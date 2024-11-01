@@ -68,14 +68,28 @@ class SolverSpecGeneric(SolverSpec):
         self.solver_parameters = {"no_parameters": no_parameters, "no_observations": no_observations}
 
 
+class SolverSpecSinProdGeneric(SolverSpec):
+    """
+    Serves only for test purposes.
+    Takes user-specified number of parameters (no_parameters),
+    returns constant vector of user-specified length (no_observations).
+    """
+
+    def __init__(self, no_parameters: int = 3, no_observations: int = 1, sleep: float = 0.0) -> None:
+        self.solver_module_path = "solver_examples/solver_examples.py"
+        self.solver_module_name = "solver_examples"
+        self.solver_class_name = "SinProdGeneric"
+        self.solver_parameters = {"no_parameters": no_parameters, "no_observations": no_observations, "sleep": sleep}
+
+
 class SolverSpecNonlinearGeneric(SolverSpec):
     """
     Serves only for test purposes.
     Takes user-specified number of parameters (no_parameters),
-    returns their mean in the form of a constant vector of user-specified length (no_observations).
+    returns constant vector of user-specified length (no_observations).
     """
 
-    def __init__(self, no_parameters: int = 3, no_observations: int = 2, sleep: float = 0.0) -> None:
+    def __init__(self, no_parameters: int = 3, no_observations: int = 1, sleep: float = 0.0) -> None:
         self.solver_module_path = "solver_examples/solver_examples.py"
         self.solver_module_name = "solver_examples"
         self.solver_class_name = "NonlinearGeneric"

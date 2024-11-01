@@ -3,6 +3,7 @@
 
 import os
 from typing import List
+import numpy.typing as npt
 
 from mpi4py import MPI
 
@@ -41,7 +42,8 @@ class SamplingFramework:
 
     def __init__(self, conf: Configuration, prior: Distribution, likelihood: Distribution,
                  list_of_stages: List[Stage], solver_spec: SolverSpec | None = None, solver_instance: Solver | None = None,
-                 surrogate_updater: Updater | None = None, surrogate_evaluator: Evaluator | None = None):
+                 surrogate_updater: Updater | None = None, surrogate_evaluator: Evaluator | None = None,
+                 initial_snapshots: List[npt.NDArray] | None = None):
         self.conf = conf
         self.prior = prior
         self.likelihood = likelihood
@@ -50,6 +52,7 @@ class SamplingFramework:
         self.surrogate_updater = surrogate_updater
         self.surrogate_evaluator = surrogate_evaluator
         self.solver_instance = solver_instance
+        self.initial_snapshots = initial_snapshots
 
     def run(self):
         comm_world = MPI.COMM_WORLD
@@ -64,7 +67,8 @@ class SamplingFramework:
             optional_output = surrDAMH.process_SOLVER.run_SOLVER(self.conf, self.solver_spec)
         elif rank_world == self.conf.rank_collector:
             assert self.surrogate_updater is not None
-            optional_output = surrDAMH.process_COLLECTOR.run_COLLECTOR(self.conf, surrogate_updater=self.surrogate_updater)
+            optional_output = surrDAMH.process_COLLECTOR.run_COLLECTOR(
+                self.conf, surrogate_updater=self.surrogate_updater, initial_snapshots=self.initial_snapshots)
         else:
             if self.conf.use_solvers_pool is False:
                 if self.solver_instance is None:

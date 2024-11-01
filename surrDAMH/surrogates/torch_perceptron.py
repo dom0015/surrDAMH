@@ -10,13 +10,25 @@ from surrDAMH.surrogates.parent import Evaluator, Updater
 
 
 class PyTorchMLP(nn.Module):
-    def __init__(self, input_size, output_size, hidden_layers, activation):
+    def __init__(self, input_size, output_size, hidden_layers, activation, seed):
         super(PyTorchMLP, self).__init__()
         self.input_size = input_size
         self.output_size = output_size
         self.hidden_layers = hidden_layers
         self.activation = activation
         activation_layer = self.create_activation_layer(activation)
+        if seed is not None:
+            torch.manual_seed(seed)
+            torch.cuda.manual_seed(seed)
+            torch.cuda.manual_seed_all(seed)  # if using multi-GPU setups
+            print("SEED", seed)
+        # if seed is not None:
+        #     if self.device == "cuda":
+        #         torch.cuda.manual_seed(seed)
+        #         # torch.cuda.manual_seed_all(seed)  # if using multi-GPU setups
+        #     else:
+        #         torch.manual_seed(seed)
+        #         print("SEED", seed)
         layers = [nn.Linear(input_size, hidden_layers[0]), activation_layer]
         for i in range(1, len(hidden_layers)):
             layers.append(nn.Linear(hidden_layers[i - 1], hidden_layers[i]))
@@ -44,7 +56,7 @@ class PyTorchNNEvaluator(Evaluator):
 
     def clone_model_to_cpu(self, model):
         # Create a new instance of the same class as the original model
-        model_clone = model.__class__(model.input_size, model.output_size, model.hidden_layers, model.activation)
+        model_clone = model.__class__(model.input_size, model.output_size, model.hidden_layers, model.activation, seed=None)
         # Load the state dict from the original model
         model_clone.load_state_dict(model.state_dict())
         # Move the cloned model to CPU
@@ -64,7 +76,7 @@ class PyTorchNNEvaluator(Evaluator):
 class PyTorchNNOngoingUpdater(Updater):
     def __init__(self, no_parameters, no_observations, hidden_layer_sizes=(100,), solver: Literal["adam", "lbfgs"] = "lbfgs",
                  activation='tanh', learning_rate=1e-3, iterations_batch=100, loss_target=1e-5,
-                 device: Literal["cpu", "cuda"] = "cpu", verbose: bool = False) -> None:
+                 device: Literal["cpu", "cuda"] = "cpu", verbose: bool = False, seed: int | None = None) -> None:
         self.no_parameters = no_parameters
         self.no_observations = no_observations
         self.hidden_layer_sizes = hidden_layer_sizes
@@ -74,7 +86,7 @@ class PyTorchNNOngoingUpdater(Updater):
         self.device = device
         self.verbose = verbose
 
-        self.model = PyTorchMLP(no_parameters, no_observations, hidden_layer_sizes, activation)
+        self.model = PyTorchMLP(no_parameters, no_observations, hidden_layer_sizes, activation, seed)
         self.model.to(self.device)
         if solver == "adam":
             self.optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate_init)
@@ -174,3 +186,8 @@ class PyTorchNNOngoingUpdater(Updater):
 
     def get_evaluator(self):
         return PyTorchNNEvaluator(self.no_parameters, self.no_observations, self.model)
+
+    def save_snapshots(self, path_par='torch_perceptron_par.csv',
+                       path_obs='torch_perceptron_obs.csv'):
+        np.savetxt(path_par, self.par, delimiter=',')
+        np.savetxt(path_obs, self.obs, delimiter=',')

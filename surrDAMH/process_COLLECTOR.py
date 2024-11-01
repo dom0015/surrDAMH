@@ -15,7 +15,8 @@ from surrDAMH.modules.communication import (CommEvaluator_collector,
 from surrDAMH.surrogates.parent import Updater
 
 
-def run_COLLECTOR(conf: Configuration, surrogate_updater: Updater, surrogate_delayed_init_data=None):
+def run_COLLECTOR(conf: Configuration, surrogate_updater: Updater, surrogate_delayed_init_data=None,
+                  initial_snapshots: list | None = None):
     surrogate_updater.delayed_init(surrogate_delayed_init_data)
 
     comm_world = MPI.COMM_WORLD
@@ -39,12 +40,15 @@ def run_COLLECTOR(conf: Configuration, surrogate_updater: Updater, surrogate_del
     sampler_got_last_evaluator = np.array([True] * conf.no_samplers)
 
     # related to received snapshots
-    list_new_snapshots = [np.empty((0, conf.no_parameters)), np.empty((0, conf.no_observations)), np.empty((0, 1))]
+    if initial_snapshots is None:
+        list_new_snapshots = [np.empty((0, conf.no_parameters)), np.empty((0, conf.no_observations)), np.empty((0, 1))]
+    else:
+        list_new_snapshots = initial_snapshots
 
     while any(needs_evaluator):  # while at least 1 sampling algorithm still requires updates
 
         # receiving snapshots from samplers:
-        num_new_snapshots = 0
+        num_new_snapshots = list_new_snapshots[0].shape[0]
         while True:
             # try to receive one snapshot from each sampler
             counter = 0
