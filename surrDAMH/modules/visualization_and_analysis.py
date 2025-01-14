@@ -302,7 +302,8 @@ class Samples:
         
         figsize=(6,6)
         fig = plt.figure(figsize=figsize)
-        range_ = [[0, 366], [-100, 1000]]
+        range_ = [[0, 366], [-50, 300]]
+        # range_ = [[0, 366], [200, 900]]
         # print(x_all)
         # print(G_all)
         # print(G_all.shape)
@@ -310,7 +311,8 @@ class Samples:
         # print(weights_all.shape)
         # print(np.sum(weights_all[:,0]))
         # print(np.sum(weights_all)/weights_all.shape[0])
-        quartiles = np.percentile(G_all, [5, 25, 75, 95], axis=0, method='midpoint')
+        # quartiles = np.percentile(G_all, [5, 25, 75, 95], axis=0, method='midpoint')
+        quartiles = np.percentile(G_all, [5, 95], axis=0, method='midpoint')
         # print(quartiles)
         # https://www.statisticshowto.com/choose-bin-sizes-statistics/
         # nbins = (1+ 3.322*np.log10(G_all.shape[0])).astype(int) # too small
@@ -335,14 +337,17 @@ class Samples:
         # # f.set_figheight(2)
         # plt.imshow(img,extent=[xx[0],xx[-1],yy[0],yy[-1]], cmap="copper_r")
         plt.grid()
-        lbl_fontsize = "large"
-        plt.xlabel("time [d]", fontsize=lbl_fontsize)
-        plt.ylabel("pressure head [m]", fontsize=lbl_fontsize)
+        # lbl_fontsize = "large"
+        # plt.xlabel("time [d]", fontsize=lbl_fontsize)
+        plt.xlabel("time [d]")
+        plt.ylabel("pressure head [m]")
         plt.plot(grid,observations[chosen_observations], color="cyan", label="measurement")
-        plt.plot(x_all[0], quartiles.take([0,3], axis=0).transpose(), color="black", linestyle='dashed', linewidth=0.75,
-                 label="0.05,0.95 quantile")
-        plt.plot(x_all[0], quartiles.take([1,2], axis=0).transpose(), color="black", linestyle='dotted', linewidth=0.75,
-                 label="0.25,0.75 quantile")
+        plt.plot(x_all[0], quartiles.take([0, 1], axis=0).transpose(), color="black", linestyle='dashed',
+                 linewidth=0.75, label="0.05,0.95 quantile")
+        # plt.plot(x_all[0], quartiles.take([0,3], axis=0).transpose(), color="black", linestyle='dashed', linewidth=0.75,
+        #          label="0.05,0.95 quantile")
+        # plt.plot(x_all[0], quartiles.take([1,2], axis=0).transpose(), color="black", linestyle='dotted', linewidth=0.75,
+        #          label="0.25,0.75 quantile")
 
         # plot best fit - find, interpolate, plot
         best_fit_x, best_fit_G, best_fit_norm = self.find_best_fit(folder_samples, no_parameters, observations)
