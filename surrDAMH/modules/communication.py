@@ -69,6 +69,9 @@ class CommEvaluator_sampler:
         buf = np.array([self.idx], dtype=int)
         self.comm_world.Send(buf=buf, dest=self.rank_collector, tag=TAG_STOP_UPDATING)
         evaluator = self.request_irecv.wait()
+        self.request_irecv = None
+        self.request_Isend = None
+        self.comm_world = None
         if evaluator is None:  # this means that at least one evaluator has been received before
             return self.evaluator
         return evaluator
@@ -133,11 +136,20 @@ class CommEvaluator_collector():
         wait for the last update signal.
         IF NO EVALUATOR HAVE BEEN SENT YET, MAKE SURE TO DO IT NOW.
         """
+        # Ensure any in-flight Isend from send_evaluator() has completed before
+        # exiting, to avoid abandoning the MPI request during finalization.
+        if self.isend_request is not None:
+            self.isend_request.wait()
         if self.current_idx == self.max_idx:
             self.request_update_signal.Cancel()
+            self.request_update_signal.Wait()
         else:
             self.comm_world.send(obj=last_evaluator, dest=self.rank_sampler, tag=TAG_EVALUATOR_OBJECT)
             self.request_update_signal.Wait()
+        self.request_update_signal = None
+        self.request_stop_signal = None
+        self.isend_request = None
+        self.comm_world = None
 
 
 class CommSnapshot_sampler:
@@ -183,6 +195,8 @@ class CommSnapshot_sampler:
         # sends the number of sent snapshots
         buf = np.array([self.idx-1], dtype=int)
         self.comm_world.Send(buf=buf, dest=self.rank_collector, tag=TAG_TERMINATE)
+        self.requests = []
+        self.comm_world = None
 
 
 class CommSnapshot_collector:
@@ -204,7 +218,7 @@ class CommSnapshot_collector:
         self.max_idx = np.inf
         # prepare for receiving termination signal
         self.buffer_terminate = np.zeros(shape=(1,), dtype=int)
-        self.request_terminate = self.comm_world.Irecv(buf=self.buffer_terminate, source=MPI.ANY_SOURCE, tag=TAG_TERMINATE)
+        self.request_terminate = self.comm_world.Irecv(buf=self.buffer_terminate, source=self.rank_sampler, tag=TAG_TERMINATE)
         # prepare for receiving first snapshot
         self.current_idx = TAG_FIRST_SNAPSHOT
         self.request_snapshot = self.comm_world.irecv(source=self.rank_sampler, tag=self.current_idx)
@@ -228,8 +242,10 @@ class CommSnapshot_collector:
                 self.max_idx = self.buffer_terminate[0]
                 # the sampler terminated but there may be undelivered snapshots
                 self.sampler_terminated = True
-        # if there is at least one snapshots to be received
-        if self.current_idx < self.max_idx:
+        # if there are snapshots still to be received (current_idx <= max_idx covers
+        # the case where the terminate signal arrives simultaneously with the last
+        # snapshot, which would otherwise be silently dropped with strict <)
+        if self.current_idx <= self.max_idx:
             if self.request_snapshot.get_status():
                 return True
             else:
@@ -239,6 +255,7 @@ class CommSnapshot_collector:
             self.all_snapshots_were_received = True
             # cancel the request
             self.request_snapshot.cancel()
+            self.request_snapshot.wait()
             return False
 
     def all_snapshots_received(self):
@@ -269,6 +286,10 @@ class CommSnapshot_collector:
         # and active was set to False.
         if not self.all_snapshots_were_received:
             self.request_snapshot.cancel()
+            self.request_snapshot.wait()
+        self.request_terminate = None
+        self.request_snapshot = None
+        self.comm_world = None
 
 
 class Communicator:
@@ -333,6 +354,8 @@ class SolverMPI(Communicator):
         if self.pickled_observations:
             [self.observations, solver_tag] = self.comm_world.recv(source=self.rank_solvers_pool)
         else:
+            # tag=MPI.ANY_TAG is intentional: the solver pool re-uses the request
+            # tag as the solver's convergence/error code, so we read it from status.
             self.comm_world.Recv(self.observations, source=self.rank_solvers_pool, tag=MPI.ANY_TAG, status=self.status)
             solver_tag = self.status.Get_tag()
         tmp2 = time.time() - tmp
@@ -343,3 +366,4 @@ class SolverMPI(Communicator):
         if not self.terminated:
             self.comm_world.Send(self.buffer_empty_signal, dest=self.rank_solvers_pool, tag=TAG_TERMINATE)
             self.terminated = True
+        self.comm_world = None

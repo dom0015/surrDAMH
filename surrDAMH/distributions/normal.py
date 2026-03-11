@@ -49,11 +49,6 @@ class Normal(Distribution):
         """Calculates logpdf of N(mean,sd) up to an additive constant."""
         v = self.mean - sample
         invCv = v/(self.sd**2)
-        print("v: ", v)
-        print("invCv: ", invCv)
-        print("sample: ", sample)
-        print("mean: ", self.mean)
-        print("sd: ", self.sd)
         return -0.5*np.dot(v, invCv)
 
     def calculate_logpdf_multivariate(self, sample):
