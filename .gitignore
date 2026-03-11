@@ -10,3 +10,12 @@ __pycache__/
 ratio_rejected.csv
 sampling_framework.pkl
 sampling_framework.yaml
+AUTOCORRELATION_ENHANCEMENTS.md
+DIAGNOSTICS_AND_METRICS.md
+todo.txt
+toy_examples/chain_traces.png
+toy_examples/hist_observations.png
+toy_examples/HTML_REPORT_EXTENDED_GUIDE.md
+toy_examples/QUICK_START.md
+toy_examples/report.html
+toy_examples/report.pdf

@@ -22,10 +22,11 @@ from surrDAMH.modules.tools import ensure_dir
 from surrDAMH.stages import Stage
 
 # solver example, takes 2 parameters, returns 1 observation:
-solver_spec = solver_examples.solver_spec_examples.SolverSpecExample2()
+solver_spec = solver_examples.solver_spec_examples.SolverSpecNonlinearGeneric(no_parameters=3, no_observations=3)
 
 # configuration (specification of basic settings of the sampling framework):
-conf = surrDAMH.Configuration(output_dir="out_typical_example", no_parameters=2, no_observations=1, min_snapshots_initial=4)
+conf = surrDAMH.Configuration(output_dir="out_typical_example_generic", no_parameters=3, no_observations=3, min_snapshots_initial=4, 
+                              save_snapshots_to_file=True)
 
 # choice of surrogate model:
 updater = surrDAMH.surrogates.PolynomialSklearnUpdater(no_parameters=conf.no_parameters, no_observations=conf.no_observations)
@@ -34,11 +35,13 @@ updater = surrDAMH.surrogates.PolynomialSklearnUpdater(no_parameters=conf.no_par
 # updater = surrDAMH.surrogates.PyTorchNNOngoingUpdater(no_parameters=conf.no_parameters, no_observations=conf.no_observations, hidden_layer_sizes=(20, 10))
 
 # Gaussian prior distribution:
-prior = surrDAMH.distributions.FromScipy(scipy.stats.multivariate_normal(mean=[-1.0, 1.0], cov=np.eye(2)))
+prior = surrDAMH.distributions.FromScipy(scipy.stats.multivariate_normal(mean=[-1.0, 1.0, 0.0], cov=np.eye(3)))
 
 # likelihood (additive Gaussian noise):
-observations = surrDAMH.solvers.calculate_artificial_observations(solver_spec=solver_spec, parameters=[-2, 2])
-likelihood = surrDAMH.distributions.Normal(mean=observations, sd=0.01)
+observations = surrDAMH.solvers.calculate_artificial_observations(solver_spec=solver_spec, parameters=[-2, 2, 1])
+print("Artificial observations: ", observations)
+observations = observations.flatten()
+likelihood = surrDAMH.distributions.Normal(mean=observations, sd=0.5)
 
 # sampling process stages:
 list_of_stages = []
@@ -90,7 +93,7 @@ if rank_world == 0:
     ensure_dir(path_figures)
 
     # Define custom parameter names (optional)
-    parameter_names = ["PAR1_name", "PAR2_name"]  # Example custom names for parameters
+    parameter_names = ["PAR1_name", "PAR2_name", "PAR3_name"]  # Example custom names for parameters
 
     # Generate the extended HTML report with all visualizations and statistics
     output_html = os.path.join(path_figures, "report_extended.html")
@@ -100,7 +103,7 @@ if rank_world == 0:
         chosen_observations=None,              # Indices of observations to display (None = all)
         grid=None,                             # Time/spatial grid for observations (optional)
         grid_interp=None,                      # Interpolation grid (optional)
-        bins=[20],                             # Bins for observation histograms (optional)
+        bins=None,                             # Bins for observation histograms (optional)
         chains_to_disp=None,                   # Which chains to display (None = all)
         stages_to_disp=[0, 1, 2],          # Which stages to display (list of indices)
         observations=observations,              # Actual observations (optional, for comparison)

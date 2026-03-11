@@ -1,10 +1,8 @@
 """
-Run with:
-python3 post_processing_example.py
+Example: Using html_report_extended() with the post_processing_example.py
 
-Solver is local (i.e. solvers pool is not used),
-no surrogate model is used (i.e. no collector is used
-and samples are generated using the basic MH algorithm).
+This script demonstrates how to use the new html_report_extended function
+with the existing post_processing example.
 """
 
 import os
@@ -37,7 +35,6 @@ sam = surrDAMH.SamplingFramework(conf=conf, prior=prior, likelihood=likelihood,
 sam.run()
 
 # Post processing:
-
 samples = surrDAMH.post_processing.Samples(conf.no_parameters, conf.output_dir)
 
 # print summary:
@@ -74,5 +71,47 @@ fig.savefig(file_path, bbox_inches="tight")
 
 print("Figures saved to", path_figures)
 
-# Reports:
-samples.html_report(no_observations=conf.no_observations)
+# =============================================================================
+# NEW: Generate Extended HTML Report
+# =============================================================================
+print("\n" + "="*80)
+print("Generating Extended HTML Report...")
+print("="*80 + "\n")
+
+# Define custom parameter names (optional)
+parameter_names = ["Young's Modulus", "Poisson's Ratio", "Density"]
+
+# Generate the extended HTML report with all visualizations and statistics
+output_html = os.path.join(path_figures, "report_extended.html")
+
+samples.html_report_extended(
+    no_observations=conf.no_observations,  # Number of observations (can be 0 if not using raw_data)
+    chosen_observations=None,              # Indices of observations to display (None = all)
+    grid=None,                             # Time/spatial grid for observations (optional)
+    grid_interp=None,                      # Interpolation grid (optional)
+    bins=[20],                             # Bins for observation histograms (optional)
+    chains_to_disp=None,                   # Which chains to display (None = all)
+    stages_to_disp=[0, 1, 2, 3],          # Which stages to display (list of indices)
+    observations=observation,              # Actual observations (optional, for comparison)
+    cmap="viridis_r",                      # Colormap for observation histograms
+    output_file=output_html,               # Output HTML file path
+    bins1d=20,                             # Number of bins for 1D histograms
+    bins2d=20,                             # Number of bins for 2D histograms
+    par_names=parameter_names              # Custom parameter names (optional)
+)
+
+print("\n" + "="*80)
+print(f"Extended HTML Report Generated Successfully!")
+print(f"Location: {output_html}")
+print("="*80 + "\n")
+
+print("The extended report includes:")
+print("  ✓ Summary statistics table for all stages")
+print("  ✓ Overall analysis (combined stages):")
+print("     - Posterior mean and covariance matrix")
+print("     - Parameter distribution histograms (1D and 2D)")
+print("     - Chain traces")
+print("     - Cumulative averages")
+print("  ✓ Individual stage analysis with all of the above for each stage")
+print("  ✓ Observation histograms (if available)")
+print("\nOpen the HTML file in a web browser to view the full interactive report.")

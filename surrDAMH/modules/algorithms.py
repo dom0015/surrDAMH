@@ -383,11 +383,11 @@ class Algorithm_DAMH(Algorithm_PARENT):  # initiated by SAMPLERs
         assert self.surrogate_evaluator is not None
         if parameters1 is None:
             res = self.surrogate_evaluator(np.array(argument0))
-            return res
+            return res.ravel()
         else:
             res0 = self.surrogate_evaluator(np.array(argument0))
             res1 = self.surrogate_evaluator(np.array(argument1))
-            return res0, res1
+            return res0.ravel(), res1.ravel()
 
 
 class Writer:

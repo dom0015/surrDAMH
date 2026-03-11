@@ -136,7 +136,7 @@ class NonlinearGeneric(Solver):
         self.par = parameters
 
     def get_observations(self):
-        val = np.Inf
+        val = np.inf
         time.sleep(self.sleep)
         for i in range(self.no_parameters):
             linear_function = np.sum(self.par[:i]) + np.sum(self.par[i+1:]) - self.par[i]
