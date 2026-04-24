@@ -13,8 +13,10 @@ from surrDAMH.modules.proposals import Proposal
 @dataclass
 class Stage:
     algorithm_type: Literal["MH", "DAMH"] = "MH"  # DAMH uses delayed acceptance, MH does not
+    proposal_type: Literal["RWMH", "pCN"] = "RWMH"  # RWMH = Gaussian random walk, pCN = preconditioned Crank-Nicolson
     proposal: Proposal | None = None
     proposal_sd_or_cov: float | None = None
+    pcn_beta: float = 0.5  # pCN step size, only used when proposal_type == "pCN"
     adaptive: bool = False
     max_samples: int = sys.maxsize  # termination condition - total number of samples
     max_evaluations: int = sys.maxsize  # termination condition - total number of full model evaluations
@@ -39,3 +41,6 @@ class Stage:
             self.send_snapshots_to_collector = False
         if self.algorithm_type == "MH":
             self.surrogate_model_updates = False
+        if self.proposal_type == "pCN" and self.adaptive:
+            print("Warning: adaptive mode is not supported with pCN proposal, setting adaptive=False")
+            self.adaptive = False

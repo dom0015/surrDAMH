@@ -61,15 +61,28 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
         seed0 = 10*(no_stages*rank_world + i)
 
         # choice of proposal distribution for this stage:
-        if stage.adaptive:
+        if stage.proposal_type == "pCN":
+            my_Prop = proposals.PCN(
+                no_parameters=conf.no_parameters,
+                beta=stage.pcn_beta,
+                prior_mean=prior.mean,
+                prior_sd_or_cov=prior.get_covariance(),
+                seed=seed0+1
+            )
+        elif stage.adaptive:
             my_Prop = proposals.GaussRandomWalk_adaptive(no_parameters=conf.no_parameters, seed=seed0+1)
+            if stage.proposal_sd_or_cov is None:
+                assert proposal_cov_adaptive is not None, f"proposal sd/cov not specified for stage {i}"
+                my_Prop.set_covariance(sd_or_cov=proposal_cov_adaptive)
+            else:
+                my_Prop.set_covariance(sd_or_cov=stage.proposal_sd_or_cov)
         else:
             my_Prop = proposals.GaussRandomWalk(no_parameters=conf.no_parameters, seed=seed0+1)
-        if stage.proposal_sd_or_cov is None:  # if None, result of adaptive stage is used
-            assert proposal_cov_adaptive is not None, f"proposal sd/cov not specified for stage {i}"
-            my_Prop.set_covariance(sd_or_cov=proposal_cov_adaptive)
-        else:
-            my_Prop.set_covariance(sd_or_cov=stage.proposal_sd_or_cov)
+            if stage.proposal_sd_or_cov is None:
+                assert proposal_cov_adaptive is not None, f"proposal sd/cov not specified for stage {i}"
+                my_Prop.set_covariance(sd_or_cov=proposal_cov_adaptive)
+            else:
+                my_Prop.set_covariance(sd_or_cov=stage.proposal_sd_or_cov)
 
         # choice of communicators for this stage:
         if stage.send_snapshots_to_collector:
@@ -120,11 +133,11 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
 
         # set mean proposal covariance for next stage:
         if stage.adaptive:
-            sendbuf = my_Prop.sd
+            sendbuf = my_Prop.sd_or_cov
             recvbuf = sendbuf.copy()
             comm_sampler.Allreduce(sendbuf, recvbuf)
             proposal_cov_adaptive = recvbuf/conf.no_samplers
-            print('Stage', alg_instance.stage.name, 'at MPI rank', rank_world, 'prop_cov', my_Prop.sd)
+            print('Stage', alg_instance.stage.name, 'at MPI rank', rank_world, 'prop_cov', my_Prop.sd_or_cov)
 
         # set initial sample for next stage:
         if not stage.is_excluded:

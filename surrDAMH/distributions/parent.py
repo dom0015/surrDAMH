@@ -29,6 +29,13 @@ class Distribution:
         """
         return 0.0
 
+    def get_covariance(self) -> npt.NDArray:
+        """
+        Returns the covariance matrix (2D array) or vector of variances (1D array)
+        of the distribution. Required by pCN proposal.
+        """
+        raise NotImplementedError("get_covariance() not implemented for " + type(self).__name__)
+
     def rvs(self) -> npt.NDArray:
         """
         Returns a random sample from the distribution.

@@ -57,6 +57,13 @@ class Normal(Distribution):
         invCv = np.linalg.solve(self.cov, v)
         return -0.5*np.dot(v, invCv)
 
+    def get_covariance(self) -> npt.NDArray:
+        """Returns covariance matrix or vector of standard deviations."""
+        if hasattr(self, 'cov'):
+            return self.cov
+        else:
+            return self.sd
+
     def calculate_rvs_uncorrelated(self):
         """Returns a random sample from N(mean,sd)."""
         return np.random.randn(self.n) * self.sd + self.mean

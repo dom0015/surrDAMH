@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import numpy as np
+import scipy.stats as stats
 
 import surrDAMH.distributions.transformations as transformations
 from surrDAMH.distributions.parent import Distribution
@@ -13,6 +14,10 @@ class UnivariateComponent:
 
     def transform(self, parameter):
         pass
+
+    def pdf(self, x):
+        """Evaluate the marginal prior PDF at value(s) *x* in transformed space."""
+        raise NotImplementedError
 
 
 class PriorIndependentComponents(Distribution):
@@ -46,6 +51,10 @@ class PriorIndependentComponents(Distribution):
         """
         return -0.5*np.dot(sample, sample)
 
+    def get_covariance(self):
+        """Returns vector of standard deviations (ones for N(0,I))."""
+        return np.ones(self.no_parameters)
+
     def rvs(self):
         """
         Returns a random sample from N(zeros,ones).
@@ -65,6 +74,9 @@ class Uniform(UnivariateComponent):
     def transform(self, parameter):
         return transformations.normal_to_uniform(parameter, a=self.a, b=self.b, mu=0, sigma=1)
 
+    def pdf(self, x):
+        return stats.uniform.pdf(x, loc=self.a, scale=self.b - self.a)
+
 
 class Lognormal(UnivariateComponent):
     """
@@ -78,10 +90,13 @@ class Lognormal(UnivariateComponent):
     def transform(self, parameter):
         return transformations.normal_to_lognormal(parameter, mu=self.mu, sigma=self.sigma)
 
+    def pdf(self, x):
+        return stats.lognorm.pdf(x, s=self.sigma, scale=np.exp(self.mu))
+
 
 class Beta(UnivariateComponent):
     """
-    Lognormal(mu,sigma)
+    Beta(alpha,beta)
     """
 
     def __init__(self, alpha=2, beta=2):
@@ -90,6 +105,9 @@ class Beta(UnivariateComponent):
 
     def transform(self, parameter):
         return transformations.normal_to_beta(parameter, mu=0, sigma=1, alpha=self.alpha, beta=self.beta)
+
+    def pdf(self, x):
+        return stats.beta.pdf(x, self.alpha, self.beta)
 
 
 class Normal(UnivariateComponent):
@@ -103,3 +121,6 @@ class Normal(UnivariateComponent):
 
     def transform(self, parameter):
         return parameter*self.sigma + self.mu
+
+    def pdf(self, x):
+        return stats.norm.pdf(x, loc=self.mu, scale=self.sigma)

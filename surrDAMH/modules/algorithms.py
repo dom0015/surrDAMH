@@ -28,9 +28,22 @@ class Sample:
     parameters: npt.NDArray
     observations: npt.NDArray | None = None  # G(parameters)
     observations_approx: npt.NDArray | None = None  # Surrogate(parameters)
-    log_posterior: float | None = None  # logarithm of posterior
-    log_posterior_approx: float | None = None  # logarithm of approximate posterior
+    log_likelihood: float | None = None
+    log_prior: float | None = None
+    log_likelihood_approx: float | None = None
     solver_tag: int = 0
+
+    @property
+    def log_posterior(self) -> float | None:
+        if self.log_likelihood is None or self.log_prior is None:
+            return None
+        return self.log_likelihood + self.log_prior
+
+    @property
+    def log_posterior_approx(self) -> float | None:
+        if self.log_likelihood_approx is None or self.log_prior is None:
+            return None
+        return self.log_likelihood_approx + self.log_prior
 
     # copy method:
     def copy(self):
@@ -46,8 +59,9 @@ class Sample:
         new_instance = type(self)(parameters=self.parameters.copy(),
                                   observations=observations,
                                   observations_approx=observations_approx,
-                                  log_posterior=self.log_posterior,
-                                  log_posterior_approx=self.log_posterior_approx,
+                                  log_likelihood=self.log_likelihood,
+                                  log_prior=self.log_prior,
+                                  log_likelihood_approx=self.log_likelihood_approx,
                                   solver_tag=self.solver_tag)
         return new_instance
 
@@ -91,7 +105,7 @@ class Algorithm_PARENT:
                 self.current.observations, self.current.solver_tag = result
             else:
                 self.current.observations = result
-            self.current.log_posterior = self.get_log_posterior(self.current.parameters, self.current.observations, self.current.solver_tag)
+            self.current.log_likelihood, self.current.log_prior = self.get_log_posterior(self.current.parameters, self.current.observations, self.current.solver_tag)
 
     def request_observations(self) -> None:
         self.commSolver.set_parameters(self.prior.transform(self.proposed.parameters))
@@ -100,7 +114,7 @@ class Algorithm_PARENT:
             self.proposed.observations, self.proposed.solver_tag = result
         else:
             self.proposed.observations = result
-        self.proposed.log_posterior = self.get_log_posterior(self.proposed.parameters, self.proposed.observations, self.proposed.solver_tag)
+        self.proposed.log_likelihood, self.proposed.log_prior = self.get_log_posterior(self.proposed.parameters, self.proposed.observations, self.proposed.solver_tag)
 
     def if_accepted(self) -> None:
         self.current_sample_to_file()
@@ -117,13 +131,13 @@ class Algorithm_PARENT:
             self.send_to_collector(sample=self.proposed, weight=0)
         self.raw_data_to_file(type="rejected", tag=self.current.solver_tag, observations=self.proposed.observations)
 
-    def get_log_posterior(self, parameters: npt.NDArray, observation: npt.NDArray, solver_tag: int = 0) -> float:
+    def get_log_posterior(self, parameters: npt.NDArray, observation: npt.NDArray, solver_tag: int = 0) -> tuple[float, float]:
+        """Returns (log_likelihood, log_prior)."""
         if solver_tag < 0:
-            return -np.inf
+            return -np.inf, -np.inf
         log_likelihood = self.likelihood.logpdf(observation)
         log_prior = self.prior.logpdf(parameters)
-        res = log_likelihood + log_prior
-        return res
+        return log_likelihood, log_prior
 
     def sample_acceptance_log(self, log_acceptance_probability):
         temp = self._generator.uniform(0.0, 1.0)
@@ -178,9 +192,11 @@ class Algorithm_MH(Algorithm_PARENT):  # initiated by SAMPLERs
             parameters = self.proposal.propose_sample(self.current.parameters)
             self.proposed = Sample(parameters=parameters)
             self.request_observations()
-            assert self.proposed.log_posterior is not None
-            assert self.current.log_posterior is not None
-            log_acceptance_probability_exact = self.proposal.get_log_acceptance_probability(self.proposed.log_posterior, self.current.log_posterior)
+            assert self.proposed.log_likelihood is not None
+            assert self.current.log_likelihood is not None
+            log_acceptance_probability_exact = self.proposal.get_log_acceptance_probability(
+                self.proposed.log_likelihood, self.current.log_likelihood,
+                self.proposed.log_prior, self.current.log_prior)
             acceptance_probability = min(1.0, np.exp(log_acceptance_probability_exact))
             self.proposal.adapt(proposed_sample=self.proposed.parameters, acceptance_probability=acceptance_probability)
             if self.sample_acceptance_log(log_acceptance_probability_exact):
@@ -193,98 +209,6 @@ class Algorithm_MH(Algorithm_PARENT):  # initiated by SAMPLERs
         self.finalize()
 
 
-class Algorithm_DAMH_old(Algorithm_PARENT):  # initiated by SAMPLERs
-    def run(self):
-        # calculate approximate observations and posterior for current (initial) sample:
-        assert self.commEvaluator is not None
-        assert self.stage.subchain_max_accepted == 1 or self.stage.subchain_max_length == 1
-        self.surrogate_evaluator = self.commEvaluator.evaluator
-        if self.surrogate_evaluator is None:
-            self.surrogate_evaluator = self.commEvaluator.get_evaluator()
-            self.commEvaluator.request_evaluator()
-        observation_approx_current: npt.NDArray = self.get_approximate_observations(self.current.parameters)
-        log_posterior_approx_current = self.get_log_posterior(self.current.parameters, observation_approx_current)
-
-        for i in range(self.stage.max_samples):
-            preaccepted = False
-            counter_preaccepted = 0
-            subchain_MH_current_parameters = self.current.parameters.copy()
-            for _ in range(self.stage.subchain_max_length):  # MH using only surrogate
-                surrogate_evaluator_changed = False
-                subchain_MH_proposed_parameters = self.proposal.propose_sample(subchain_MH_current_parameters)
-                if self.stage.surrogate_model_updates:
-                    if self.commEvaluator.evaluator_is_available():
-                        self.surrogate_evaluator = self.commEvaluator.get_evaluator()
-                        self.commEvaluator.request_evaluator()
-                        surrogate_evaluator_changed = True
-                # if the surrogate model changed, it it necessary to recalculate approximate observation for current sample
-                if surrogate_evaluator_changed:
-                    observation_approx_current, observation_approx_proposed = self.get_approximate_observations(
-                        self.current.parameters, subchain_MH_proposed_parameters)
-                    log_posterior_approx_current = self.get_log_posterior(self.current.parameters, observation_approx_current)
-                else:
-                    observation_approx_proposed = self.get_approximate_observations(subchain_MH_proposed_parameters)
-
-                # state-dependent approximation (approximation shifted by surrogate model error in current sample):
-                if self.conf.state_dependent_approximation:
-                    observation_approx_proposed = observation_approx_proposed + self.current.observations - observation_approx_current
-                    log_posterior_approx_current = self.get_log_posterior(self.current.parameters, self.current.observations)
-                    print(observation_approx_proposed, self.current.observations, observation_approx_current, self.current.observations - observation_approx_current)
-
-                log_posterior_approx_proposed = self.get_log_posterior(subchain_MH_proposed_parameters, observation_approx_proposed)
-                log_posterior_ratio_approx = self.proposal.get_log_acceptance_probability(log_posterior_approx_proposed, log_posterior_approx_current)
-                if self.sample_acceptance_log(log_posterior_ratio_approx):  # sample in MH subchain accepted
-                    preaccepted = True
-                    self.proposed = Sample(parameters=subchain_MH_proposed_parameters)
-                    subchain_MH_current_parameters = self.proposed.parameters.copy()
-                    observation_approx_current = observation_approx_proposed
-                    log_posterior_approx_current = log_posterior_approx_proposed
-
-            if preaccepted:
-                counter_preaccepted += 1
-            if counter_preaccepted == self.stage.subchain_max_accepted:  # at least one proposal of the subchain was acepted
-                counter_preaccepted = 0
-                self.proposed.parameters = subchain_MH_current_parameters
-                self.request_observations()
-                log_acceptance_probability_exact = self.proposal.get_log_acceptance_probability(self.proposed.log_posterior, self.current.log_posterior)
-                row = [i] + [self.proposed.log_posterior] + [log_posterior_approx_proposed]
-                if self.sample_acceptance_log(log_acceptance_probability_exact - log_posterior_ratio_approx):
-                    self.monitor(data_name="accepted", row=row, condition=self.stage.save_to_file)
-                    self.if_accepted()
-                else:
-                    self.monitor(data_name="rejected", row=row, condition=self.stage.save_to_file)
-                    self.if_rejected()
-            else:
-                self.no_prerejected += 1
-                self.no_rejected_current += 1
-                self.raw_data_to_file(type="prerejected", tag=0, observations=observation_approx_proposed)
-            if time.time() - self.time_start > self.stage.time_limit:
-                break
-            if (self.no_rejected + self.no_accepted) >= self.stage.max_evaluations:
-                break
-        self.finalize()
-
-    def get_approximate_observations(self, parameters0: npt.NDArray, parameters1: npt.NDArray | None = None):
-        if self.conf.transform_before_surrogate:
-            par0_tr = self.prior.transform(parameters0.copy())
-            argument0 = [par0_tr]
-            if parameters1 is not None:
-                par1_tr = self.prior.transform(parameters1.copy())
-                argument1 = [par1_tr]
-        else:
-            argument0 = [parameters0.copy()]
-            if parameters1 is not None:
-                argument1 = [parameters1.copy()]
-        assert self.surrogate_evaluator is not None
-        if parameters1 is None:
-            res = self.surrogate_evaluator(np.array(argument0))
-            return res
-        else:
-            res0 = self.surrogate_evaluator(np.array(argument0))
-            res1 = self.surrogate_evaluator(np.array(argument1))
-            return res0, res1
-
-
 class Algorithm_DAMH(Algorithm_PARENT):  # initiated by SAMPLERs
     def run(self):
         # calculate approximate observations and posterior for current (initial) sample:
@@ -294,7 +218,7 @@ class Algorithm_DAMH(Algorithm_PARENT):  # initiated by SAMPLERs
             self.surrogate_evaluator = self.commEvaluator.get_evaluator()
             self.commEvaluator.request_evaluator()
         self.current.observations_approx: npt.NDArray = self.get_observations_approx(self.current.parameters)
-        self.current.log_posterior_approx = self.get_log_posterior(self.current.parameters, self.current.observations_approx)
+        self.current.log_likelihood_approx, self.current.log_prior = self.get_log_posterior(self.current.parameters, self.current.observations_approx)
 
         if self.stage.subchain_max_accepted > 0:
             c_max = self.stage.subchain_max_accepted
@@ -322,7 +246,7 @@ class Algorithm_DAMH(Algorithm_PARENT):  # initiated by SAMPLERs
                     subchain_current.observations_approx, subchain_proposed.observations_approx = self.get_observations_approx(
                         subchain_current.parameters, subchain_proposed.parameters)
                     self.current.observations_approx = self.get_observations_approx(self.current.parameters)
-                    self.current.log_posterior_approx = self.get_log_posterior(self.current.parameters, self.current.observations_approx)
+                    self.current.log_likelihood_approx, _ = self.get_log_posterior(self.current.parameters, self.current.observations_approx)
                 else:
                     subchain_proposed.observations_approx = self.get_observations_approx(subchain_proposed.parameters)
                 assert subchain_proposed.observations_approx is not None
@@ -330,29 +254,33 @@ class Algorithm_DAMH(Algorithm_PARENT):  # initiated by SAMPLERs
                 # state-dependent approximation (approximation shifted by surrogate model error in current sample):
                 if self.conf.state_dependent_approximation:
                     observations_approx_shifted = subchain_proposed.observations_approx + self.current.observations - self.current.observations_approx
-                    subchain_proposed.log_posterior_approx = self.get_log_posterior(subchain_proposed.parameters, observations_approx_shifted)
-                    subchain_current.log_posterior_approx = self.get_log_posterior(subchain_current.parameters, self.current.observations)
+                    subchain_proposed.log_likelihood_approx, subchain_proposed.log_prior = self.get_log_posterior(subchain_proposed.parameters, observations_approx_shifted)
+                    subchain_current.log_likelihood_approx, subchain_current.log_prior = self.get_log_posterior(subchain_current.parameters, self.current.observations)
                 else:  # standard approximation without shifting:
-                    subchain_proposed.log_posterior_approx = self.get_log_posterior(subchain_proposed.parameters, subchain_proposed.observations_approx)
-                    subchain_current.log_posterior_approx = self.get_log_posterior(subchain_current.parameters, subchain_current.observations_approx)
+                    subchain_proposed.log_likelihood_approx, subchain_proposed.log_prior = self.get_log_posterior(subchain_proposed.parameters, subchain_proposed.observations_approx)
+                    subchain_current.log_likelihood_approx, subchain_current.log_prior = self.get_log_posterior(subchain_current.parameters, subchain_current.observations_approx)
 
                 log_acceptance_prob_approx = self.proposal.get_log_acceptance_probability(
-                    subchain_proposed.log_posterior_approx, subchain_current.log_posterior_approx)
+                    subchain_proposed.log_likelihood_approx, subchain_current.log_likelihood_approx,
+                    subchain_proposed.log_prior, subchain_current.log_prior)
                 if self.sample_acceptance_log(log_acceptance_prob_approx):  # sample in MH subchain accepted
                     counter_subchain += 1
                     subchain_current = subchain_proposed.copy()
             self.proposed = subchain_current.copy()
             if counter_subchain > 0:  # at least one proposal of the subchain was accepted
                 self.request_observations()
-                assert self.proposed.log_posterior is not None
-                assert self.current.log_posterior is not None
-                log_acceptance_prob_exact = self.proposal.get_log_acceptance_probability(self.proposed.log_posterior, self.current.log_posterior)
+                assert self.proposed.log_likelihood is not None
+                assert self.current.log_likelihood is not None
+                log_acceptance_prob_exact = self.proposal.get_log_acceptance_probability(
+                    self.proposed.log_likelihood, self.current.log_likelihood,
+                    self.proposed.log_prior, self.current.log_prior)
                 acceptance_probability = min(1.0, np.exp(log_acceptance_prob_exact))
                 self.proposal.adapt(proposed_sample=self.proposed.parameters, acceptance_probability=acceptance_probability)  # TODO
                 row = [k] + [self.proposed.log_posterior] + [self.proposed.log_posterior_approx]
-                assert self.proposed.log_posterior_approx is not None
+                assert self.proposed.log_likelihood_approx is not None
                 log_acceptance_prob_approx = self.proposal.get_log_acceptance_probability(
-                    self.proposed.log_posterior_approx, self.current.log_posterior_approx)
+                    self.proposed.log_likelihood_approx, self.current.log_likelihood_approx,
+                    self.proposed.log_prior, self.current.log_prior)
                 if self.sample_acceptance_log(log_acceptance_prob_exact - log_acceptance_prob_approx):
                     self.monitor(data_name="accepted", row=row, condition=self.stage.save_to_file)
                     self.if_accepted()

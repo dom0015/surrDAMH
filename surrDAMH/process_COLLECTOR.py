@@ -6,12 +6,16 @@ Created on Thu Nov  7 13:26:55 2019
 @author: simona
 """
 
+import csv
+import os
+
 import numpy as np
 from mpi4py import MPI
 
 from surrDAMH.configuration import Configuration
 from surrDAMH.modules.communication import (CommEvaluator_collector,
                                             CommSnapshot_collector)
+from surrDAMH.modules.tools import ensure_dir
 from surrDAMH.surrogates.parent import Updater
 
 
@@ -45,6 +49,11 @@ def run_COLLECTOR(conf: Configuration, surrogate_updater: Updater, surrogate_del
     else:
         list_new_snapshots = initial_snapshots
 
+    # surrogate quality monitoring:
+    monitoring_evaluator = None  # evaluator used for out-of-sample quality assessment
+    surrogate_quality_csv_path = os.path.join(conf.output_dir, "sampling_output", "surrogate_quality.csv")
+    surrogate_quality_rows = []  # accumulate rows: [no_snapshots_total, no_new_snapshots, rmse, max_abs_error]
+
     while any(needs_evaluator):  # while at least 1 sampling algorithm still requires updates
 
         # receiving snapshots from samplers:
@@ -63,6 +72,24 @@ def run_COLLECTOR(conf: Configuration, surrogate_updater: Updater, surrogate_del
                 break
             if num_new_snapshots > conf.max_collected_snapshots_per_loop:
                 break
+
+        # surrogate quality monitoring: evaluate new snapshots with current evaluator
+        # before adding them to the training set (out-of-sample assessment)
+        if num_new_snapshots > 0 and monitoring_evaluator is not None:
+            try:
+                new_parameters = list_new_snapshots[0]
+                true_observations = list_new_snapshots[1]
+                predicted_observations = monitoring_evaluator(new_parameters)
+                predicted_observations = predicted_observations.reshape(true_observations.shape)
+                errors = true_observations - predicted_observations
+                rmse = float(np.sqrt(np.mean(errors ** 2)))
+                max_abs_error = float(np.max(np.abs(errors)))
+                surrogate_quality_rows.append([no_snapshots_total, num_new_snapshots, rmse, max_abs_error])
+                print(f"Surrogate quality (out-of-sample): RMSE={rmse:.4e}, MaxAbsErr={max_abs_error:.4e}, "
+                      f"snapshots_total={no_snapshots_total}, batch_size={num_new_snapshots}", flush=True)
+            except Exception as e:
+                print(f"Surrogate quality monitoring error: {e}", flush=True)
+
         # add received snapshots to the surorgate model updater:
         if num_new_snapshots > 0:
             no_snapshots_total += num_new_snapshots
@@ -76,15 +103,14 @@ def run_COLLECTOR(conf: Configuration, surrogate_updater: Updater, surrogate_del
             no_snapshots_used = no_snapshots_total
             # evaluator changed
             sampler_got_last_evaluator = [False] * conf.no_samplers
-            evaluator_instance = None
+            evaluator_instance = surrogate_updater.get_evaluator()
+            monitoring_evaluator = evaluator_instance  # update monitoring evaluator
         # send evaluator to samplers:
         for i in range(conf.no_samplers):
             if needs_evaluator[i]:
                 comm: CommEvaluator_collector = comms_evaluators[i]
                 if not sampler_got_last_evaluator[i]:
                     if comm.sampler_requests_evaluator():
-                        if evaluator_instance is None:
-                            evaluator_instance = surrogate_updater.get_evaluator()
                         comm.send_evaluator(evaluator_instance)
                         sampler_got_last_evaluator[i] = True
                 if no_snapshots_used > 0:
@@ -94,6 +120,16 @@ def run_COLLECTOR(conf: Configuration, surrogate_updater: Updater, surrogate_del
                             comm.terminate(None)
                         else:
                             comm.terminate(evaluator_instance)
+
+    # save surrogate quality metrics to CSV:
+    if len(surrogate_quality_rows) > 0:
+        ensure_dir(os.path.dirname(surrogate_quality_csv_path))
+        with open(surrogate_quality_csv_path, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["snapshots_total", "batch_size", "rmse", "max_abs_error"])
+            writer.writerows(surrogate_quality_rows)
+        print(f"Surrogate quality metrics saved to {surrogate_quality_csv_path}", flush=True)
+
     idx = 0
     for comm_s in comms_snapshots:
         idx += 1
