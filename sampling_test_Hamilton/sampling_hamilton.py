@@ -40,7 +40,7 @@ import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from toy_examples.solver_examples import solver_examples
 
-RUN = True
+RUN = False
 LOAD_SURROGATE_STATE = False
 SAVE_SURROGATE_STATE = True
 SURROGATE_TEST_SET_SIZE = 128
@@ -263,9 +263,8 @@ if USE_SURROGATE_RESTART:
         algorithm_type="MH",
         proposal_type="pCN",
         pcn_beta=0.8,
-        time_limit=60 * 5,
+        time_limit=60 * 1,
         surrogate_model_updates=True,
-        send_snapshots_to_collector=False,
     ))
 else:
     # Stage 1 — MH: burn-in + initial surrogate construction
@@ -273,29 +272,26 @@ else:
         algorithm_type="MH",
         proposal_type="pCN",
         pcn_beta=0.8,
-        time_limit=60 * 5,  # 1 minute
+        time_limit=60 * 1,  # 1 minute
         surrogate_model_updates=True,
-        send_snapshots_to_collector=False,
     ))
 list_of_stages.append(Stage(
     algorithm_type="DAMH",
     proposal_type="Hamiltonian",
-    time_limit=60 * 10,  # 3 hours
+    time_limit=60 * 1,  # 3 hours
     hamiltonian_num_steps=20,
     hamiltonian_step_size=0.1,
     subchain_max_length=20,
-    surrogate_model_updates=False,
-    send_snapshots_to_collector=False,
+    surrogate_model_updates=True,
 ))
 list_of_stages.append(Stage(
     algorithm_type="DAMH",
     proposal_type="HamiltonianInfinite",
-    time_limit=60 * 10,  # 3 hours
+    time_limit=60 * 1,  # 3 hours
     hamiltonian_num_steps=20,
     hamiltonian_step_size=0.1,
     subchain_max_length=20,
     surrogate_model_updates=False,
-    send_snapshots_to_collector=False,
 ))
 """list_of_stages.append(Stage(
     algorithm_type="DAMH",
