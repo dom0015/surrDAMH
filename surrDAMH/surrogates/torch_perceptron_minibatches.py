@@ -123,7 +123,7 @@ class PyTorchNNEvaluator(Evaluator):
         self.use_gradients = enabled
 
 
-class PyTorchNNOngoingUpdater(Updater):
+class PyTorchNNOngoingUpdater2(Updater):
     def __init__(
         self,
         no_parameters,
