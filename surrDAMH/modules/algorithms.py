@@ -6,22 +6,23 @@ Created on Tue Oct 22 15:00:39 2019
 @author: simona
 """
 
-import csv
-import os
 import time
 from dataclasses import dataclass
-from typing import Any, List
+from typing import Any, List, cast
 
 import numpy as np
 import numpy.typing as npt
 
-from surrDAMH.configuration import Configuration
 from surrDAMH.distributions.parent import Distribution
-from surrDAMH.modules.communication import (CommEvaluator_sampler,
-                                            CommSnapshot_sampler, Communicator)
+from surrDAMH.modules.algorithm_interfaces import (AlgorithmConfiguration,
+                                                   EvaluatorProvider,
+                                                   ObservationProvider,
+                                                   SnapshotCollector)
+from surrDAMH.modules.monitoring import SamplingOutputMonitor
 from surrDAMH.modules.proposals import Proposal
 from surrDAMH.stages import Stage
 
+from surrDAMH.modules.tools import evaluate_on_a_grid
 
 @dataclass
 class Sample:
@@ -66,238 +67,156 @@ class Sample:
         return new_instance
 
 
-class Algorithm_PARENT:
+class AlgorithmBase:
     def __init__(self, stage: Stage, proposal: Proposal, initial_sample: Sample, rank_world: int,
-                 conf: Configuration, prior: Distribution, likelihood: Distribution,
-                 commSolver: Communicator, commSnapshot: CommSnapshot_sampler | None = None,
-                 commEvaluator: CommEvaluator_sampler | None = None, seed: int = 0) -> None:
+                 conf: AlgorithmConfiguration, prior: Distribution, likelihood: Distribution,
+                 observation_provider: ObservationProvider, snapshot_collector: SnapshotCollector | None = None,
+                 evaluator_provider: EvaluatorProvider | None = None, seed: int = 0) -> None:
         self.stage = stage
         self.proposal = proposal
-        # self.current = Sample(parameters=initial_sample)
         self.current = initial_sample
         self.rank_world = rank_world
         self.conf = conf
         self.prior = prior
         self.likelihood = likelihood
-        self.commSolver = commSolver
-        self.commSnapshot = commSnapshot
-        self.commEvaluator = commEvaluator
+        self.observation_provider = observation_provider
+        self.snapshot_collector = snapshot_collector
+        self.evaluator_provider = evaluator_provider
         self.seed = seed
-        if self.commSnapshot is not None and stage.send_snapshots_to_collector:
+        if self.snapshot_collector is not None and stage.send_snapshots_to_collector:
             self.send_to_collector = self._send_to_collector
         else:
             self.send_to_collector = self._empty_function
-        self.no_accepted = 0
-        self.no_prerejected = 0
-        self.no_rejected = 0
-        self.no_rejected_current = 0
+        self.counter_accepted = 0
+        self.counter_prerejected = 0
+        self.counter_rejected = 0
+        self.counter_rejected_current = 0
         self.proposed: Sample
         self._generator = np.random.RandomState(seed)
-        self.monitor = Monitor(output_dir=self.conf.output_dir, stage=stage, basename="rank" + str(self.rank_world).zfill(4) + ".csv")
-        self.prepare()
+        self.monitor = SamplingOutputMonitor(
+            output_dir=self.conf.output_dir,
+            stage=stage,
+            basename="rank" + str(self.rank_world).zfill(4) + ".csv",
+        )
+        self._prepare_run()
+        self._initialize_current_approximation()
 
-    def prepare(self) -> None:
+    def _evaluate_sample(self, sample: Sample) -> None:
+        """Evaluate full-model observations and posterior terms for one sample."""
+        self.observation_provider.set_parameters(self.prior.transform(sample.parameters))
+        result = self.observation_provider.get_observations()
+        if isinstance(result, tuple):
+            sample.observations, sample.solver_tag = result
+        else:
+            sample.observations = result
+            sample.solver_tag = 0
+        assert sample.observations is not None
+        sample.log_likelihood, sample.log_prior = self._compute_log_posterior_terms(
+            sample.parameters,
+            sample.observations,
+            sample.solver_tag,
+        )
+
+    def _prepare_run(self) -> None:
         self.time_start = time.time()
         if self.current.observations is None:
-            self.commSolver.set_parameters(self.prior.transform(self.current.parameters))
-            result = self.commSolver.get_observations()
-            if isinstance(result, tuple):
-                self.current.observations, self.current.solver_tag = result
+            self._evaluate_sample(self.current)
+
+    def _evaluate_proposed_sample(self) -> None:
+        self._evaluate_sample(self.proposed)
+
+    def _propose_new_sample(self, current_parameters: npt.NDArray) -> Sample:
+        return Sample(parameters=self.proposal.propose_sample(current_parameters))
+
+    def _emit_current_state(self, weight: float) -> None:
+        """Write/forward the current chain state before leaving it."""
+        self._record_current_sample()
+        self.send_to_collector(sample=self.current, weight=weight)
+
+    def _record_proposed_snapshot(self, state_type: str, tag: int, observations: npt.NDArray | None) -> None:
+        """Record information about the currently proposed state (with observations or approximate observations)."""
+        if self.conf.save_snapshots_to_file:
+            if self.conf.transform_before_saving:
+                row = [state_type] + list(self.prior.transform(self.proposed.parameters))
             else:
-                self.current.observations = result
-            self.current.log_likelihood, self.current.log_prior = self.get_log_posterior(self.current.parameters, self.current.observations, self.current.solver_tag)
+                row = [state_type] + list(self.proposed.parameters)
+            row += [tag]
+            if observations is not None:
+                row += list(observations.flatten())
+            self.monitor(data_name="raw_data", row=row)
 
-    def request_observations(self) -> None:
-        self.commSolver.set_parameters(self.prior.transform(self.proposed.parameters))
-        result = self.commSolver.get_observations()
-        if isinstance(result, tuple):
-            self.proposed.observations, self.proposed.solver_tag = result
-        else:
-            self.proposed.observations = result
-        self.proposed.log_likelihood, self.proposed.log_prior = self.get_log_posterior(self.proposed.parameters, self.proposed.observations, self.proposed.solver_tag)
-
-    def if_accepted(self) -> None:
-        self.current_sample_to_file()
-        self.send_to_collector(sample=self.current, weight=self.no_rejected_current+1)
-        self.no_accepted += 1
-        self.no_rejected_current = 0
+    def _transition_to_accepted(self) -> None:
+        """Update chain state and counters after accepting the proposal."""
+        self.counter_accepted += 1
+        self.counter_rejected_current = 0
         self.current = self.proposed.copy()
-        self.raw_data_to_file(type="accepted", tag=self.current.solver_tag, observations=self.current.observations)
 
-    def if_rejected(self):
-        self.no_rejected += 1
-        self.no_rejected_current += 1
+    def _transition_to_rejected(self) -> None:
+        """Update chain state and counters after rejecting the proposal."""
+        self.counter_rejected += 1
+        self.counter_rejected_current += 1
+
+    def _transition_to_prerejected(self) -> None:
+        """Update counters when DAMH rejects before full-model evaluation."""
+        self.counter_prerejected += 1
+        self.counter_rejected_current += 1
+
+    def _handle_acceptance(self) -> None:
+        self._emit_current_state(weight=self.counter_rejected_current + 1)
+        self._transition_to_accepted()
+        self._record_proposed_snapshot(state_type="accepted", tag=self.proposed.solver_tag, observations=self.proposed.observations)
+
+    def _handle_rejection(self) -> None:
+        self._transition_to_rejected()
         if not self.current.solver_tag < 0:
             self.send_to_collector(sample=self.proposed, weight=0)
-        self.raw_data_to_file(type="rejected", tag=self.current.solver_tag, observations=self.proposed.observations)
+        self._record_proposed_snapshot(state_type="rejected", tag=self.proposed.solver_tag, observations=self.proposed.observations)
 
-    def get_log_posterior(self, parameters: npt.NDArray, observation: npt.NDArray, solver_tag: int = 0) -> tuple[float, float]:
-        """Returns (log_likelihood, log_prior)."""
+    def _compute_log_posterior_terms(self, parameters: npt.NDArray, observation: npt.NDArray,
+                                     solver_tag: int = 0) -> tuple[float, float]:
+        """Returns ``(log_likelihood, log_prior)`` for one parameter/observation pair."""
         if solver_tag < 0:
             return -np.inf, -np.inf
         log_likelihood = self.likelihood.logpdf(observation)
         log_prior = self.prior.logpdf(parameters)
         return log_likelihood, log_prior
 
-    def sample_acceptance_log(self, log_acceptance_probability):
+    def _draw_acceptance_decision(self, log_acceptance_probability: float) -> bool:
         temp = self._generator.uniform(0.0, 1.0)
-        if np.log(temp) < log_acceptance_probability:
+        if np.log(temp) < log_acceptance_probability + np.log(self.stage.artificial_acceptance_multiplicator):
             return True  # accepted
         else:
             return False  # rejected
 
-    def current_sample_to_file(self):
+    def _record_current_sample(self) -> None:
         if self.conf.transform_before_saving:
-            row: List[Any] = [1+self.no_rejected_current] + list(self.prior.transform(self.current.parameters))
+            row: List[Any] = [1+self.counter_rejected_current] + list(self.prior.transform(self.current.parameters))
         else:
-            row: List[Any] = [1+self.no_rejected_current] + list(self.current.parameters)
+            row: List[Any] = [1+self.counter_rejected_current] + list(self.current.parameters)
         row.append(self.current.log_posterior)
         self.monitor(data_name="samples", row=row, condition=self.stage.save_to_file)
 
-    def raw_data_to_file(self, type: str, tag, observations):
-        if self.conf.save_snapshots_to_file:
-            if self.conf.transform_before_saving:
-                row = [type] + list(self.prior.transform(self.proposed.parameters))
-            else:
-                row = [type] + list(self.proposed.parameters)
-            row += [tag]
-            if observations is not None:
-                row += list(observations.flatten())
-            self.monitor(data_name="raw_data", row=row)
-
-    def _send_to_collector(self, sample, weight):
+    def _send_to_collector(self, sample: Sample, weight: float) -> None:
         parameters = sample.parameters.copy()
+        assert sample.observations is not None
         observations = sample.observations.copy()
         if self.conf.transform_before_surrogate:
             parameters = self.prior.transform(parameters)
-        assert self.commSnapshot is not None
-        self.commSnapshot.send_to_collector([parameters, observations, weight])
+        assert self.snapshot_collector is not None
+        self.snapshot_collector.send_to_collector([parameters, observations, weight])
 
-    def _empty_function(self, **kw):
+    def _empty_function(self, **kw) -> None:
         return
 
-    def finalize(self):
-        self.current_sample_to_file()
+    def _finalize_run(self) -> None:
+        self._record_current_sample()
         self.monitor(data_name="notes", row=["accepted", "rejected", "pre-rejected", "sum", "seed"], condition=self.stage.save_to_file)
-        no_all = self.no_accepted + self.no_rejected + self.no_prerejected
-        notes = [self.no_accepted, self.no_rejected, self.no_prerejected, no_all, self.seed]
+        no_all = self.counter_accepted + self.counter_rejected + self.counter_prerejected
+        notes = [self.counter_accepted, self.counter_rejected, self.counter_prerejected, no_all, self.seed]
         self.monitor(data_name="notes", row=notes, condition=self.stage.save_to_file)
         self.monitor.close_files()
 
-
-class Algorithm_MH(Algorithm_PARENT):  # initiated by SAMPLERs
-    def run(self):
-        max_steps = min(self.stage.max_samples, self.stage.max_evaluations)
-        for i in range(max_steps):
-            parameters = self.proposal.propose_sample(self.current.parameters)
-            self.proposed = Sample(parameters=parameters)
-            self.request_observations()
-            assert self.proposed.log_likelihood is not None
-            assert self.current.log_likelihood is not None
-            log_acceptance_probability_exact = self.proposal.get_log_acceptance_probability(
-                self.proposed.log_likelihood, self.current.log_likelihood,
-                self.proposed.log_prior, self.current.log_prior)
-            acceptance_probability = min(1.0, np.exp(log_acceptance_probability_exact))
-            self.proposal.adapt(proposed_sample=self.proposed.parameters, acceptance_probability=acceptance_probability)
-            if self.sample_acceptance_log(log_acceptance_probability_exact):
-                self.if_accepted()
-            else:
-                self.if_rejected()
-            if time.time() - self.time_start > self.stage.time_limit:
-                print("SAMPLER at rank", self.rank_world, "time limit ", self.stage.time_limit, " reached - loop", i, flush=True)
-                break
-        self.finalize()
-
-
-class Algorithm_DAMH(Algorithm_PARENT):  # initiated by SAMPLERs
-    def run(self):
-        # calculate approximate observations and posterior for current (initial) sample:
-        assert self.commEvaluator is not None
-        self.surrogate_evaluator = self.commEvaluator.evaluator
-        if self.surrogate_evaluator is None:
-            self.surrogate_evaluator = self.commEvaluator.get_evaluator()
-            self.commEvaluator.request_evaluator()
-        self.current.observations_approx: npt.NDArray = self.get_observations_approx(self.current.parameters)
-        self.current.log_likelihood_approx, self.current.log_prior = self.get_log_posterior(self.current.parameters, self.current.observations_approx)
-
-        if self.stage.subchain_max_accepted > 0:
-            c_max = self.stage.subchain_max_accepted
-            m_max = np.inf
-        else:
-            m_max = self.stage.subchain_max_length
-            c_max = np.inf
-        for k in range(self.stage.max_samples):
-            counter_subchain = 0
-            subchain_current = self.current.copy()
-            m = 0
-            while m < m_max and counter_subchain < c_max:
-                m += 1
-                parameters = self.proposal.propose_sample(subchain_current.parameters)
-                subchain_proposed = Sample(parameters=parameters)
-                # check if the surrogate model changed:
-                surrogate_evaluator_changed = False
-                if self.stage.surrogate_model_updates:
-                    if self.commEvaluator.evaluator_is_available():
-                        self.surrogate_evaluator = self.commEvaluator.get_evaluator()
-                        self.commEvaluator.request_evaluator()
-                        surrogate_evaluator_changed = True
-                # if the surrogate model changed, it it necessary to recalculate approximate observation for current sample:
-                if surrogate_evaluator_changed:
-                    subchain_current.observations_approx, subchain_proposed.observations_approx = self.get_observations_approx(
-                        subchain_current.parameters, subchain_proposed.parameters)
-                    self.current.observations_approx = self.get_observations_approx(self.current.parameters)
-                    self.current.log_likelihood_approx, _ = self.get_log_posterior(self.current.parameters, self.current.observations_approx)
-                else:
-                    subchain_proposed.observations_approx = self.get_observations_approx(subchain_proposed.parameters)
-                assert subchain_proposed.observations_approx is not None
-
-                # state-dependent approximation (approximation shifted by surrogate model error in current sample):
-                if self.conf.state_dependent_approximation:
-                    observations_approx_shifted = subchain_proposed.observations_approx + self.current.observations - self.current.observations_approx
-                    subchain_proposed.log_likelihood_approx, subchain_proposed.log_prior = self.get_log_posterior(subchain_proposed.parameters, observations_approx_shifted)
-                    subchain_current.log_likelihood_approx, subchain_current.log_prior = self.get_log_posterior(subchain_current.parameters, self.current.observations)
-                else:  # standard approximation without shifting:
-                    subchain_proposed.log_likelihood_approx, subchain_proposed.log_prior = self.get_log_posterior(subchain_proposed.parameters, subchain_proposed.observations_approx)
-                    subchain_current.log_likelihood_approx, subchain_current.log_prior = self.get_log_posterior(subchain_current.parameters, subchain_current.observations_approx)
-
-                log_acceptance_prob_approx = self.proposal.get_log_acceptance_probability(
-                    subchain_proposed.log_likelihood_approx, subchain_current.log_likelihood_approx,
-                    subchain_proposed.log_prior, subchain_current.log_prior)
-                if self.sample_acceptance_log(log_acceptance_prob_approx):  # sample in MH subchain accepted
-                    counter_subchain += 1
-                    subchain_current = subchain_proposed.copy()
-            self.proposed = subchain_current.copy()
-            if counter_subchain > 0:  # at least one proposal of the subchain was accepted
-                self.request_observations()
-                assert self.proposed.log_likelihood is not None
-                assert self.current.log_likelihood is not None
-                log_acceptance_prob_exact = self.proposal.get_log_acceptance_probability(
-                    self.proposed.log_likelihood, self.current.log_likelihood,
-                    self.proposed.log_prior, self.current.log_prior)
-                acceptance_probability = min(1.0, np.exp(log_acceptance_prob_exact))
-                self.proposal.adapt(proposed_sample=self.proposed.parameters, acceptance_probability=acceptance_probability)  # TODO
-                row = [k] + [self.proposed.log_posterior] + [self.proposed.log_posterior_approx]
-                assert self.proposed.log_likelihood_approx is not None
-                log_acceptance_prob_approx = self.proposal.get_log_acceptance_probability(
-                    self.proposed.log_likelihood_approx, self.current.log_likelihood_approx,
-                    self.proposed.log_prior, self.current.log_prior)
-                if self.sample_acceptance_log(log_acceptance_prob_exact - log_acceptance_prob_approx):
-                    self.monitor(data_name="accepted", row=row, condition=self.stage.save_to_file)
-                    self.if_accepted()
-                else:
-                    self.monitor(data_name="rejected", row=row, condition=self.stage.save_to_file)
-                    self.if_rejected()
-            else:  # proposed sample is the same as current sample, sample is automatically accepted, the chain remains here
-                self.no_prerejected += 1
-                self.no_rejected_current += 1
-                self.raw_data_to_file(type="prerejected", tag=0, observations=self.proposed.observations_approx)
-            if time.time() - self.time_start > self.stage.time_limit:
-                break
-            if (self.no_rejected + self.no_accepted) >= self.stage.max_evaluations:
-                break
-        self.finalize()
-
-    def get_observations_approx(self, parameters0: npt.NDArray, parameters1: npt.NDArray | None = None):
+    def _get_surrogate_observations(self, parameters0: npt.NDArray, parameters1: npt.NDArray | None = None):
         if self.conf.transform_before_surrogate:
             par0_tr = self.prior.transform(parameters0.copy())
             argument0 = [par0_tr]
@@ -317,41 +236,227 @@ class Algorithm_DAMH(Algorithm_PARENT):  # initiated by SAMPLERs
             res1 = self.surrogate_evaluator(np.array(argument1))
             return res0.ravel(), res1.ravel()
 
+    def _initialize_current_approximation(self) -> None:
+        if self.evaluator_provider is None:
+            return
+        self.surrogate_evaluator = self.evaluator_provider.evaluator
+        if self.surrogate_evaluator is None:
+            self.surrogate_evaluator = self.evaluator_provider.get_evaluator()
+            self.evaluator_provider.request_evaluator()
+        self.current.observations_approx = cast(npt.NDArray, self._get_surrogate_observations(self.current.parameters))
+        # assert self.current.observations_approx is not None
+        self.current.log_likelihood_approx, self.current.log_prior = self._compute_log_posterior_terms(
+            self.current.parameters,
+            self.current.observations_approx,
+        )
+        if self.conf.use_surrogate_gradients:
+            log_likelihood_gradient_function = lambda x: self._compute_surrogate_log_likelihood_gradient(x)
+            log_prior_gradient_function = lambda x: self._compute_log_prior_gradient(x)
+            self.proposal.set_gradient_functions(log_likelihood_gradient_function, log_prior_gradient_function)
 
-class Writer:
-    def __init__(self, dirname, basename):
-        path = os.path.join(dirname, basename)
-        os.makedirs(dirname, exist_ok=True)
-        self.__file = open(path, 'w')
-        self.__writer = csv.writer(self.__file)
-
-    def writerow(self, row):
-        self.__writer.writerow(row)
-
-    def close_file(self):
-        self.__file.close()
-
-
-class Monitor:
-    def __init__(self, output_dir, stage, basename):
-        self.output_dir = output_dir
-        self.stage = stage
-        self.basename = basename
-        self.writers = dict()
-
-    def add_writer(self, data_name: str):
-        dirname = os.path.join(self.output_dir, "sampling_output", data_name, self.stage.name)
-        writer = Writer(dirname=dirname, basename=self.basename)
-        self.writers[data_name] = writer
-
-    def __call__(self, data_name, row, condition=True):
-        if condition:
-            if data_name not in self.writers.keys():
-                self.add_writer(data_name)
-            self.writers[data_name].writerow(row)
+    def _compute_surrogate_log_likelihood_gradient(self, parameters: npt.NDArray) -> npt.NDArray:
+        # calculates likelihood part of grad(U(q)). i.e. grad(-log_likelihood)
+        if self.conf.transform_before_surrogate:
+            # raise not implemented error
+            raise NotImplementedError("Gradient for transform_before_surrogate=True is not implemented")
+            argument = self.prior.transform(parameters.copy())
         else:
-            pass
+            argument = parameters.copy()
+        assert self.surrogate_evaluator is not None
+        jacobian, evaluation = self.surrogate_evaluator.jacobian(np.array(argument))
+        return - jacobian.T @ self.likelihood.grad_logpdf(evaluation)
 
-    def close_files(self):
-        for writer in self.writers.values():
-            writer.close_file()
+    def _compute_log_prior_gradient(self, parameters: npt.NDArray) -> npt.NDArray:
+        # calculates prior part of grad(U(q)). i.e. grad(-log_prior)
+        return -self.prior.grad_logpdf(parameters) 
+
+
+Algorithm_PARENT = AlgorithmBase
+
+
+class Algorithm_MH(AlgorithmBase):  # initiated by SAMPLERs
+    def run(self) -> None:
+        max_steps = min(self.stage.max_samples, self.stage.max_evaluations)
+        for i in range(max_steps):
+            self.proposal.choose_group()  # only for block proposal, does nothing for non-block proposal
+            self.proposed = self._propose_new_sample(self.current.parameters)
+            self._evaluate_proposed_sample()
+            assert self.proposed.log_likelihood is not None
+            assert self.current.log_likelihood is not None
+            assert self.proposed.log_prior is not None
+            assert self.current.log_prior is not None
+            likelihood_part, prior_part = self.proposal.get_log_acceptance_probability(
+                self.proposed.log_likelihood,
+                self.current.log_likelihood,
+                self.proposed.log_prior,
+                self.current.log_prior,
+            )
+            log_acceptance_prob_exact = likelihood_part + prior_part
+            self.proposal.adapt(proposed_sample=self.proposed.parameters, log_acceptance_probability=log_acceptance_prob_exact)
+            if self._draw_acceptance_decision(log_acceptance_prob_exact):
+                self._handle_acceptance()
+            else:
+                self._handle_rejection()
+            if time.time() - self.time_start > self.stage.time_limit:
+                print("SAMPLER at rank", self.rank_world, "time limit ", self.stage.time_limit, " reached - loop", i, flush=True)
+                break
+        self._finalize_run()
+
+
+class Algorithm_DAMH(AlgorithmBase):  # initiated by SAMPLERs
+    def _refresh_surrogate_evaluator_if_needed(self) -> bool:
+        assert self.evaluator_provider is not None
+        if self.stage.surrogate_model_updates and self.evaluator_provider.evaluator_is_available():
+            self.surrogate_evaluator = self.evaluator_provider.get_evaluator()
+            self.evaluator_provider.request_evaluator()
+            return True
+        return False
+
+    def _evaluate_surrogate_transition(self, subchain_current: Sample, subchain_proposed: Sample, surrogate_evaluator_changed: bool) -> None:
+        if surrogate_evaluator_changed:
+            subchain_current.observations_approx, subchain_proposed.observations_approx = cast(
+                tuple[npt.NDArray, npt.NDArray],
+                self._get_surrogate_observations(subchain_current.parameters, subchain_proposed.parameters),
+            )
+            self.current.observations_approx = cast(npt.NDArray, self._get_surrogate_observations(self.current.parameters))
+            # assert self.current.observations_approx is not None
+            self.current.log_likelihood_approx, _ = self._compute_log_posterior_terms(
+                self.current.parameters,
+                self.current.observations_approx,
+            )
+        else:
+            subchain_proposed.observations_approx = cast(
+                npt.NDArray,
+                self._get_surrogate_observations(subchain_proposed.parameters),
+            )
+        # assert subchain_proposed.observations_approx is not None
+
+        if self.conf.state_dependent_approximation:
+            assert self.current.observations is not None
+            # assert self.current.observations_approx is not None
+            observations_approx_shifted = (
+                subchain_proposed.observations_approx
+                + self.current.observations
+                - self.current.observations_approx
+            )
+            subchain_proposed.log_likelihood_approx, subchain_proposed.log_prior = self._compute_log_posterior_terms(
+                subchain_proposed.parameters,
+                observations_approx_shifted,
+            )
+            subchain_current.log_likelihood_approx, subchain_current.log_prior = self._compute_log_posterior_terms(
+                subchain_current.parameters,
+                self.current.observations,
+            )
+        else:
+            assert subchain_current.observations_approx is not None
+            subchain_proposed.log_likelihood_approx, subchain_proposed.log_prior = self._compute_log_posterior_terms(
+                subchain_proposed.parameters,
+                subchain_proposed.observations_approx,
+            )
+            subchain_current.log_likelihood_approx, subchain_current.log_prior = self._compute_log_posterior_terms(
+                subchain_current.parameters,
+                subchain_current.observations_approx,
+            )
+
+    def _propose_new_sample_using_subchain(self) -> tuple[Sample, int, float]:
+        counter_subchain_accepted = 0
+        subchain_current = self.current.copy()
+        correction_log_ratio = 0.0
+        for _ in range(self.stage.subchain_max_length):
+            bool_evaluator_changed = self._refresh_surrogate_evaluator_if_needed()
+            subchain_proposed = self._propose_new_sample(subchain_current.parameters)
+            self._evaluate_surrogate_transition( # evaluate surrogate for current, subchain_surrent, subchain_proposed
+                subchain_current=subchain_current,
+                subchain_proposed=subchain_proposed,
+                surrogate_evaluator_changed=bool_evaluator_changed,
+            )
+            assert subchain_proposed.log_likelihood_approx is not None
+            assert subchain_current.log_likelihood_approx is not None
+            assert subchain_proposed.log_prior is not None
+            assert subchain_current.log_prior is not None
+            likelihood_part, prior_part = self.proposal.get_log_acceptance_probability(
+                subchain_proposed.log_likelihood_approx,
+                subchain_current.log_likelihood_approx,
+                subchain_proposed.log_prior,
+                subchain_current.log_prior,
+            )
+            log_acceptance_prob_approx = likelihood_part + prior_part
+            if self._draw_acceptance_decision(log_acceptance_prob_approx):
+                correction_log_ratio += likelihood_part
+                counter_subchain_accepted += 1
+                subchain_current = subchain_proposed.copy()
+
+        return subchain_current, counter_subchain_accepted, correction_log_ratio
+
+    def run(self) -> None:
+        # TODO REMOVE THIS, just for debugging:
+        """
+        tmp_exact = evaluate_on_a_grid(self.observation_provider,par0_grid=np.linspace(-3, 3, 30), par1_grid=np.linspace(-3, 3, 30), filename=f"rank{self.rank_world}_exact_grid.png")
+        tmp_surr  = evaluate_on_a_grid(self.surrogate_evaluator, par0_grid=np.linspace(-3, 3, 30), par1_grid=np.linspace(-3, 3, 30), filename=f"rank{self.rank_world}_initial_surrogate_grid.png")
+        # save difference as image:
+        import matplotlib.pyplot as plt
+        plt.imshow(np.abs(tmp_exact - tmp_surr).reshape(len(np.linspace(-3, 3, 30)), len(np.linspace(-3, 3, 30))), extent=(-3, 3, -3, 3), origin='lower')
+        plt.colorbar()
+        plt.xlabel('par0')
+        plt.ylabel('par1')
+        plt.title('Exact - initial surrogate')
+        plt.savefig(f"rank{self.rank_world}_exact_minus_initial_surrogate_grid.png")
+        plt.close()"""
+        for _ in range(self.stage.max_samples):
+            self.proposal.choose_group()  # only for block proposal, does nothing for non-block proposal
+            subchain_current, counter_subchain, correction_log_ratio = self._propose_new_sample_using_subchain()
+            self.proposed = subchain_current.copy()
+            if counter_subchain > 0:  # at least one proposal of the subchain was accepted
+                self._evaluate_proposed_sample()
+                assert self.proposed.log_likelihood is not None
+                assert self.current.log_likelihood is not None
+                assert self.proposed.log_prior is not None
+                assert self.current.log_prior is not None
+                likelihood_part, prior_part = self.proposal.get_log_acceptance_probability(
+                    self.proposed.log_likelihood,
+                    self.current.log_likelihood,
+                    self.proposed.log_prior,
+                    self.current.log_prior,
+                )
+                log_acceptance_prob_exact = likelihood_part + prior_part
+                self.proposal.adapt(proposed_sample=self.proposed.parameters, log_acceptance_probability=log_acceptance_prob_exact)  # TODO
+                #M row = [k] + [self.proposed.log_posterior] + [self.proposed.log_posterior_approx]
+                assert self.proposed.log_likelihood_approx is not None
+                assert self.current.log_likelihood_approx is not None
+                """ TODO: Allow surrogate updates during subchain??
+                likelihood_part, _ = self.proposal.get_log_acceptance_probability( # just for DEBUG, will be deleted
+                    self.proposed.log_likelihood_approx,
+                    self.current.log_likelihood_approx,
+                    self.proposed.log_prior,
+                    self.current.log_prior,
+                )
+                print(f"rank {self.rank_world} acceptance log-probability: approx {likelihood_part:.8f}, correction {correction_log_ratio:.8f}, counter subchain {counter_subchain}", flush=True)"""
+                accepted = self._draw_acceptance_decision(log_acceptance_prob_exact - correction_log_ratio)
+                #M self.monitor(data_name="accepted" if accepted else "rejected", row=row, condition=self.stage.save_to_file)          )
+                if accepted:
+                    self._handle_acceptance()
+                else:
+                    self._handle_rejection()
+            else:  # proposed sample is the same as current sample, sample is automatically accepted, the chain remains here
+                self._transition_to_prerejected()
+                self._record_proposed_snapshot(state_type="prerejected", tag=0, observations=self.proposed.observations_approx)
+            if time.time() - self.time_start > self.stage.time_limit:
+                break
+            if (self.counter_rejected + self.counter_accepted) >= self.stage.max_evaluations:
+                break
+        # TODO REMOVE THIS, just for debugging:
+        """
+        tmp_surr = evaluate_on_a_grid(self.surrogate_evaluator,par0_grid=np.linspace(-3, 3, 30), par1_grid=np.linspace(-3, 3, 30), filename=f"rank{self.rank_world}_final_surrogate_grid.png")
+        # save difference as image:
+        import matplotlib.pyplot as plt
+        plt.imshow(np.abs(tmp_exact - tmp_surr).reshape(len(np.linspace(-3, 3, 30)), len(np.linspace(-3, 3, 30))), extent=(-3, 3, -3, 3), origin='lower')
+        plt.colorbar()
+        plt.xlabel('par0')
+        plt.ylabel('par1')
+        plt.title('Exact - initial surrogate')
+        plt.savefig(f"rank{self.rank_world}_exact_minus_final_surrogate_grid.png")
+        plt.close()
+        """
+        self._finalize_run()
+
+

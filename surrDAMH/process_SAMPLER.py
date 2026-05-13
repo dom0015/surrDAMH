@@ -6,14 +6,17 @@ Created on Wed Oct 23 15:35:47 2019
 @author: simona
 """
 
-from typing import List
+from typing import Any, List, cast
 
 from mpi4py import MPI
+from torch.mtia import snapshot
 
 from surrDAMH.configuration import Configuration
 from surrDAMH.distributions.parent import Distribution
+from surrDAMH.modules.algorithm_interfaces_mpi import (MpiEvaluatorProvider,
+                                                       MpiSnapshotSink,
+                                                       MpiSolverPoolObservationProvider)
 from surrDAMH.modules import algorithms as alg
-from surrDAMH.modules import communication
 from surrDAMH.modules import lhs_normal as lhs
 from surrDAMH.modules import proposals
 from surrDAMH.solvers import Solver
@@ -28,18 +31,22 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
     comm_sampler = comm_world.Split(color=0, key=rank_world)
 
     if conf.use_solvers_pool:
-        commSolver = communication.SolverMPI(conf=conf)  # communication among solvers
+        commSolver = MpiSolverPoolObservationProvider(conf=conf)  # communication among solvers
     else:
         commSolver = solver_instance
 
     # initialization of communicators between sampler and collector:
     if conf.use_collector:
         assert conf.rank_collector is not None, "use_collector is True, but rank_collector is None"
-        commEvaluator = communication.CommEvaluator_sampler(rank_collector=conf.rank_collector,
-                                                            max_buffer_size=conf.max_buffer_size)
-        commEvaluator.request_evaluator()
-        commSnapshot = communication.CommSnapshot_sampler(rank_collector=conf.rank_collector,
-                                                          max_sampler_isend_requests=conf.max_sampler_isend_requests)
+        commEvaluator = MpiEvaluatorProvider.from_rank_collector(
+            rank_collector=conf.rank_collector,
+            max_buffer_size=conf.max_buffer_size,
+            request_initial_evaluator=True,
+        )
+        commSnapshot = MpiSnapshotSink.from_rank_collector(
+            rank_collector=conf.rank_collector,
+            max_sampler_isend_requests=conf.max_sampler_isend_requests,
+        )
     else:
         commEvaluator = None
         commSnapshot = None
@@ -69,6 +76,29 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
                 prior_sd_or_cov=prior.get_covariance(),
                 seed=seed0+1
             )
+        elif stage.proposal_type == "Hamiltonian":
+            my_Prop = proposals.Hamiltonian( # TODO
+                no_parameters=conf.no_parameters,
+                seed=seed0+1,
+                num_steps=stage.hamiltonian_num_steps,
+                step_size=stage.hamiltonian_step_size,
+                # sd_or_cov=stage.proposal_sd_or_cov,
+            )
+        elif stage.proposal_type == "HamiltonianInfinite":
+            my_Prop = proposals.HamiltonianInfinite( # TODO
+                no_parameters=conf.no_parameters,
+                seed=seed0+1,
+                num_steps=stage.hamiltonian_num_steps,
+                step_size=stage.hamiltonian_step_size,
+                # sd_or_cov=stage.proposal_sd_or_cov, # TODO: should be set as Gaussian prior covariance
+            )
+        elif stage.proposal_type == "block":
+            my_Prop = proposals.BlockProposal(
+                no_parameters=conf.no_parameters,
+                list_of_groups=stage.block_proposal_groups,
+                list_of_proposals=stage.block_proposal_list,
+                seed=seed0+1
+            )
         elif stage.adaptive:
             my_Prop = proposals.GaussRandomWalk_adaptive(no_parameters=conf.no_parameters, seed=seed0+1)
             if stage.proposal_sd_or_cov is None:
@@ -96,6 +126,10 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
             commEvaluator_stage = commEvaluator
         else:
             commEvaluator_stage = None
+        if stage.proposal_type == "Hamiltonian" or stage.proposal_type == "HamiltonianInfinite":  # TODO
+            # TODO this is a temporary workaround, we need the exact model for gradients until surrogate supports them
+            assert commEvaluator is not None
+            commEvaluator_stage = commEvaluator
         if stage.use_only_surrogate:
             assert commEvaluator is not None, "use_only_surrogate is True but no surrogate has been constructed yet"
             assert commEvaluator.evaluator is not None, "use_only_surrogate is True but no surrogate has been constructed yet"
@@ -119,9 +153,9 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
 
         # run sampling algorithm:
         alg_instance = alg_class(proposal=my_Prop,
-                                 commSolver=commSolver_stage,
-                                 commSnapshot=commSnapshot_stage,
-                                 commEvaluator=commEvaluator_stage,
+                                 observation_provider=cast(Any, commSolver_stage),
+                                 snapshot_collector=cast(Any, commSnapshot_stage),
+                                 evaluator_provider=cast(Any, commEvaluator_stage),
                                  conf=conf,
                                  stage=stage,
                                  prior=prior,
@@ -158,15 +192,14 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
 
         # stage finished, wait for all samplers:
         print('Stage', alg_instance.stage.name, 'at MPI rank', rank_world, 'finished - acc/rej/prerej samples:',
-              alg_instance.no_accepted, alg_instance.no_rejected, alg_instance.no_prerejected, flush=True)
+              alg_instance.counter_accepted, alg_instance.counter_rejected, alg_instance.counter_prerejected, flush=True)
         comm_sampler.Barrier()
     f = getattr(commSolver, "terminate", None)
     if callable(f):
-        commSolver.terminate()
+        f()
     f = getattr(commSnapshot, "terminate", None)
     if callable(f):
-        assert commSnapshot is not None
-        commSnapshot.terminate()
+        f()
     comm_world.Barrier()
     comm_world.Barrier()
     return []

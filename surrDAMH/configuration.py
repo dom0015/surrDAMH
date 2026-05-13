@@ -38,6 +38,7 @@ class Configuration:
     min_snapshots_to_update: int = 1  # how many snapshots (at least) have to be added to update the surrogate model
     max_collected_snapshots_per_loop: int = 1000  # maximal number of snapshots to be collected in one loop
     max_sampler_isend_requests: int = 100  # size of the buffer for isend requests (sending snapshots from samplers to collector)
+    use_surrogate_gradients: bool = True  # whether to allow autograd in pytorch surrogate
     paths_to_append: list[str] | None = None
     pickled_observations: bool = True
     max_buffer_size: int = 1 << 30

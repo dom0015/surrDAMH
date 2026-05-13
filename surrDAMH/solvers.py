@@ -27,6 +27,10 @@ class Solver:
     def get_observations(self) -> npt.NDArray:
         """Gets observations computed by the solver."""
         raise NotImplementedError
+    
+    def __call__(self, parameters: npt.ArrayLike) -> npt.NDArray:
+        self.set_parameters(parameters)
+        return self.get_observations()
 
 
 def get_solver_from_spec(solver_spec: SolverSpec, solver_id: int = 0, solver_output_dir: str | None = None) -> Solver:

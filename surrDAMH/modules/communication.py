@@ -256,6 +256,7 @@ class CommSnapshot_collector:
             # cancel the request
             self.request_snapshot.cancel()
             self.request_snapshot.wait()
+            self.request_snapshot = None
             return False
 
     def all_snapshots_received(self):
@@ -281,14 +282,16 @@ class CommSnapshot_collector:
             if self.snapshot_is_available():
                 self.get_snapshot_and_request_new()
         # Termination signal received,
-        # the total number of snapshots is known.
-        # If they were all received, the last request was cancelled
-        # and active was set to False.
-        if not self.all_snapshots_were_received:
+        # the total number of snapshots is known. Drain any remaining
+        # in-flight snapshots before cancelling the final posted receive.
+        while self.current_idx <= self.max_idx:
+            self.get_snapshot_and_request_new()
+        self.all_snapshots_were_received = True
+        if self.request_snapshot is not None:
             self.request_snapshot.cancel()
             self.request_snapshot.wait()
+            self.request_snapshot = None
         self.request_terminate = None
-        self.request_snapshot = None
         self.comm_world = None
 
 

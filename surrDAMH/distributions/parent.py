@@ -29,6 +29,12 @@ class Distribution:
         """
         return 0.0
 
+    def grad_logpdf(self, sample: npt.NDArray) -> npt.NDArray:
+        """
+        Returns the gradient of ``logpdf(sample)`` with respect to ``sample``.
+        """
+        raise NotImplementedError("grad_logpdf() not implemented for " + type(self).__name__)
+
     def get_covariance(self) -> npt.NDArray:
         """
         Returns the covariance matrix (2D array) or vector of variances (1D array)
@@ -52,3 +58,4 @@ class FromScipy(Distribution):
         self.scipy_rv = scipy_rv
         self.logpdf = scipy_rv.logpdf
         self.rvs = scipy_rv.rvs
+        

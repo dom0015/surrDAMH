@@ -51,6 +51,10 @@ class PriorIndependentComponents(Distribution):
         """
         return -0.5*np.dot(sample, sample)
 
+    def grad_logpdf(self, sample):
+        """Gradient of the internal standard-normal prior log-density."""
+        return -np.asarray(sample)
+
     def get_covariance(self):
         """Returns vector of standard deviations (ones for N(0,I))."""
         return np.ones(self.no_parameters)
@@ -67,7 +71,7 @@ class Uniform(UnivariateComponent):
     U(a,b)
     """
 
-    def __init__(self, a: float = 0, b: float = 1):
+    def __init__(self, a: float = 0.0, b: float = 1.0):
         self.a = a
         self.b = b
 
@@ -83,7 +87,7 @@ class Lognormal(UnivariateComponent):
     Lognormal(mu,sigma)
     """
 
-    def __init__(self, mu=0, sigma=1):
+    def __init__(self, mu=0.0, sigma=1.0):
         self.mu = mu
         self.sigma = sigma
 
@@ -99,7 +103,7 @@ class Beta(UnivariateComponent):
     Beta(alpha,beta)
     """
 
-    def __init__(self, alpha=2, beta=2):
+    def __init__(self, alpha=2.0, beta=2.0):
         self.alpha = alpha
         self.beta = beta
 
@@ -115,7 +119,7 @@ class Normal(UnivariateComponent):
     Normal(mu,sigma)
     """
 
-    def __init__(self, mu=0, sigma=1):
+    def __init__(self, mu=0.0, sigma=1.0):
         self.mu = mu
         self.sigma = sigma
 

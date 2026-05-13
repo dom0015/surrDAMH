@@ -35,6 +35,7 @@ class Normal(Distribution):
         if cov is not None:  # covariance matrix is given
             self.cov = np.array(cov)
             self.logpdf = self.calculate_logpdf_multivariate
+            self.grad_logpdf = self.calculate_grad_logpdf_multivariate
             self.rvs = self.calculate_rvs_multivariate
         else:  # no covarinace matrix, use sd instead
             if np.isscalar(sd):
@@ -43,6 +44,7 @@ class Normal(Distribution):
                 self.sd = np.array(sd)
             # sd is a numpy array of shape (n,)
             self.logpdf = self.calculate_logpdf_uncorrelated
+            self.grad_logpdf = self.calculate_grad_logpdf_uncorrelated
             self.rvs = self.calculate_rvs_uncorrelated
 
     def calculate_logpdf_uncorrelated(self, sample):
@@ -51,11 +53,20 @@ class Normal(Distribution):
         invCv = v/(self.sd**2)
         return -0.5*np.dot(v, invCv)
 
+    def calculate_grad_logpdf_uncorrelated(self, sample):
+        """Gradient of logpdf of N(mean,sd) up to an additive constant."""
+        return (self.mean - sample)/(self.sd**2)
+
     def calculate_logpdf_multivariate(self, sample):
         """Calculates logpdf of N(mean,cov) up to an additive constant."""
         v = self.mean - sample.ravel()
         invCv = np.linalg.solve(self.cov, v)
         return -0.5*np.dot(v, invCv)
+
+    def calculate_grad_logpdf_multivariate(self, sample):
+        """Gradient of logpdf of N(mean,cov) up to an additive constant."""
+        v = self.mean - sample.ravel()
+        return np.linalg.solve(self.cov, v)
 
     def get_covariance(self) -> npt.NDArray:
         """Returns covariance matrix or vector of standard deviations."""

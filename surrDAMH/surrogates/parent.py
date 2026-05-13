@@ -20,7 +20,7 @@ class SurrogateAsSolver(Solver):
 
 class Evaluator:
     def __init__(self) -> None:
-        pass
+        self.no_parameters: int
 
     def __call__(self, datapoints: npt.NDArray) -> npt.NDArray:
         """
@@ -32,10 +32,28 @@ class Evaluator:
         """
         raise NotImplementedError
 
+    def jacobian(self, datapoints: npt.NDArray) -> npt.NDArray:
+        """
+        Returns the Jacobian of surrogate outputs with respect to inputs.
+
+        datapoints shape: (number of datapoints, no_parameters)
+
+        output NDArray shape: (number of datapoints, no_observations, no_parameters)
+        """
+        raise NotImplementedError(f"Jacobian is not implemented for {type(self).__name__}")
+
+    def supports_gradients(self) -> bool:
+        """Return whether this evaluator can provide input derivatives."""
+        return type(self).jacobian is not Evaluator.jacobian
+
+    def set_use_gradients(self, enabled: bool) -> None:
+        """Optional hook for evaluators with switchable gradient support."""
+        return None
+
     def as_solver(self):
         return SurrogateAsSolver(self.__call__)
 
-
+    
 class Updater:
     """
     Parent class for surrogate model updaters.
@@ -71,6 +89,14 @@ class Updater:
         Returns Evaluator instance.
         """
         raise NotImplementedError
+
+    def supports_gradients(self) -> bool:
+        """Return whether evaluators produced by this updater support derivatives."""
+        return False
+
+    def set_use_gradients(self, enabled: bool) -> None:
+        """Optional hook for updaters with switchable gradient support."""
+        return None
 
 
 def closest_point_distance(par, point):
