@@ -175,8 +175,9 @@ def run_COLLECTOR(conf: Configuration, surrogate_updater: Updater, surrogate_del
                 rmse = float(np.sqrt(np.mean(errors ** 2)))
                 max_abs_error = float(np.max(np.abs(errors)))
                 surrogate_quality_rows.append([no_snapshots_total, num_new_snapshots, rmse, max_abs_error])
-                print(f"Surrogate quality (out-of-sample): RMSE={rmse:.4e}, MaxAbsErr={max_abs_error:.4e}, "
-                      f"snapshots_total={no_snapshots_total}, batch_size={num_new_snapshots}", flush=True)
+                if conf.debug:
+                    print(f"Surrogate quality (out-of-sample): RMSE={rmse:.4e}, MaxAbsErr={max_abs_error:.4e}, "
+                        f"snapshots_total={no_snapshots_total}, batch_size={num_new_snapshots}", flush=True)
             except Exception as e:
                 print(f"Surrogate quality monitoring error: {e}", flush=True)
 
@@ -213,13 +214,14 @@ def run_COLLECTOR(conf: Configuration, surrogate_updater: Updater, surrogate_del
                         weighted_rmse,
                         weighted_mean_abs_error,
                     ])
-                    print(
-                        f"Surrogate quality on fixed test set: RMSE={rmse:.4e}, MaxAbsErr={max_abs_error:.4e}, "
-                        f"WeightedRMSE={weighted_rmse:.4e}, WeightedMAE={weighted_mean_abs_error:.4e}, "
-                        f"update_index={surrogate_update_index}, snapshots_total={no_snapshots_total}, "
-                        f"n_test={test_parameters.shape[0]}",
-                        flush=True,
-                    )
+                    if conf.debug:
+                        print(
+                            f"Surrogate quality on fixed test set: RMSE={rmse:.4e}, MaxAbsErr={max_abs_error:.4e}, "
+                            f"WeightedRMSE={weighted_rmse:.4e}, WeightedMAE={weighted_mean_abs_error:.4e}, "
+                            f"update_index={surrogate_update_index}, snapshots_total={no_snapshots_total}, "
+                            f"n_test={test_parameters.shape[0]}",
+                            flush=True,
+                        )
                 except Exception as e:
                     print(f"Surrogate fixed-test monitoring error: {e}", flush=True)
         # send evaluator to samplers:

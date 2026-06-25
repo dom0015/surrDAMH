@@ -121,6 +121,20 @@ class AlgorithmBase:
         self.time_start = time.time()
         if self.current.observations is None:
             self._evaluate_sample(self.current)
+        self.monitor(
+            data_name="subchain_stats",
+            row=[
+                "iteration",
+                "subchain_max_length",
+                "subchain_accepted",
+                "subchain_acceptance_rate",
+                "correction_log_ratio",
+                "outer_proposed_changed",
+                "outer_accepted",
+                "rank_world",
+            ],
+            condition=self.stage.save_to_file and self.stage.algorithm_type == "DAMH",
+        )
 
     def _evaluate_proposed_sample(self) -> None:
         self._evaluate_sample(self.proposed)
@@ -263,8 +277,15 @@ class AlgorithmBase:
         else:
             argument = parameters.copy()
         assert self.surrogate_evaluator is not None
-        jacobian, evaluation = self.surrogate_evaluator.jacobian(np.array(argument))
-        return - jacobian.T @ self.likelihood.grad_logpdf(evaluation)
+        evaluation = self.surrogate_evaluator(np.array([argument])).reshape(-1)
+        vector = -self.likelihood.grad_logpdf(evaluation)
+        try:
+            gradient, _ = self.surrogate_evaluator.vjp(np.array(argument), vector)
+            return gradient
+        except NotImplementedError:
+            jacobian, evaluation = self.surrogate_evaluator.jacobian(np.array(argument))
+            # TODO: do not compute again
+            return - jacobian.T @ self.likelihood.grad_logpdf(evaluation)
 
     def _compute_log_prior_gradient(self, parameters: npt.NDArray) -> npt.NDArray:
         # calculates prior part of grad(U(q)). i.e. grad(-log_prior)
@@ -300,6 +321,7 @@ class Algorithm_MH(AlgorithmBase):  # initiated by SAMPLERs
             if time.time() - self.time_start > self.stage.time_limit:
                 print("SAMPLER at rank", self.rank_world, "time limit ", self.stage.time_limit, " reached - loop", i, flush=True)
                 break
+            print(f"Progress: {i}, accepted: {self.counter_accepted}, rejected: {self.counter_rejected}", end="\r", flush=True)
         self._finalize_run()
 
 
@@ -402,10 +424,11 @@ class Algorithm_DAMH(AlgorithmBase):  # initiated by SAMPLERs
         plt.title('Exact - initial surrogate')
         plt.savefig(f"rank{self.rank_world}_exact_minus_initial_surrogate_grid.png")
         plt.close()"""
-        for _ in range(self.stage.max_samples):
+        for i in range(self.stage.max_samples):
             self.proposal.choose_group()  # only for block proposal, does nothing for non-block proposal
             subchain_current, counter_subchain, correction_log_ratio = self._propose_new_sample_using_subchain()
             self.proposed = subchain_current.copy()
+            outer_accepted = False
             if counter_subchain > 0:  # at least one proposal of the subchain was accepted
                 self._evaluate_proposed_sample()
                 assert self.proposed.log_likelihood is not None
@@ -431,17 +454,36 @@ class Algorithm_DAMH(AlgorithmBase):  # initiated by SAMPLERs
                     self.current.log_prior,
                 )
                 print(f"rank {self.rank_world} acceptance log-probability: approx {likelihood_part:.8f}, correction {correction_log_ratio:.8f}, counter subchain {counter_subchain}", flush=True)"""
-                accepted = self._draw_acceptance_decision(log_acceptance_prob_exact - correction_log_ratio)
+                # 2 lines of weird hot fix instead of:
+                # accepted = self._draw_acceptance_decision(log_acceptance_prob_exact - correction_log_ratio)
+                exact_likelihood_log_ratio = self.proposed.log_likelihood - self.current.log_likelihood
+                accepted = self._draw_acceptance_decision(exact_likelihood_log_ratio - correction_log_ratio)
                 #M self.monitor(data_name="accepted" if accepted else "rejected", row=row, condition=self.stage.save_to_file)          )
                 if accepted:
+                    outer_accepted = True
                     self._handle_acceptance()
                 else:
                     self._handle_rejection()
             else:  # proposed sample is the same as current sample, sample is automatically accepted, the chain remains here
                 self._transition_to_prerejected()
                 self._record_proposed_snapshot(state_type="prerejected", tag=0, observations=self.proposed.observations_approx)
+            self.monitor(
+                data_name="subchain_stats",
+                row=[
+                    i,
+                    self.stage.subchain_max_length,
+                    counter_subchain,
+                    counter_subchain / self.stage.subchain_max_length,
+                    correction_log_ratio,
+                    int(counter_subchain > 0),
+                    int(outer_accepted),
+                    self.rank_world,
+                ],
+                condition=self.stage.save_to_file and self.stage.algorithm_type == "DAMH",
+            )
             if time.time() - self.time_start > self.stage.time_limit:
                 break
+            print(f"Progress: {i}, accepted: {self.counter_accepted}, rejected: {self.counter_rejected}, prerejected: {self.counter_prerejected}", end="\r", flush=True)
             if (self.counter_rejected + self.counter_accepted) >= self.stage.max_evaluations:
                 break
         # TODO REMOVE THIS, just for debugging:

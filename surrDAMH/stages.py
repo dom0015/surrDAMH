@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 import numpy as np
+import numpy.typing as npt
 
 from surrDAMH.modules.proposals import Proposal
 
@@ -15,7 +16,7 @@ class Stage:
     algorithm_type: Literal["MH", "DAMH"] = "MH"  # DAMH uses delayed acceptance, MH does not
     proposal_type: Literal["RWMH", "pCN", "Hamiltonian", "HamiltonianInfinite"] = "RWMH"  # RWMH = Gaussian random walk, pCN = preconditioned Crank-Nicolson
     proposal: Proposal | None = None
-    proposal_sd_or_cov: float | None = None
+    proposal_sd_or_cov: float | npt.ArrayLike | None = None
     pcn_beta: float = 0.5  # pCN step size, only used when proposal_type == "pCN"
     hamiltonian_num_steps: int = 10  # only used when proposal_type == "Hamiltonian"
     hamiltonian_step_size: float = 0.1  # only used when proposal_type == "Hamiltonian"

@@ -42,9 +42,22 @@ class Evaluator:
         """
         raise NotImplementedError(f"Jacobian is not implemented for {type(self).__name__}")
 
+    def vjp(self, datapoint: npt.NDArray, vector: npt.NDArray) -> tuple[npt.NDArray, npt.NDArray]:
+        """
+        Returns ``(J(x)^T @ vector, evaluation)`` for one sample.
+
+        datapoint shape: (no_parameters,)
+        vector shape: (no_observations,)
+
+        output gradient shape: (no_parameters,)
+        output evaluation shape: (no_observations,)
+        """
+        jacobian, evaluation = self.jacobian(datapoint)
+        return jacobian.T @ vector, evaluation
+
     def supports_gradients(self) -> bool:
         """Return whether this evaluator can provide input derivatives."""
-        return type(self).jacobian is not Evaluator.jacobian
+        return type(self).jacobian is not Evaluator.jacobian or type(self).vjp is not Evaluator.vjp
 
     def set_use_gradients(self, enabled: bool) -> None:
         """Optional hook for evaluators with switchable gradient support."""

@@ -105,6 +105,8 @@ class Samples:
         self.notes = [pd.DataFrame()] * self.no_stages
         for n, stage_name in enumerate(self.stage_names):
             dirname = os.path.join(self.sampling_output_dir, "notes", stage_name)
+            if not os.path.isdir(dirname):
+                continue
             files = [f for f in os.listdir(dirname) if os.path.isfile(os.path.join(dirname, f))]
             files.sort()
             no_samplers = len(files)
@@ -113,8 +115,22 @@ class Samples:
                 data = pd.read_csv(filepath)
                 self.notes[n] = pd.concat([self.notes[n], data])
 
+    def load_subchain_stats(self):
+        self.subchain_stats = [pd.DataFrame()] * self.no_stages
+        for n, stage_name in enumerate(self.stage_names):
+            dirname = os.path.join(self.sampling_output_dir, "subchain_stats", stage_name)
+            if not os.path.isdir(dirname):
+                continue
+            files = [f for f in os.listdir(dirname) if os.path.isfile(os.path.join(dirname, f))]
+            files.sort()
+            for filename in files:
+                filepath = os.path.join(dirname, filename)
+                data = pd.read_csv(filepath)
+                self.subchain_stats[n] = pd.concat([self.subchain_stats[n], data], ignore_index=True)
+
     def summarize(self):
         self.load_notes()
+        self.load_subchain_stats()
         # create pandas data frame containing sums of dataframes in self.notes:
         summary = pd.DataFrame()
         for notes in self.notes:
@@ -123,6 +139,27 @@ class Samples:
         summary = summary.T
         # name the rows with self.stage_names:
         summary = summary.set_axis(labels=self.stage_names, axis=0)
+
+        subchain_acceptance_rate = []
+        subchain_move_rate = []
+        outer_acceptance_given_move = []
+        for stats in self.subchain_stats:
+            if stats.empty:
+                subchain_acceptance_rate.append(np.nan)
+                subchain_move_rate.append(np.nan)
+                outer_acceptance_given_move.append(np.nan)
+                continue
+            subchain_acceptance_rate.append(float(stats["subchain_acceptance_rate"].mean()))
+            subchain_move_rate.append(float(stats["outer_proposed_changed"].mean()))
+            moved = stats["outer_proposed_changed"] > 0
+            if moved.any():
+                outer_acceptance_given_move.append(float(stats.loc[moved, "outer_accepted"].mean()))
+            else:
+                outer_acceptance_given_move.append(np.nan)
+
+        summary["subchain_acceptance_rate"] = subchain_acceptance_rate
+        summary["subchain_move_rate"] = subchain_move_rate
+        summary["outer_acceptance_given_move"] = outer_acceptance_given_move
         self.summary = summary
 
     def _get_stage_names(self, stages_to_disp: List[int] | None = None):
@@ -1081,9 +1118,10 @@ class Samples:
         ax.set_yticklabels(labels)
         ax.set_title("Parameter Correlation Heatmap")
 
-        for i in range(self.no_parameters):
-            for j in range(self.no_parameters):
-                ax.text(j, i, f"{corr[i, j]:.2f}", ha="center", va="center", color="black", fontsize=8)
+        if self.no_parameters <= 10:
+            for i in range(self.no_parameters):
+                for j in range(self.no_parameters):
+                    ax.text(j, i, f"{corr[i, j]:.2f}", ha="center", va="center", color="black", fontsize=8)
 
         fig.tight_layout()
         return fig, ax, corr
@@ -1165,38 +1203,123 @@ class Samples:
                 f"observations has length {observations.size}, expected {no_observations}."
             )
 
-        par_all, obs_all = self._load_snapshot_parameters_and_observations(
-            no_observations=no_observations,
-            chains_to_disp=chains_to_disp,
-            stages_to_disp=stages_to_disp,
-        )
-        if obs_all.shape[0] == 0:
+        n_keep = max(int(n_best), 0)
+        if n_keep == 0:
             columns = ["rank", "l2_misfit"]
             param_names = par_names or [f"par_{i}" for i in range(self.no_parameters)]
-            return pd.DataFrame(columns=columns + param_names), par_all, obs_all, np.empty((0,))
+            return (
+                pd.DataFrame(columns=columns + param_names),
+                np.empty((0, self.no_parameters)),
+                np.empty((0, no_observations)),
+                np.empty((0,)),
+            )
 
-        residuals = obs_all - observations.reshape((1, -1))
-        l2_misfit = np.sqrt(np.sum(residuals ** 2, axis=1))
-        n_keep = min(max(int(n_best), 0), len(l2_misfit))
-        best_idx = np.argsort(l2_misfit)[:n_keep]
+        if chains_to_disp is None:
+            chains_to_disp = range(self.list_of_stages[0].no_chains)
+        chains_to_disp = list(chains_to_disp)
+
+        if stages_to_disp is None:
+            stage_indices = list(range(self.no_stages))
+        else:
+            stage_indices = list(stages_to_disp)
+
+        best_par = np.empty((0, self.no_parameters), dtype=float)
+        best_obs = np.empty((0, no_observations), dtype=float)
+        best_misfits = np.empty((0,), dtype=float)
+        min_cols = 2 + self.no_parameters + no_observations
+        obs_reference = observations.reshape((1, -1))
+        chunk_size = 50000
+
+        for stage_idx in stage_indices:
+            stage_name = self.stage_names[stage_idx]
+            dirname = os.path.join(self.sampling_output_dir, "raw_data", stage_name)
+            if not os.path.isdir(dirname):
+                continue
+
+            files = [f for f in os.listdir(dirname) if os.path.isfile(os.path.join(dirname, f))]
+            files.sort()
+            for chain_idx in chains_to_disp:
+                if chain_idx >= len(files):
+                    continue
+                path_samples = os.path.join(dirname, files[chain_idx])
+                try:
+                    chunk_iter = pd.read_csv(path_samples, header=None, chunksize=chunk_size)
+                except pd.errors.EmptyDataError:
+                    continue
+
+                for df_samples in chunk_iter:
+                    if df_samples.shape[1] < min_cols:
+                        continue
+
+                    mask = df_samples.iloc[:, 0].astype(str) != "prerejected"
+                    if not mask.any():
+                        continue
+
+                    filtered = df_samples.loc[mask]
+                    par_block = np.asarray(filtered.iloc[:, 1:1 + self.no_parameters], dtype=float)
+                    obs_block = np.asarray(
+                        filtered.iloc[:, 2 + self.no_parameters:2 + self.no_parameters + no_observations],
+                        dtype=float,
+                    )
+                    if par_block.size == 0 or obs_block.size == 0:
+                        continue
+
+                    residuals = obs_block - obs_reference
+                    misfit_block = np.sqrt(np.einsum("ij,ij->i", residuals, residuals))
+
+                    if misfit_block.size > n_keep:
+                        local_keep = np.argpartition(misfit_block, n_keep - 1)[:n_keep]
+                        par_block = par_block[local_keep]
+                        obs_block = obs_block[local_keep]
+                        misfit_block = misfit_block[local_keep]
+
+                    if best_misfits.size == 0:
+                        candidate_par = par_block
+                        candidate_obs = obs_block
+                        candidate_misfits = misfit_block
+                    else:
+                        candidate_par = np.vstack((best_par, par_block))
+                        candidate_obs = np.vstack((best_obs, obs_block))
+                        candidate_misfits = np.concatenate((best_misfits, misfit_block))
+
+                    if candidate_misfits.size > n_keep:
+                        keep_idx = np.argpartition(candidate_misfits, n_keep - 1)[:n_keep]
+                    else:
+                        keep_idx = np.arange(candidate_misfits.size)
+                    order = np.argsort(candidate_misfits[keep_idx])
+                    keep_idx = keep_idx[order]
+
+                    best_par = candidate_par[keep_idx]
+                    best_obs = candidate_obs[keep_idx]
+                    best_misfits = candidate_misfits[keep_idx]
+
+        if best_misfits.size == 0:
+            columns = ["rank", "l2_misfit"]
+            param_names = par_names or [f"par_{i}" for i in range(self.no_parameters)]
+            return (
+                pd.DataFrame(columns=columns + param_names),
+                np.empty((0, self.no_parameters)),
+                np.empty((0, no_observations)),
+                np.empty((0,)),
+            )
 
         param_names = par_names or [f"par_{i}" for i in range(self.no_parameters)]
         data = {
-            "rank": np.arange(1, n_keep + 1, dtype=int),
-            "l2_misfit": l2_misfit[best_idx],
+            "rank": np.arange(1, len(best_misfits) + 1, dtype=int),
+            "l2_misfit": best_misfits,
         }
         for param_idx in range(self.no_parameters):
             if param_idx < len(param_names):
                 column_name = param_names[param_idx]
             else:
                 column_name = f"par_{param_idx}"
-            data[column_name] = par_all[best_idx, param_idx]
+            data[column_name] = best_par[:, param_idx]
 
         return (
             pd.DataFrame(data),
-            par_all[best_idx],
-            obs_all[best_idx],
-            l2_misfit[best_idx],
+            best_par,
+            best_obs,
+            best_misfits,
         )
 
     def plot_best_fits(self, best_obs: np.ndarray, best_misfits: np.ndarray,
@@ -1401,7 +1524,8 @@ class Samples:
                             obs_grid: np.ndarray | None = None,
                             n_sensors: int | None = None,
                             include_expensive_sections: bool = False,
-                            field_statistics: List[dict[str, Any]] | None = None):
+                            field_statistics: List[dict[str, Any]] | None = None,
+                            configuration: Any | None = None):
         """
         Creates an extended report in HTML format containing all available post-processing tools,
         including visualizations and statistics for combined stages and individual stages separately.
@@ -1429,8 +1553,11 @@ class Samples:
                 autocorrelation plots, ESS/R-hat summaries, and observation histograms.
             field_statistics (list of dict): Derived posterior field summaries. Each item should contain
                 keys "name", "mean", "std", and optionally "coordinates".
+            configuration (Any | None): Run configuration to render near the top of the report.
         """
         import base64
+        from dataclasses import fields, is_dataclass
+        from html import escape
         from io import BytesIO
         print("POST PROCESSING DEBUG AAAA", flush=True)
         # Initialize stages to display
@@ -1446,6 +1573,24 @@ class Samples:
             img_base64 = base64.b64encode(buf.read()).decode('utf-8')
             plt.close(fig)
             return img_base64
+
+        def get_configuration_items(config: Any | None) -> list[tuple[str, Any]]:
+            if config is None:
+                return []
+            if is_dataclass(config):
+                return [(field.name, getattr(config, field.name)) for field in fields(config)]
+            if isinstance(config, dict):
+                return list(config.items())
+            if hasattr(config, "__dict__"):
+                return list(vars(config).items())
+            return [("configuration", config)]
+
+        def format_configuration_value(value: Any) -> str:
+            if isinstance(value, np.ndarray):
+                return np.array2string(value, threshold=20, edgeitems=3)
+            return repr(value)
+
+        configuration_items = get_configuration_items(configuration)
         
         # Start building HTML
         html_parts = []
@@ -1481,11 +1626,24 @@ class Samples:
         html_parts.append('    <h1>Extended Sampling Report</h1>')
         html_parts.append('    <p class="description">This report contains comprehensive post-processing results including summary statistics, ')
         html_parts.append('    visualizations, and detailed analysis for all stages of the sampling process.</p>')
+        if configuration_items:
+            html_parts.append('    <div class="section" id="configuration">')
+            html_parts.append('        <h2>Run Configuration</h2>')
+            html_parts.append('        <p class="description">Configuration values used to generate this sampling run and report.</p>')
+            html_parts.append('        <div class="stats-table">')
+            html_parts.append('            <pre>')
+            for key, value in configuration_items:
+                html_parts.append(f'{escape(str(key))}: {escape(format_configuration_value(value))}')
+            html_parts.append('            </pre>')
+            html_parts.append('        </div>')
+            html_parts.append('    </div>')
         
         # Table of Contents
         html_parts.append('    <div class="toc">')
         html_parts.append('        <h2>Table of Contents</h2>')
         html_parts.append('        <ul>')
+        if configuration_items:
+            html_parts.append('            <li><a href="#configuration">Run Configuration</a></li>')
         html_parts.append('            <li><a href="#summary">1. Summary Statistics</a></li>')
         html_parts.append('            <li><a href="#overall">2. Overall Analysis (Combined Stages)</a></li>')
         html_parts.append('            <li><a href="#individual">3. Individual Stage Analysis</a></li>')
@@ -1505,7 +1663,8 @@ class Samples:
         html_parts.append('        <h2>1. Summary Statistics</h2>')
         html_parts.append('        <p class="description">This table summarizes the acceptance and rejection rates for all sampling stages. ')
         html_parts.append('        "Accepted" samples were accepted by the Metropolis-Hastings criterion, "rejected" samples were rejected, ')
-        html_parts.append('        and "pre-rejected" samples (if any) were rejected by a surrogate model before evaluation.</p>')
+        html_parts.append('        and "pre-rejected" samples (if any) were rejected by a surrogate model before evaluation. ')
+        html_parts.append('        For DAMH stages, the table also includes the mean within-subchain surrogate acceptance rate, the fraction of subchains that produced a changed proposal, and the exact outer acceptance conditional on a changed proposal.</p>')
         html_parts.append(self.summary.to_html(classes='summary-table'))
         html_parts.append('    </div>')
         
@@ -1533,39 +1692,45 @@ class Samples:
         html_parts.append('            </pre>')
         html_parts.append('        </div>')
         print("POST PROCESSING DEBUG DDDD", flush=True)
-        # 2.2 Histogram Grid
-        try:
+        # 2.2 Histogram Grid / 2.3 Marginals
+        if include_expensive_sections:
+            try:
+                html_parts.append('        <h3>2.2 Parameter Distribution Histograms</h3>')
+                html_parts.append('        <p class="description">This grid shows 1D histograms (diagonal) and 2D joint histograms (off-diagonal) ')
+                html_parts.append('        for all parameter combinations. 1D histograms show marginal distributions, while 2D histograms ')
+                html_parts.append('        reveal correlations between parameter pairs.</p>')
+                fig, _ = self.plot_hist_grid(
+                    bins1d=bins1d,
+                    bins2d=bins2d,
+                    parameters_to_disp=parameters_to_disp,
+                    stages_to_disp=stages_to_disp,
+                    par_names=par_names,
+                    prior=prior,
+                )
+                img_base64 = fig_to_base64(fig)
+                html_parts.append(f'        <img src="data:image/png;base64,{img_base64}" alt="Overall Histogram Grid">')
+            except:
+                html_parts.append('        <p class="description" style="color: orange;">Histogram grid unavailable: not enough samples or an error occurred during plotting.</p>')
+            try:
+                html_parts.append('        <h3>2.3 One-dimensional Marginal Histograms</h3>')
+                html_parts.append('        <p class="description">For high-dimensional problems, all 1D marginals are more informative than a full pairwise grid.</p>')
+                fig, _ = self.plot_hist_marginals(
+                    bins1d=bins1d,
+                    parameters_to_disp=range(self.no_parameters),
+                    stages_to_disp=stages_to_disp,
+                    par_names=par_names,
+                    prior=prior,
+                    ncols=4,
+                )
+                img_base64 = fig_to_base64(fig)
+                html_parts.append(f'        <img src="data:image/png;base64,{img_base64}" alt="Overall 1D Marginals">')
+            except Exception as e:
+                html_parts.append(f'        <p class="description" style="color: orange;">1D marginals unavailable: {str(e)}</p>')
+        else:
             html_parts.append('        <h3>2.2 Parameter Distribution Histograms</h3>')
-            html_parts.append('        <p class="description">This grid shows 1D histograms (diagonal) and 2D joint histograms (off-diagonal) ')
-            html_parts.append('        for all parameter combinations. 1D histograms show marginal distributions, while 2D histograms ')
-            html_parts.append('        reveal correlations between parameter pairs.</p>')
-            fig, _ = self.plot_hist_grid(
-                bins1d=bins1d,
-                bins2d=bins2d,
-                parameters_to_disp=parameters_to_disp,
-                stages_to_disp=stages_to_disp,
-                par_names=par_names,
-                prior=prior,
-            )
-            img_base64 = fig_to_base64(fig)
-            html_parts.append(f'        <img src="data:image/png;base64,{img_base64}" alt="Overall Histogram Grid">')
-        except:
-            html_parts.append('        <p class="description" style="color: orange;">Histogram grid unavailable: not enough samples or an error occurred during plotting.</p>')
-        try:
+            html_parts.append('        <p class="description">Skipped in the lightweight report because full histograms require concatenating very large sample arrays.</p>')
             html_parts.append('        <h3>2.3 One-dimensional Marginal Histograms</h3>')
-            html_parts.append('        <p class="description">For high-dimensional problems, all 1D marginals are more informative than a full pairwise grid.</p>')
-            fig, _ = self.plot_hist_marginals(
-                bins1d=bins1d,
-                parameters_to_disp=range(self.no_parameters),
-                stages_to_disp=stages_to_disp,
-                par_names=par_names,
-                prior=prior,
-                ncols=4,
-            )
-            img_base64 = fig_to_base64(fig)
-            html_parts.append(f'        <img src="data:image/png;base64,{img_base64}" alt="Overall 1D Marginals">')
-        except Exception as e:
-            html_parts.append(f'        <p class="description" style="color: orange;">1D marginals unavailable: {str(e)}</p>')
+            html_parts.append('        <p class="description">Skipped in the lightweight report because all marginals for this run are too memory-intensive.</p>')
         print("POST PROCESSING DEBUG EEEE", flush=True)
         """
         # 2.3 Chain Traces
@@ -1775,7 +1940,18 @@ class Samples:
             html_parts.append('        Lower CpUS indicates a more efficient stage. Values are computed per stage using stage-wise autocorrelation.</p>')
             try:
                 cpus_summary = self.calculate_CpUS(list_of_stages_groups=[[i] for i in stages_to_disp], surrogate_cost_ratio=0.0)
-                cpus_df = cpus_summary.iloc[stages_to_disp][["accepted", "rejected", "pre-rejected", "sum", "ratio_evaluated", "autocorr", "CpUS"]].copy()
+                cpus_df = cpus_summary.iloc[stages_to_disp][[
+                    "accepted",
+                    "rejected",
+                    "pre-rejected",
+                    "sum",
+                    "ratio_evaluated",
+                    "subchain_acceptance_rate",
+                    "subchain_move_rate",
+                    "outer_acceptance_given_move",
+                    "autocorr",
+                    "CpUS",
+                ]].copy()
                 cpus_df = cpus_df.rename(columns={"ratio_evaluated": "ratio_evaluated_exact", "autocorr": "autocorr_time"})
                 html_parts.append(cpus_df.to_html(classes='summary-table', float_format=lambda x: f"{x:.4f}"))
             except Exception as e:
@@ -1995,6 +2171,9 @@ class Samples:
         html_parts.append('</html>')
         
         # Write to file
+        output_dirname = os.path.dirname(output_file)
+        if output_dirname:
+            os.makedirs(output_dirname, exist_ok=True)
         with open(output_file, 'w') as f:
             f.write('\n'.join(html_parts))
         

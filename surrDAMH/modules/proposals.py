@@ -14,6 +14,7 @@ class Proposal:
         self.log_prior_gradient: Callable
         self.no_parameters: int
         self.needs_gradients: bool = False
+        self.subchain_length: int = 1
         pass
 
     def propose_sample(self, current_sample: npt.NDArray) -> npt.NDArray:
@@ -48,10 +49,10 @@ class Proposal:
 
 class GaussRandomWalk(Proposal):  # initiated by SAMPLERs
     def __init__(self, no_parameters, sd_or_cov=1.0, seed=0) -> None:
+        super().__init__()
         self.no_parameters = no_parameters
         self._generator = np.random.RandomState(seed=seed)
         self.set_covariance(sd_or_cov=sd_or_cov)
-        self.needs_gradients = False
 
     def set_covariance(self, sd_or_cov: npt.ArrayLike) -> None:
         # sd_or_cov is scalar/vector/covariance matrix:
@@ -91,12 +92,12 @@ class PCN(Proposal):  # preconditioned Crank-Nicolson proposal
             prior_sd_or_cov: standard deviations (1D) or covariance matrix (2D) of the prior
             seed: random seed for reproducibility
         """
+        super().__init__()
         self.no_parameters = no_parameters
         self.beta = beta
         self.prior_mean = np.array(prior_mean)
         self._generator = np.random.RandomState(seed=seed)
         self._set_prior_covariance(prior_sd_or_cov)
-        self.needs_gradients = False
 
     def _set_prior_covariance(self, sd_or_cov: npt.ArrayLike) -> None:
         if np.isscalar(sd_or_cov):
@@ -136,10 +137,10 @@ class GaussRandomWalk_adaptive(GaussRandomWalk):  # initiated by SAMPLERs
             corr_limit (float): maximal alowed correlation of proposal distribution
             period (int): number of proposed samples to adapt
         """
+        # TODO: super().__init__()
         self.no_parameters = no_parameters
         self._generator = np.random.RandomState(seed=seed)
         self.set_covariance(sd_or_cov=sd_or_cov)
-        self.needs_gradients = False
 
         self.target_rate = target_rate
         self.corr_limit = corr_limit
@@ -200,6 +201,7 @@ class Hamiltonian(Proposal):
             num_steps: int — number of leapfrog steps
             seed: random seed for reproducibility
         """
+        super().__init__()
         self.no_parameters = no_parameters
         self.step_size = step_size
         self.num_steps = num_steps
@@ -222,10 +224,18 @@ class Hamiltonian(Proposal):
             variances = self.sd_or_cov**2
             self.M = np.diag(variances)
             self.M_inv = np.diag(1/variances)
+            self._mass_is_diagonal = True
+            self._mass_sd = self.sd_or_cov.copy()
         else:  # proposal - normal correlated
             self.generate_normal_sample = self._generate_normal_sample_multivariate
             self.M = self.sd_or_cov
             self.M_inv = np.linalg.inv(self.sd_or_cov)
+            self._mass_is_diagonal = False
+            eigenvalues, eigenvectors = np.linalg.eigh(self.M)
+            if np.any(eigenvalues <= 0.0):
+                raise ValueError("Hamiltonian mass matrix must be positive definite")
+            self._mass_eigenvalues = eigenvalues
+            self._mass_eigenvectors = eigenvectors
 
     def _generate_normal_sample_uncorrelated(self, mean: npt.NDArray) -> npt.NDArray:
         return self._generator.normal(mean, self.sd_or_cov)
@@ -298,6 +308,28 @@ class Hamiltonian(Proposal):
         self.M_inv: npt.NDArray  # inverse mass matrix, will be set in set_covariance"""
 
 class HamiltonianInfinite(Hamiltonian):
+    def _apply_prior_kinetic_flow(self, q: npt.NDArray, p: npt.NDArray) -> tuple[npt.NDArray, npt.NDArray]:
+        if self._mass_is_diagonal:
+            frequencies = 1.0 / self._mass_sd
+            angles = self.step_size * frequencies
+            cos_angles = np.cos(angles)
+            sin_angles = np.sin(angles)
+            q_new = cos_angles * q + (sin_angles / self._mass_sd) * p
+            p_new = cos_angles * p - (self._mass_sd * sin_angles) * q
+            return q_new, p_new
+
+        sqrt_eigenvalues = np.sqrt(self._mass_eigenvalues)
+        angles = self.step_size / sqrt_eigenvalues
+        cos_angles = np.cos(angles)
+        sin_angles = np.sin(angles)
+        q_eigen = self._mass_eigenvectors.T @ q
+        p_eigen = self._mass_eigenvectors.T @ p
+        q_eigen_new = cos_angles * q_eigen + (sin_angles / sqrt_eigenvalues) * p_eigen
+        p_eigen_new = cos_angles * p_eigen - (sqrt_eigenvalues * sin_angles) * q_eigen
+        q_new = self._mass_eigenvectors @ q_eigen_new
+        p_new = self._mass_eigenvectors @ p_eigen_new
+        return q_new, p_new
+
     def _leapfrog(self, q0: npt.NDArray, p0_start: npt.NDArray) -> tuple[npt.NDArray, npt.NDArray]:
         """
         Gaussian prior preserving integrator for Hamiltonian dynamics.
@@ -310,17 +342,15 @@ class HamiltonianInfinite(Hamiltonian):
             q: ndarray — final position
             p_end: ndarray — final velocity (after velocity flip)
         """
-        # TODO: check matrix multiplications
         q = q0.copy()
         p = p0_start.copy()
-        p = p - 0.5 * self.step_size * self.M @ self.log_likelihood_gradient(q)  # half step for velocity
-        for i in range(self.num_steps): 
-            q = np.cos(self.step_size) * q + np.sin(self.step_size) * p  # full step for position
-            p = np.cos(self.step_size) * p - np.sin(self.step_size) * q  # full step for velocity
+        p = p - 0.5 * self.step_size * self.log_likelihood_gradient(q)  # half step for momentum
+        for i in range(self.num_steps):
+            q, p = self._apply_prior_kinetic_flow(q, p)
             if i < self.num_steps - 1:
-                p = p - self.step_size * self.M @ self.log_likelihood_gradient(q)  # full step for velocity (except at the end)
-        p = p - 0.5 * self.step_size * self.M @ self.log_likelihood_gradient(q)  # final half step for velocity
-        p_end = -p  # negate velocity (for reversibility — does not affect acceptance)
+                p = p - self.step_size * self.log_likelihood_gradient(q)  # full step for momentum (except at the end)
+        p = p - 0.5 * self.step_size * self.log_likelihood_gradient(q)  # final half step for momentum
+        p_end = -p  # negate momentum (for reversibility — does not affect acceptance)
         return q, p_end
 
 
@@ -334,6 +364,7 @@ class BlockProposal(Proposal):
             group_probabilities: optional list of probabilities for selecting each group. If None, groups are selected uniformly.
             seed: random seed for reproducibility
         """
+        super().__init__()
         self.list_of_proposals = list_of_proposals
         self.list_of_groups = list_of_groups
         self.no_parameters = no_parameters

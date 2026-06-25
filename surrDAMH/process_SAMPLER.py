@@ -13,6 +13,7 @@ from torch.mtia import snapshot
 
 from surrDAMH.configuration import Configuration
 from surrDAMH.distributions.parent import Distribution
+from surrDAMH.modules.algorithm_interfaces_local import LocalEvaluatorProvider
 from surrDAMH.modules.algorithm_interfaces_mpi import (MpiEvaluatorProvider,
                                                        MpiSnapshotSink,
                                                        MpiSolverPoolObservationProvider)
@@ -48,7 +49,7 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
             max_sampler_isend_requests=conf.max_sampler_isend_requests,
         )
     else:
-        commEvaluator = None
+        commEvaluator = LocalEvaluatorProvider(surrogate_evaluator) if surrogate_evaluator is not None else None
         commSnapshot = None
 
     # choice of initial sample:
@@ -77,20 +78,26 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
                 seed=seed0+1
             )
         elif stage.proposal_type == "Hamiltonian":
-            my_Prop = proposals.Hamiltonian( # TODO
+            hamiltonian_sd_or_cov = stage.proposal_sd_or_cov
+            if hamiltonian_sd_or_cov is None:
+                hamiltonian_sd_or_cov = 1.0
+            my_Prop = proposals.Hamiltonian(
                 no_parameters=conf.no_parameters,
                 seed=seed0+1,
                 num_steps=stage.hamiltonian_num_steps,
                 step_size=stage.hamiltonian_step_size,
-                # sd_or_cov=stage.proposal_sd_or_cov,
+                sd_or_cov=hamiltonian_sd_or_cov,
             )
         elif stage.proposal_type == "HamiltonianInfinite":
-            my_Prop = proposals.HamiltonianInfinite( # TODO
+            hamiltonian_sd_or_cov = stage.proposal_sd_or_cov
+            if hamiltonian_sd_or_cov is None:
+                hamiltonian_sd_or_cov = 1.0
+            my_Prop = proposals.HamiltonianInfinite(
                 no_parameters=conf.no_parameters,
                 seed=seed0+1,
                 num_steps=stage.hamiltonian_num_steps,
                 step_size=stage.hamiltonian_step_size,
-                # sd_or_cov=stage.proposal_sd_or_cov, # TODO: should be set as Gaussian prior covariance
+                sd_or_cov=hamiltonian_sd_or_cov,
             )
         elif stage.proposal_type == "block":
             my_Prop = proposals.BlockProposal(

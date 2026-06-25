@@ -90,7 +90,7 @@ class PyTorchNNEvaluator(Evaluator):
             datapoints_tensor = torch.tensor(datapoints, dtype=torch.float32, device="cpu").reshape(-1, self.no_parameters)
             outputs = self.model(datapoints_tensor)
             outputs = outputs.detach().cpu().numpy().reshape(-1, self.no_observations)
-            outputs = outputs * self.output_scale.reshape(1, -1) + self.output_mean.reshape(1, -1)
+            outputs = outputs * self.output_scale.reshape(1, -1) + self.output_mean.reshape(1, -1) # overflow encountered
             return outputs.flatten()
 
     def jacobian(self, datapoints: npt.NDArray) -> tuple[npt.NDArray, npt.NDArray]:
@@ -103,18 +103,61 @@ class PyTorchNNEvaluator(Evaluator):
                 f"Expected datapoints with shape ({self.no_parameters},), got {datapoints_array.shape}"
             )
 
-        datapoints_tensor = torch.tensor(datapoints_array, dtype=torch.float32, device="cpu", requires_grad=True)
-        outputs_normalized = self.model(datapoints_tensor).reshape(self.no_observations)
-        scale_tensor = torch.tensor(self.output_scale, dtype=torch.float32, device="cpu")
-        mean_tensor = torch.tensor(self.output_mean, dtype=torch.float32, device="cpu")
-        outputs = outputs_normalized * scale_tensor + mean_tensor
+        # Cast model weights to float64 for Jacobian computation to reduce
+        # chain-rule floating-point accumulation errors across layers.
+        self.model.double()
+        try:
+            scale_tensor = torch.tensor(self.output_scale, dtype=torch.float64, device="cpu")
+            mean_tensor = torch.tensor(self.output_mean, dtype=torch.float64, device="cpu")
 
-        jacobian_rows = []
-        for j in range(self.no_observations):
-            grad = torch.autograd.grad(outputs[j], datapoints_tensor, retain_graph=True, create_graph=False)[0]
-            jacobian_rows.append(grad)
-        jacobian = torch.stack(jacobian_rows, dim=0)
-        return jacobian.detach().cpu().numpy(), outputs.detach().cpu().numpy()
+            def model_fn(x: torch.Tensor) -> torch.Tensor:
+                return self.model(x).reshape(self.no_observations) * scale_tensor + mean_tensor
+
+            x = torch.tensor(datapoints_array, dtype=torch.float64, device="cpu")
+            # Forward-mode AD: requires no_parameters=45 passes instead of
+            # no_observations=72 passes that reverse-mode would need.
+            jac = torch.func.jacfwd(model_fn)(x)  # shape: (no_observations, no_parameters)
+            evaluation = model_fn(x)
+        finally:
+            self.model.float()
+
+        return jac.detach().cpu().numpy(), evaluation.detach().cpu().numpy()
+
+    def vjp(self, datapoint: npt.NDArray, vector: npt.NDArray) -> tuple[npt.NDArray, npt.NDArray]:
+        if not self.use_gradients:
+            raise RuntimeError("Surrogate gradients are disabled for this PyTorch evaluator")
+
+        datapoint_array = np.asarray(datapoint, dtype=np.float32) # overflow encountered
+        if datapoint_array.shape != (self.no_parameters,):
+            raise ValueError(
+                f"Expected datapoint with shape ({self.no_parameters},), got {datapoint_array.shape}"
+            )
+
+        vector_array = np.asarray(vector, dtype=np.float32)
+        if vector_array.shape != (self.no_observations,):
+            raise ValueError(
+                f"Expected vector with shape ({self.no_observations},), got {vector_array.shape}"
+            )
+
+        self.model.double()
+        try:
+            scale_tensor = torch.tensor(self.output_scale, dtype=torch.float64, device="cpu")
+            mean_tensor = torch.tensor(self.output_mean, dtype=torch.float64, device="cpu")
+            x = torch.tensor(datapoint_array, dtype=torch.float64, device="cpu", requires_grad=True)
+            vector_tensor = torch.tensor(vector_array, dtype=torch.float64, device="cpu")
+
+            evaluation = self.model(x).reshape(self.no_observations) * scale_tensor + mean_tensor
+            gradient = torch.autograd.grad(
+                evaluation,
+                x,
+                grad_outputs=vector_tensor,
+                retain_graph=False,
+                create_graph=False,
+            )[0]
+        finally:
+            self.model.float()
+
+        return gradient.detach().cpu().numpy(), evaluation.detach().cpu().numpy()
 
     def supports_gradients(self) -> bool:
         return self.use_gradients
