@@ -97,7 +97,7 @@ if rank_world == 0:
 
     samples.html_report_extended(
         no_observations=conf.no_observations,  # Number of observations (can be 0 if not using raw_data)
-        chosen_observations=None,              # Indices of observations to display (None = all)
+        observations_to_disp=None,              # Indices of observations to display (None = all)
         grid=None,                             # Time/spatial grid for observations (optional)
         grid_interp=None,                      # Interpolation grid (optional)
         bins=[20],                             # Bins for observation histograms (optional)

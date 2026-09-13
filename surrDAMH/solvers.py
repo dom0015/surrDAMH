@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import importlib.util as iu
+from typing import Any
 
 import numpy as np
 import numpy.typing as npt
@@ -20,13 +21,20 @@ class Solver:
         """
         pass
 
-    def set_parameters(self, parameters: npt.ArrayLike) -> None:
-        """Sets sample for which the observations will be computed later."""
-        pass
+    def set_parameters(self, parameters: npt.NDArray):
+        self.parameters = parameters
 
     def get_observations(self) -> npt.NDArray:
         """Gets observations computed by the solver."""
         raise NotImplementedError
+
+    def set_parameters_and_get_observations(self, parameters: npt.NDArray):
+        self.set_parameters(parameters)
+        return self.get_observations()
+
+    def visualize_solution(self, show: bool = False) -> list[tuple[Any, Any]]:
+        """Return a list of (figure, axes) pairs for optional solver-specific visualizations."""
+        return []
     
     def __call__(self, parameters: npt.ArrayLike) -> npt.NDArray:
         self.set_parameters(parameters)

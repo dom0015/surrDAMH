@@ -157,6 +157,8 @@ class AlgorithmBase:
             row += [tag]
             if observations is not None:
                 row += list(observations.flatten())
+            row += [self.proposed.log_likelihood if self.proposed.log_likelihood is not None else np.nan]
+            row += [self.proposed.log_prior if self.proposed.log_prior is not None else np.nan]
             self.monitor(data_name="raw_data", row=row)
 
     def _transition_to_accepted(self) -> None:

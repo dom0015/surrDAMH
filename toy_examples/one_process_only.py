@@ -19,7 +19,10 @@ and samples are generated using the basic MH algorithm).
 solver_instance = Solver_illustrative_local()
 conf = surrDAMH.Configuration(output_dir="out_one_process_only", no_parameters=2, no_observations=1,
                               use_collector=False, use_solvers_pool=False)
-prior = surrDAMH.distributions.Normal(mean=[0.0, 0.0], sd=1.0)
+prior = surrDAMH.distributions.PriorIndependentComponents([
+    surrDAMH.distributions.NormalComponent(mu=0.0, sigma=1.0),
+    surrDAMH.distributions.NormalComponent(mu=0.0, sigma=1.0),
+])
 likelihood = surrDAMH.distributions.Normal(mean=5.0, sd=1.0)
 
 # sampling process stages:

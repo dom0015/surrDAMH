@@ -23,6 +23,7 @@ from surrDAMH.modules import proposals
 from surrDAMH.solvers import Solver
 from surrDAMH.stages import Stage
 from surrDAMH.surrogates.parent import Evaluator
+from surrDAMH.modules.continuation import save_last_sample
 
 
 def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distribution, list_of_stages: List[Stage],
@@ -59,6 +60,9 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
     elif conf.initial_sample_type == "user_specified":
         assert conf.initial_samples_distribution is not None, "if initial_sample_type == 'user_specified', initial_samples_distribution must be specified"
         initial_sample = alg.Sample(parameters=conf.initial_samples_distribution.rvs())
+    elif conf.initial_sample_type == "continued":
+        assert conf.continued_samples is not None, "continued_samples must be populated by Configuration when initial_sample_type == 'continued'"
+        initial_sample = alg.Sample(parameters=conf.continued_samples[rank_world])
     else:
         initial_sample = alg.Sample(parameters=prior.rvs())
     print("Sampler at rank", rank_world, "- initial sample:", initial_sample.parameters, flush=True)
@@ -183,6 +187,8 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
         # set initial sample for next stage:
         if not stage.is_excluded:
             initial_sample = alg_instance.current
+        # persist this stage's last sample so another experiment can continue from it
+        save_last_sample(conf, stage.name, rank_world, alg_instance.current.parameters)
 
         # terminate communicators between sampler and collector if they will not be used later:
         following_DAMH = [list_of_stages[j].algorithm_type == "DAMH" for j in range(i+1, no_stages)]

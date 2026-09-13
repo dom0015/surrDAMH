@@ -73,6 +73,7 @@ class Updater:
     """
 
     def __init__(self, no_parameters: int, no_observations: int) -> None:
+        self.no_snapshots: int
         pass
 
     def delayed_init(self, data):
@@ -110,6 +111,50 @@ class Updater:
     def set_use_gradients(self, enabled: bool) -> None:
         """Optional hook for updaters with switchable gradient support."""
         return None
+
+    def get_initial_snapshots(self) -> list[npt.NDArray] | None:
+        """Snapshots to preload into the collector, if this updater already has training data."""
+        return None
+
+    def supports_training_data_persistence(self) -> bool:
+        """Return whether this updater can save and load training data."""
+        return False
+
+    def supports_state_persistence(self) -> bool:
+        """Return whether this updater can save and load the full state of the surrogate model."""
+        return False
+
+    def save_training_data(self, path: str) -> None:
+        """
+        Saves the surrogate model training data to files.
+        """
+        raise NotImplementedError(
+            f"Training-data persistence is not implemented for {type(self).__name__}"
+        )
+    
+    def load_training_data(self, path: str):
+        """
+        Loads the surrogate model training data from files.
+        Returns a list of numpy arrays containing the loaded snapshots and weights.
+        """
+        raise NotImplementedError(f"Training data persistence is not implemented for {type(self).__name__}")
+
+    def save_state(self, checkpoint_path: str, data_path: str | None = None,
+                   save_optimizer: bool = True) -> None:
+        """
+        Saves the surrogate model state to files.
+        """
+        raise NotImplementedError(
+            f"State persistence is not implemented for {type(self).__name__}"
+        )
+
+    def load_state(self, checkpoint_path: str, data_path: str | None = None,
+                   load_optimizer: bool = True) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
+        """
+        Loads the surrogate model state from files.
+        Returns a list of numpy arrays containing the loaded snapshots and weights.
+        """
+        raise NotImplementedError(f"State persistence is not implemented for {type(self).__name__}")
 
 
 def closest_point_distance(par, point):

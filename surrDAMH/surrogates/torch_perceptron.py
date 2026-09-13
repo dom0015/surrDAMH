@@ -112,7 +112,7 @@ class PyTorchNNEvaluator(Evaluator):
         self.use_gradients = enabled
 
 
-class PyTorchNNOngoingUpdater(Updater):
+class NeuralNetworkUpdaterBasic(Updater):
     def __init__(self, no_parameters, no_observations, hidden_layer_sizes=(100,), solver: Literal["adam", "lbfgs"] = "lbfgs",
                  activation='tanh', learning_rate=1e-3, iterations_batch=100, loss_target=1e-5,
                  device: Literal["cpu", "cuda"] = "cpu", verbose: bool = False, seed: int | None = None) -> None:

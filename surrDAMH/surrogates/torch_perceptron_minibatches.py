@@ -9,6 +9,7 @@ import torch.nn as nn
 import torch.optim as optim
 
 from surrDAMH.surrogates.parent import Evaluator, Updater
+from surrDAMH.surrogates.reuse import register_updater
 
 
 class PyTorchMLP(nn.Module):
@@ -166,14 +167,15 @@ class PyTorchNNEvaluator(Evaluator):
         self.use_gradients = enabled
 
 
-class PyTorchNNOngoingUpdater2(Updater):
+@register_updater
+class NeuralNetworkUpdaterMinibatches(Updater):
     def __init__(
         self,
         no_parameters,
         no_observations,
         hidden_layer_sizes=(100,),
-        solver: Literal["adam", "adamw", "lbfgs"] = "adam",
-        activation: str = "tanh",
+        solver: Literal["adamw", "adam", "lbfgs"] = "adamw",
+        activation: Literal["silu", "relu", "tanh", "gelu", "elu", "leaky_relu", "identity"] = "silu",
         learning_rate=1e-3,
         iterations_batch=100,
         loss_target=1e-5,
@@ -309,6 +311,12 @@ class PyTorchNNOngoingUpdater2(Updater):
                 mismatches.append("output_scale differs from checkpoint")
         if mismatches:
             raise ValueError(f"Checkpoint is incompatible with updater configuration: {'; '.join(mismatches)}")
+
+    def get_initial_snapshots(self) -> list[npt.NDArray] | None:
+        if not self.training_data_loaded:
+            return None
+        parameters, observations, weights = self.get_training_data_arrays()
+        return [parameters, observations, weights]
 
     def get_training_data_arrays(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         parameters = self.par.detach().cpu().numpy().reshape(-1, self.no_parameters)
@@ -638,3 +646,10 @@ class PyTorchNNOngoingUpdater2(Updater):
         parameters, observations, _ = self.get_training_data_arrays()
         np.savetxt(path_par, parameters, delimiter=',')
         np.savetxt(path_obs, observations, delimiter=',')
+
+    def supports_state_persistence(self) -> bool:
+        return True
+
+    def supports_training_data_persistence(self) -> bool:
+        return True
+    

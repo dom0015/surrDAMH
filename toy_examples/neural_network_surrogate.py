@@ -28,16 +28,19 @@ solver_spec = solver_examples.solver_spec_examples.SolverSpecExample1(sleep_time
 conf = surrDAMH.Configuration(output_dir="out_nn_surrogate", no_parameters=2, no_observations=1, min_snapshots_to_update=0, use_solvers_pool=False)
 
 # Gaussian prior distribution:
-prior = surrDAMH.distributions.Normal(mean=[0.0, 0.0], sd=1.0)
+prior = surrDAMH.distributions.PriorIndependentComponents([
+    surrDAMH.distributions.NormalComponent(mu=0.0, sigma=1.0),
+    surrDAMH.distributions.NormalComponent(mu=0.0, sigma=1.0),
+])
 
 # likelihood (additive Gaussian noise):
 observations = surrDAMH.solvers.calculate_artificial_observations(solver_spec=solver_spec, parameters=[-2, 2])
 likelihood = surrDAMH.distributions.Normal(mean=observations, sd=1.0)
 
 # neural network surrogate model:
-updater = surrDAMH.surrogates.PyTorchNNOngoingUpdater(no_parameters=conf.no_parameters, no_observations=conf.no_observations,
+updater = surrDAMH.surrogates.NeuralNetworkUpdaterBasic(no_parameters=conf.no_parameters, no_observations=conf.no_observations,
                                                       hidden_layer_sizes=(4, ), solver="adam", activation="tanh", learning_rate=1e-3,
-                                                      iterations_batch=100, loss_target=1e-6, device="cpu", verbose=True)
+                                                      iterations_batch=100, loss_target=1e-6, device="cpu", verbose=False)
 
 # sampling process stages:
 list_of_stages = []

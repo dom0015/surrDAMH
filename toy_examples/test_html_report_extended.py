@@ -18,7 +18,9 @@ conf = surrDAMH.Configuration(output_dir="out_test_html_extended", no_parameters
                               use_collector=False, use_solvers_pool=False, save_snapshots_to_file=False)
 solver_spec = SolverSpecNonlinearGeneric(no_parameters=conf.no_parameters, no_observations=conf.no_observations)
 prior_mean = [2.0] * conf.no_parameters
-prior = surrDAMH.distributions.Normal(mean=prior_mean, sd=1.0)
+prior = surrDAMH.distributions.PriorIndependentComponents([
+    surrDAMH.distributions.NormalComponent(mu=float(mu), sigma=1.0) for mu in prior_mean
+])
 obs_prior_mean = surrDAMH.solvers.calculate_artificial_observations(solver_spec=solver_spec, parameters=prior_mean)
 print("Solver output for prior mean: ", obs_prior_mean)
 observation = surrDAMH.solvers.calculate_artificial_observations(solver_spec=solver_spec, parameters=[3.0, 1.0, 3.0])

@@ -49,7 +49,10 @@ conf = surrDAMH.Configuration(output_dir="out_own_solver", no_parameters=2, no_o
 updater = surrDAMH.surrogates.PolynomialSklearnUpdater(no_parameters=conf.no_parameters, no_observations=conf.no_observations)
 
 # Gaussian prior distribution:
-prior = surrDAMH.distributions.Normal(mean=[0.0, 0.0], sd=1.0)
+prior = surrDAMH.distributions.PriorIndependentComponents([
+    surrDAMH.distributions.NormalComponent(mu=0.0, sigma=1.0),
+    surrDAMH.distributions.NormalComponent(mu=0.0, sigma=1.0),
+])
 
 # likelihood (additive Gaussian noise):
 observations = surrDAMH.solvers.calculate_artificial_observations(solver_instance=solver_instance, parameters=[-2, 2])

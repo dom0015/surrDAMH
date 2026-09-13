@@ -30,10 +30,11 @@ class Configuration:
     save_snapshots_to_file: bool = False  # save all obtained snapshots to file
     transform_before_saving: bool = True  # if False, save samples based on internal distribution
     transform_before_surrogate: bool = False  # if False, construct surrogate on internal distribution
-    initial_sample_type: Literal["lhs", "prior", "user_specified"] = "prior"  # specifies how to generate initial samples
+    initial_sample_type: Literal["lhs", "prior", "user_specified", "continued"] = "prior"  # specifies how to generate initial samples
     initial_samples_distribution: Distribution | None = None  # only if initial_sample_type == "user_specified"
+    continued_from_dir: str | None = None  # experiment directory to continue from (only if initial_sample_type == "continued")
     lhs_scale: float | npt.NDArray = 1.0  # only if initial_sample_type == "lhs"
-    state_dependent_approximation: bool = True  # shift posterior approximation by surrogate model error in current sample
+    state_dependent_approximation: bool = False  # shift posterior approximation by surrogate model error in current sample
     min_snapshots_initial: int = 1  # minimal number of snapshots for the construction of initial surrogate model
     min_snapshots_to_update: int = 1  # how many snapshots (at least) have to be added to update the surrogate model
     max_collected_snapshots_per_loop: int = 1000  # maximal number of snapshots to be collected in one loop
@@ -71,6 +72,17 @@ class Configuration:
             self.rank_solvers_pool = None
         assert self.no_samplers > 0, "number of MPI processes is too low, use at least 'mpirun -n 4'"
         self.sampler_ranks = np.arange(self.no_samplers)  # ranks 0, 1, ..., no_samplers-1
+
+        self.continued_samples: npt.NDArray | None = None
+        if self.initial_sample_type == "continued":
+            if self.continued_from_dir is None:
+                raise ValueError("continued_from_dir must be set when initial_sample_type == 'continued'")
+            from surrDAMH.modules.continuation import load_last_samples
+            self.continued_samples = load_last_samples(
+                experiment_dir=self.continued_from_dir,
+                no_parameters=self.no_parameters,
+                no_chains=self.no_samplers,
+            )
 
     def _append_path(self) -> None:
         assert self.paths_to_append is not None

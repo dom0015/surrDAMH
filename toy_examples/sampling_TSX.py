@@ -37,7 +37,7 @@ conf = surrDAMH.Configuration(output_dir="out_tsx", no_parameters=no_parameters,
                               state_dependent_approximation=False)
 
 # NN updater:
-updater = surrDAMH.surrogates.PyTorchNNOngoingUpdater(no_parameters=conf.no_parameters, no_observations=conf.no_observations,
+updater = surrDAMH.surrogates.NeuralNetworkUpdaterBasic(no_parameters=conf.no_parameters, no_observations=conf.no_observations,
                                                       hidden_layer_sizes=(48, 60), solver="adam", activation="tanh", learning_rate=1e-3,
                                                       iterations_batch=100, loss_target=1e-6, device="cpu", verbose=False, seed=15)
 

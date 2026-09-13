@@ -42,7 +42,9 @@ conf = surrDAMH.Configuration(output_dir="out_temp_no_sub", no_parameters=5, no_
                               initial_samples_distribution=initial_samples_distribution)
 
 # Gaussian prior distribution:
-prior = surrDAMH.distributions.Normal(mean=[0.0]*conf.no_parameters, sd=2.0)
+prior = surrDAMH.distributions.PriorIndependentComponents([
+    surrDAMH.distributions.NormalComponent(mu=0.0, sigma=2.0) for _ in range(conf.no_parameters)
+])
 
 # generate 100 random samples from prior, for each calculate observations:
 # if rank_world == 0:
@@ -69,7 +71,7 @@ likelihood = surrDAMH.distributions.Normal(mean=observations, sd=0.5)
 # neural network surrogate model:
 # updater = surrDAMH.surrogates.PolynomialSklearnUpdater(no_parameters=conf.no_parameters, no_observations=conf.no_observations)
 # updater = surrDAMH.surrogates.RBFInterpolationUpdater(no_parameters=conf.no_parameters, no_observations=conf.no_observations)
-updater = surrDAMH.surrogates.PyTorchNNOngoingUpdater(no_parameters=conf.no_parameters, no_observations=conf.no_observations,
+updater = surrDAMH.surrogates.NeuralNetworkUpdaterBasic(no_parameters=conf.no_parameters, no_observations=conf.no_observations,
                                                       hidden_layer_sizes=(4, ), solver="adam", activation="tanh", learning_rate=1e-3,
                                                       iterations_batch=100, loss_target=1e-6, device="cpu", verbose=True, seed=15)
 

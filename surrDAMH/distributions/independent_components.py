@@ -66,7 +66,7 @@ class PriorIndependentComponents(Distribution):
         return np.random.randn(self.no_parameters)
 
 
-class Uniform(UnivariateComponent):
+class UniformComponent(UnivariateComponent):
     """
     U(a,b)
     """
@@ -82,7 +82,7 @@ class Uniform(UnivariateComponent):
         return stats.uniform.pdf(x, loc=self.a, scale=self.b - self.a)
 
 
-class Lognormal(UnivariateComponent):
+class LognormalComponent(UnivariateComponent):
     """
     Lognormal(mu,sigma)
     """
@@ -98,7 +98,7 @@ class Lognormal(UnivariateComponent):
         return stats.lognorm.pdf(x, s=self.sigma, scale=np.exp(self.mu))
 
 
-class Beta(UnivariateComponent):
+class BetaComponent(UnivariateComponent):
     """
     Beta(alpha,beta)
     """
@@ -114,7 +114,7 @@ class Beta(UnivariateComponent):
         return stats.beta.pdf(x, self.alpha, self.beta)
 
 
-class Normal(UnivariateComponent):
+class NormalComponent(UnivariateComponent):
     """
     Normal(mu,sigma)
     """
@@ -128,3 +128,10 @@ class Normal(UnivariateComponent):
 
     def pdf(self, x):
         return stats.norm.pdf(x, loc=self.mu, scale=self.sigma)
+
+
+# Backward-compatible aliases for the component-style interface.
+Uniform = UniformComponent
+Lognormal = LognormalComponent
+Beta = BetaComponent
+Normal = NormalComponent

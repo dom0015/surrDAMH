@@ -14,6 +14,48 @@ import pandas as pd
 from scipy.stats import norm
 
 
+def rank_best_fit_candidates(misfits: np.ndarray | None = None,
+                             posteriors: np.ndarray | None = None,
+                             likelihoods: np.ndarray | None = None,
+                             mode: str = "l2") -> np.ndarray:
+    """Return indices that rank candidates from best to worst for a requested metric."""
+    normalized_mode = mode.lower()
+    if normalized_mode == "l2":
+        if misfits is None:
+            raise ValueError("misfits must be provided when ranking_mode='l2'")
+        values = np.asarray(misfits, dtype=float)
+        finite_mask = np.isfinite(values)
+        if not np.any(finite_mask):
+            raise ValueError("No finite L2 misfit values available for ranking")
+        candidate_idx = np.flatnonzero(finite_mask)
+        order = np.argsort(values[finite_mask], kind="mergesort")
+        return candidate_idx[order]
+
+    if normalized_mode == "posterior":
+        if posteriors is None:
+            raise ValueError("posteriors must be provided when ranking_mode='posterior'")
+        values = np.asarray(posteriors, dtype=float)
+        finite_mask = np.isfinite(values)
+        if not np.any(finite_mask):
+            raise ValueError("No finite posterior values available for ranking")
+        candidate_idx = np.flatnonzero(finite_mask)
+        order = np.argsort(-values[finite_mask], kind="mergesort")
+        return candidate_idx[order]
+
+    if normalized_mode == "likelihood":
+        if likelihoods is None:
+            raise ValueError("likelihoods must be provided when ranking_mode='likelihood'")
+        values = np.asarray(likelihoods, dtype=float)
+        finite_mask = np.isfinite(values)
+        if not np.any(finite_mask):
+            raise ValueError("No finite likelihood values available for ranking")
+        candidate_idx = np.flatnonzero(finite_mask)
+        order = np.argsort(-values[finite_mask], kind="mergesort")
+        return candidate_idx[order]
+
+    raise ValueError("Unsupported best-fit ranking mode. Expected 'l2', 'posterior', or 'likelihood'.")
+
+
 class StageSamples:
     def __init__(self, no_parameters, samples_dir: str, decompress_samples: bool,
                  load_posterior: bool, load_posterior_surrogate: bool):
@@ -157,9 +199,9 @@ class Samples:
             else:
                 outer_acceptance_given_move.append(np.nan)
 
-        summary["subchain_acceptance_rate"] = subchain_acceptance_rate
+        summary["subchain_acc_rate"] = subchain_acceptance_rate
         summary["subchain_move_rate"] = subchain_move_rate
-        summary["outer_acceptance_given_move"] = outer_acceptance_given_move
+        summary["outer_acc_given_move"] = outer_acceptance_given_move
         self.summary = summary
 
     def _get_stage_names(self, stages_to_disp: List[int] | None = None):
@@ -199,7 +241,7 @@ class Samples:
         """
         ratio_evaluated = (self.summary["accepted"] + self.summary["rejected"]) / self.summary["sum"]
         # add column to summary:
-        self.summary["ratio_evaluated"] = ratio_evaluated
+        self.summary["ratio_eval"] = ratio_evaluated
         autocorr_stages = np.zeros((self.no_stages,))
         cpus_stages = -np.ones((self.no_stages,), dtype=float)
         for stages_to_disp in list_of_stages_groups:
@@ -210,7 +252,7 @@ class Samples:
                 a, _ = autocorr.calculate_autocorr_time_mean()
                 a = np.mean(a)
                 autocorr_stages[stages_to_disp] = a
-                ratio_loc = self.summary["ratio_evaluated"].iloc[stages_to_disp]
+                ratio_loc = self.summary["ratio_eval"].iloc[stages_to_disp]
                 cpus_stages[stages_to_disp] = a * (ratio_loc + surrogate_cost_ratio)
             except Exception as e:
                 print(f"CpUS unavailable for stages {stages_to_disp}: {e}")
@@ -560,7 +602,7 @@ class Samples:
             no_observations (int): number of observations
             chosen_observations (ndarray of int of length N): indices forming the time series (otherwise all are used)
             grid (ndarray of float of length N): time values for the time series (otherwise range(N) is used)
-            grid_interp (ndarray of float): time grid for horizontal axis (otherwise grid_inter = grid)
+            grid_interp (ndarray of float): time grid for horizontal axis (otherwise grid_interp = grid)
             bins (list of int of length 2): [bins_x, bins_y] (optional)
             chains_to_disp (list of int of length N): chains that should be included (otherwise all chains are included)
             stages_to_disp (list of int): stages that should be included (otherwise all stages are included)
@@ -643,19 +685,34 @@ class Samples:
         min_G = min(G_all)
         max_G = max(G_all)
         range_G = max_G - min_G
-        hist_range = [[min(grid_interp), max(grid_interp)], [min_G - range_G / 10, max_G + range_G / 10]]
+        if bins is None:
+            nbins = (5 * 1.2 * np.sqrt(n_samples)).astype(int)
+            bins = [len_grid, nbins]
+        G_all = G_all.flatten()
+        min_G = min(G_all)
+        max_G = max(G_all)
+        range_G = max_G - min_G
+        if len_grid == 1:
+            hist_range = None
+        else:
+            x_min = -0.5
+            x_max = float(len_grid - 1 + 0.5)
+            if grid is not None and len(grid) == len_grid:
+                x_min = float(np.min(grid)) - 0.5
+                x_max = float(np.max(grid)) + 0.5
+            hist_range = [[x_min, x_max], [min_G - range_G / 10, max_G + range_G / 10]]
         if len_grid == 1:
             output = plt.hist(G_all, bins=bins[-1], weights=weights_all.flatten())
         else:
-            output = plt.hist2d(x_all.flatten(), G_all, bins=bins, range=hist_range, weights=weights_all.flatten(), cmap=cmap)  # , vmin=1, vmax=n_samples/10)
+            output = plt.hist2d(x_all.flatten(), G_all, bins=bins, range=hist_range, weights=weights_all.flatten(), cmap=cmap)
             plt.colorbar(output[3])
         plt.grid()
 
         if observations is not None:
             if len_grid == 1:
-                plt.plot(observations[chosen_observations], 0, 'ro', label="observation",)
+                plt.plot(observations[chosen_observations], 0, 'ro', linestyle='None', markersize=6, label="observation")
             else:
-                plt.plot(grid, observations[chosen_observations], 'r', label="observations", linewidth=1)
+                plt.plot(grid, observations[chosen_observations], 'r--', linewidth=1, marker='o', markersize=4, label="observations")
             plt.legend()
         return fig
 
@@ -1187,12 +1244,18 @@ class Samples:
     def find_best_fits(self, no_observations: int, observations: np.ndarray,
                        n_best: int = 10, chains_to_disp: Iterable | None = None,
                        stages_to_disp: Iterable | None = None,
-                       par_names: List[str] | None = None):
+                       par_names: List[str] | None = None,
+                       ranking_mode: Literal["l2", "posterior", "likelihood"] = "l2"):
         """
-        Find parameter snapshots with the smallest L2 misfit to the supplied observations.
+        Find parameter snapshots with the best score according to the requested ranking mode.
+
+        Supported modes:
+            - "l2": smallest L2 misfit to the supplied observations
+            - "posterior": largest log-posterior value
+            - "likelihood": largest log-likelihood value
 
         Returns:
-            tuple[DataFrame, ndarray, ndarray, ndarray]: table, parameters, model outputs, misfits.
+            tuple[DataFrame, ndarray, ndarray, ndarray]: table, parameters, model outputs, scores.
         """
         if no_observations <= 0:
             raise ValueError("no_observations must be positive.")
@@ -1225,10 +1288,13 @@ class Samples:
 
         best_par = np.empty((0, self.no_parameters), dtype=float)
         best_obs = np.empty((0, no_observations), dtype=float)
-        best_misfits = np.empty((0,), dtype=float)
+        best_scores = np.empty((0,), dtype=float)
         min_cols = 2 + self.no_parameters + no_observations
         obs_reference = observations.reshape((1, -1))
         chunk_size = 50000
+        normalized_mode = ranking_mode.lower()
+        if normalized_mode not in {"l2", "posterior", "likelihood"}:
+            raise ValueError("ranking_mode must be one of: 'l2', 'posterior', 'likelihood'")
 
         for stage_idx in stage_indices:
             stage_name = self.stage_names[stage_idx]
@@ -1264,36 +1330,69 @@ class Samples:
                     if par_block.size == 0 or obs_block.size == 0:
                         continue
 
-                    residuals = obs_block - obs_reference
-                    misfit_block = np.sqrt(np.einsum("ij,ij->i", residuals, residuals))
+                    if normalized_mode == "l2":
+                        residuals = obs_block - obs_reference
+                        score_block = np.sqrt(np.einsum("ij,ij->i", residuals, residuals))
+                        score_block = np.where(np.isfinite(score_block), score_block, np.inf)
+                    else:
+                        score_start = 2 + self.no_parameters + no_observations
+                        if filtered.shape[1] >= score_start + 2:
+                            score_values = np.asarray(
+                                filtered.iloc[:, score_start:score_start + 2],
+                                dtype=float,
+                            )
+                            if score_values.ndim == 2:
+                                log_likelihood_block = score_values[:, 0]
+                                log_prior_block = score_values[:, 1]
+                            else:
+                                log_likelihood_block = np.asarray([], dtype=float)
+                                log_prior_block = np.asarray([], dtype=float)
+                        else:
+                            log_likelihood_block = np.full(par_block.shape[0], np.nan, dtype=float)
+                            log_prior_block = np.full(par_block.shape[0], np.nan, dtype=float)
 
-                    if misfit_block.size > n_keep:
-                        local_keep = np.argpartition(misfit_block, n_keep - 1)[:n_keep]
+                        if normalized_mode == "posterior":
+                            score_block = log_likelihood_block + log_prior_block
+                            score_block = np.where(np.isfinite(score_block), score_block, -np.inf)
+                        else:
+                            score_block = log_likelihood_block
+                            score_block = np.where(np.isfinite(score_block), score_block, -np.inf)
+
+                    if score_block.size > n_keep:
+                        if normalized_mode == "l2":
+                            local_keep = np.argpartition(score_block, n_keep - 1)[:n_keep]
+                        else:
+                            local_keep = np.argpartition(-score_block, n_keep - 1)[:n_keep]
                         par_block = par_block[local_keep]
                         obs_block = obs_block[local_keep]
-                        misfit_block = misfit_block[local_keep]
+                        score_block = score_block[local_keep]
 
-                    if best_misfits.size == 0:
+                    if best_scores.size == 0:
                         candidate_par = par_block
                         candidate_obs = obs_block
-                        candidate_misfits = misfit_block
+                        candidate_scores = score_block
                     else:
                         candidate_par = np.vstack((best_par, par_block))
                         candidate_obs = np.vstack((best_obs, obs_block))
-                        candidate_misfits = np.concatenate((best_misfits, misfit_block))
+                        candidate_scores = np.concatenate((best_scores, score_block))
 
-                    if candidate_misfits.size > n_keep:
-                        keep_idx = np.argpartition(candidate_misfits, n_keep - 1)[:n_keep]
+                    if candidate_scores.size > n_keep:
+                        if normalized_mode == "l2":
+                            keep_idx = np.argpartition(candidate_scores, n_keep - 1)[:n_keep]
+                            order = np.argsort(candidate_scores[keep_idx])
+                        else:
+                            keep_idx = np.argpartition(-candidate_scores, n_keep - 1)[:n_keep]
+                            order = np.argsort(-candidate_scores[keep_idx])
                     else:
-                        keep_idx = np.arange(candidate_misfits.size)
-                    order = np.argsort(candidate_misfits[keep_idx])
+                        keep_idx = np.arange(candidate_scores.size)
+                        order = np.argsort(candidate_scores[keep_idx]) if normalized_mode == "l2" else np.argsort(-candidate_scores[keep_idx])
                     keep_idx = keep_idx[order]
 
                     best_par = candidate_par[keep_idx]
                     best_obs = candidate_obs[keep_idx]
-                    best_misfits = candidate_misfits[keep_idx]
+                    best_scores = candidate_scores[keep_idx]
 
-        if best_misfits.size == 0:
+        if best_scores.size == 0:
             columns = ["rank", "l2_misfit"]
             param_names = par_names or [f"par_{i}" for i in range(self.no_parameters)]
             return (
@@ -1304,9 +1403,14 @@ class Samples:
             )
 
         param_names = par_names or [f"par_{i}" for i in range(self.no_parameters)]
+        score_column = "l2_misfit"
+        if normalized_mode == "posterior":
+            score_column = "log_posterior"
+        elif normalized_mode == "likelihood":
+            score_column = "log_likelihood"
         data = {
-            "rank": np.arange(1, len(best_misfits) + 1, dtype=int),
-            "l2_misfit": best_misfits,
+            "rank": np.arange(1, len(best_scores) + 1, dtype=int),
+            score_column: best_scores,
         }
         for param_idx in range(self.no_parameters):
             if param_idx < len(param_names):
@@ -1319,14 +1423,15 @@ class Samples:
             pd.DataFrame(data),
             best_par,
             best_obs,
-            best_misfits,
+            best_scores,
         )
 
-    def plot_best_fits(self, best_obs: np.ndarray, best_misfits: np.ndarray,
+    def plot_best_fits(self, best_obs: np.ndarray, best_scores: np.ndarray,
                        observations: np.ndarray | None = None,
                        obs_grid: np.ndarray | None = None,
                        n_sensors: int | None = None,
-                       obs_label: str = "Observations"):
+                       obs_label: str = "Observations",
+                       score_label: str = "L2"):
         """
         Plot the best simulated observation series against the reference observations.
         """
@@ -1337,9 +1442,9 @@ class Samples:
             fig = self._placeholder_figure("Best-fit plot unavailable: no best-fit observations provided.")
             return fig, None
 
-        best_misfits = np.asarray(best_misfits, dtype=float).reshape(-1)
-        if best_misfits.size != best_obs.shape[0]:
-            raise ValueError("best_misfits length must match the number of best-fit observation series.")
+        best_scores = np.asarray(best_scores, dtype=float).reshape(-1)
+        if best_scores.size != best_obs.shape[0]:
+            raise ValueError("best_scores length must match the number of best-fit observation series.")
 
         n_best, no_observations = best_obs.shape
         if observations is not None:
@@ -1378,7 +1483,7 @@ class Samples:
                         label=obs_label,
                     )
                 for best_idx in range(n_best):
-                    label = f"Best {best_idx + 1} (L2={best_misfits[best_idx]:.2f})"
+                    label = f"Best {best_idx + 1} ({score_label}={best_scores[best_idx]:.2f})"
                     axis.plot(
                         obs_grid,
                         best_obs[best_idx, sensor_slice],
@@ -1417,7 +1522,7 @@ class Samples:
                 color=colors[best_idx],
                 linewidth=1.6,
                 alpha=0.85,
-                label=f"Best {best_idx + 1} (L2={best_misfits[best_idx]:.2f})",
+                label=f"Best {best_idx + 1} ({score_label}={best_scores[best_idx]:.2f})",
             )
         axis.set_title("Best-fit observation trajectories")
         axis.set_xlabel("Observation index")
@@ -1513,28 +1618,29 @@ class Samples:
         fig.tight_layout()
         return fig, axes
 
-    def html_report_extended(self, no_observations: int = 0, chosen_observations: np.ndarray | None = None,
+    def html_report_extended(self, no_observations: int = 0, observations_to_disp: np.ndarray | None = None,
                             grid: np.ndarray | None = None, grid_interp: np.ndarray | None = None, 
                             bins: List[int] | None = None, chains_to_disp: Iterable | None = None,
                             stages_to_disp: List[int] | None = None, observations: np.ndarray | None = None, 
                             cmap="viridis_r", output_file: str = "report_extended.html",
                             bins1d: int = 20, bins2d: int = 20, par_names: List[str] | None = None,
                             parameters_to_disp: Iterable | None = None,
-                            prior=None, best_fits_n: int = 0,
+                            prior=None, no_best_fits: int = 0,
                             obs_grid: np.ndarray | None = None,
-                            n_sensors: int | None = None,
+                            no_sensors: int | None = None,
                             include_expensive_sections: bool = False,
                             field_statistics: List[dict[str, Any]] | None = None,
-                            configuration: Any | None = None):
+                            configuration: Any | None = None,
+                            ranking_mode: Literal["l2", "posterior", "likelihood"] = "l2"):
         """
         Creates an extended report in HTML format containing all available post-processing tools,
         including visualizations and statistics for combined stages and individual stages separately.
 
         Args:
             no_observations (int): number of observations (default: 0, set to >0 if observations are available)
-            chosen_observations (ndarray of int of length N): indices forming the time series (otherwise all are used)
+            observations_to_disp (ndarray of int of length N): indices forming the time series (otherwise all are used)
             grid (ndarray of float of length N): time values for the time series (otherwise range(N) is used)
-            grid_interp (ndarray of float): time grid for horizontal axis (otherwise grid_inter = grid)
+            grid_interp (ndarray of float): time grid for horizontal axis (otherwise grid_interp = grid)
             bins (list of int of length 2): [bins_x, bins_y] for observation histograms (optional)
             chains_to_disp (list of int of length N): chains that should be included (otherwise all chains are included)
             stages_to_disp (list of int): stages that should be included (otherwise all stages are included)
@@ -1546,9 +1652,10 @@ class Samples:
             par_names (list of str of length N): Parameter names for plots (optional)
             prior (PriorIndependentComponents or None): Prior distribution. If provided, marginal prior PDFs
                 are overlaid on 1D histograms in the histogram grids.
-            best_fits_n (int): Number of exact-evaluation best fits to include from raw snapshots.
+            no_best_fits (int): Number of exact-evaluation best fits to include from raw snapshots.
+            ranking_mode (str): Ranking metric for best-fit selection. One of 'l2', 'posterior', or 'likelihood'.
             obs_grid (ndarray of float): Grid for plotting best-fit observation trajectories.
-            n_sensors (int): Number of sensors for reshaping observations in best-fit plots.
+            no_sensors (int): Number of sensors for reshaping observations in best-fit plots.
             include_expensive_sections (bool): If true, include slow per-stage diagnostics,
                 autocorrelation plots, ESS/R-hat summaries, and observation histograms.
             field_statistics (list of dict): Derived posterior field summaries. Each item should contain
@@ -1559,7 +1666,6 @@ class Samples:
         from dataclasses import fields, is_dataclass
         from html import escape
         from io import BytesIO
-        print("POST PROCESSING DEBUG AAAA", flush=True)
         # Initialize stages to display
         if stages_to_disp is None:
             stages_to_disp = list(range(self.no_stages))
@@ -1621,7 +1727,6 @@ class Samples:
         html_parts.append('    </style>')
         html_parts.append('</head>')
         html_parts.append('<body>')
-        print("POST PROCESSING DEBUG BBBB", flush=True)
         # Title
         html_parts.append('    <h1>Extended Sampling Report</h1>')
         html_parts.append('    <p class="description">This report contains comprehensive post-processing results including summary statistics, ')
@@ -1651,7 +1756,7 @@ class Samples:
         html_parts.append('            <li><a href="#surrogate_quality">5. Surrogate Model Quality</a></li>')
         if no_observations > 0 and observation_data_available:
             html_parts.append('            <li><a href="#observations">6. Observation Histograms</a></li>')
-        if best_fits_n > 0:
+        if no_best_fits > 0:
             html_parts.append('            <li><a href="#best_fits">Best-fit analysis</a></li>')
         if field_statistics:
             html_parts.append('            <li><a href="#field_statistics">Posterior field statistics</a></li>')
@@ -1672,7 +1777,6 @@ class Samples:
         html_parts.append('    <div class="section" id="overall">')
         html_parts.append('        <h2>2. Overall Analysis (Combined Stages)</h2>')
         html_parts.append('        <p class="description">This section presents aggregated results from all selected sampling stages combined.</p>')
-        print("POST PROCESSING DEBUG CCCC", flush=True)
         # 2.1 Mean and Covariance
         html_parts.append('        <h3>2.1 Posterior Mean and Covariance Matrix</h3>')
         html_parts.append('        <p class="description">The posterior mean represents the expected value of each parameter, ')
@@ -1691,7 +1795,6 @@ class Samples:
         html_parts.append(np.array2string(cov, precision=6, suppress_small=True))
         html_parts.append('            </pre>')
         html_parts.append('        </div>')
-        print("POST PROCESSING DEBUG DDDD", flush=True)
         # 2.2 Histogram Grid / 2.3 Marginals
         if include_expensive_sections:
             try:
@@ -1731,7 +1834,6 @@ class Samples:
             html_parts.append('        <p class="description">Skipped in the lightweight report because full histograms require concatenating very large sample arrays.</p>')
             html_parts.append('        <h3>2.3 One-dimensional Marginal Histograms</h3>')
             html_parts.append('        <p class="description">Skipped in the lightweight report because all marginals for this run are too memory-intensive.</p>')
-        print("POST PROCESSING DEBUG EEEE", flush=True)
         """
         # 2.3 Chain Traces
         try:
@@ -1744,7 +1846,6 @@ class Samples:
             html_parts.append(f'        <img src="data:image/png;base64,{img_base64}" alt="Overall Chain Traces">')
         except:
             html_parts.append('        <p class="description" style="color: orange;">Chain trace plot unavailable: not enough samples or an error occurred during plotting.</p>')
-        print("POST PROCESSING DEBUG FFFF", flush=True)
         # 2.4 Cumulative Averages
         try:
             html_parts.append('        <h3>2.4 Cumulative Averages</h3>')
@@ -1756,31 +1857,39 @@ class Samples:
             html_parts.append(f'        <img src="data:image/png;base64,{img_base64}" alt="Overall Cumulative Averages">')
         except:
             html_parts.append('        <p class="description" style="color: orange;">Cumulative average plot unavailable: not enough samples or an error occurred during plotting.</p>')
-        print("POST PROCESSING DEBUG GGGG", flush=True)
         """
         # 2.5 Best fits
         html_parts.append('        <div id="best_fits">')
         html_parts.append('        <h3>2.5 Best-fit Analysis</h3>')
-        html_parts.append('        <p class="description">Best exact-model evaluations ranked by L2 misfit to the supplied observations.</p>')
-        if best_fits_n > 0 and no_observations > 0 and observations is not None and observation_data_available:
+        if ranking_mode == "posterior":
+            mode_description = "best exact-model evaluations ranked by largest log-posterior value"
+        elif ranking_mode == "likelihood":
+            mode_description = "best exact-model evaluations ranked by largest log-likelihood value"
+        else:
+            mode_description = "best exact-model evaluations ranked by smallest L2 misfit to the supplied observations"
+        html_parts.append(f'        <p class="description">{mode_description}.</p>')
+        if no_best_fits > 0 and no_observations > 0 and observations is not None and observation_data_available:
             try:
-                df_best, _, best_obs, best_misfits = self.find_best_fits(
+                df_best, best_par, best_obs, best_scores = self.find_best_fits(
                     no_observations=no_observations,
                     observations=observations,
-                    n_best=best_fits_n,
+                    n_best=no_best_fits,
                     chains_to_disp=chains_to_disp,
                     stages_to_disp=stages_to_disp,
                     par_names=par_names,
+                    ranking_mode=ranking_mode,
                 )
+                self.best_fit_parameters = best_par
                 if len(df_best) > 0:
                     html_parts.append(df_best.to_html(index=False, classes='summary-table', float_format=lambda x: f"{x:.6g}"))
                     fig_best, _ = self.plot_best_fits(
                         best_obs=best_obs,
-                        best_misfits=best_misfits,
+                        best_scores=best_scores,
                         observations=observations,
                         obs_grid=obs_grid if obs_grid is not None else grid,
-                        n_sensors=n_sensors,
+                        n_sensors=no_sensors,
                         obs_label="Observations",
+                        score_label=ranking_mode.upper() if ranking_mode != "l2" else "L2",
                     )
                     img_base64 = fig_to_base64(fig_best)
                     html_parts.append(f'        <img src="data:image/png;base64,{img_base64}" alt="Best-fit observations">')
@@ -1788,7 +1897,7 @@ class Samples:
                     html_parts.append('        <p class="description" style="color: orange;">Best-fit analysis unavailable: no exact snapshots were found.</p>')
             except Exception as e:
                 html_parts.append(f'        <p class="description" style="color: orange;">Best-fit analysis unavailable: {str(e)}</p>')
-        elif best_fits_n > 0:
+        elif no_best_fits > 0:
             html_parts.append('        <p class="description" style="color: orange;">Best-fit analysis requires observations and raw snapshot files.</p>')
         else:
             html_parts.append('        <p class="description">Best-fit analysis not requested for this report.</p>')
@@ -1940,19 +2049,23 @@ class Samples:
             html_parts.append('        Lower CpUS indicates a more efficient stage. Values are computed per stage using stage-wise autocorrelation.</p>')
             try:
                 cpus_summary = self.calculate_CpUS(list_of_stages_groups=[[i] for i in stages_to_disp], surrogate_cost_ratio=0.0)
-                cpus_df = cpus_summary.iloc[stages_to_disp][[
-                    "accepted",
-                    "rejected",
-                    "pre-rejected",
-                    "sum",
-                    "ratio_evaluated",
-                    "subchain_acceptance_rate",
-                    "subchain_move_rate",
-                    "outer_acceptance_given_move",
-                    "autocorr",
-                    "CpUS",
-                ]].copy()
-                cpus_df = cpus_df.rename(columns={"ratio_evaluated": "ratio_evaluated_exact", "autocorr": "autocorr_time"})
+                cpus_df = cpus_summary.iloc[stages_to_disp].copy()
+                available_columns = [
+                    column for column in [
+                        "accepted",
+                        "rejected",
+                        "pre-rejected",
+                        "sum",
+                        "ratio_eval",
+                        "subchain_acc_rate",
+                        "subchain_move_rate",
+                        "outer_acc_given_move",
+                        "autocorr",
+                        "CpUS",
+                    ] if column in cpus_df.columns
+                ]
+                cpus_df = cpus_df[available_columns].copy()
+                cpus_df = cpus_df.rename(columns={"autocorr": "autocorr_time"})
                 html_parts.append(cpus_df.to_html(classes='summary-table', float_format=lambda x: f"{x:.4f}"))
             except Exception as e:
                 html_parts.append(f'        <p class="description" style="color: orange;">CpUS calculation unavailable: {str(e)}</p>')
@@ -2098,7 +2211,7 @@ class Samples:
 
             html_parts.append('    <div class="section" id="diagnostics">')
             html_parts.append('        <h2>4. Convergence Diagnostics & Autocorrelation Analysis</h2>')
-            html_parts.append('        <p class="description">Omitted in the lightweight report because autocorrelation, ESS, R-hat, and related diagnostics were the long-lasting part after DEBUG EEEE.</p>')
+            html_parts.append('        <p class="description">Omitted in the lightweight report.</p>')
             html_parts.append('    </div>')
 
         # 5. SURROGATE MODEL QUALITY
@@ -2132,7 +2245,7 @@ class Samples:
             
             # Overall observation histogram
             html_parts.append('        <h3>6.1 Combined Stages</h3>')
-            fig = self.hist_observations(no_observations=no_observations, chosen_observations=chosen_observations,
+            fig = self.hist_observations(no_observations=no_observations, chosen_observations=observations_to_disp,
                                         grid=grid, grid_interp=grid_interp, bins=bins, chains_to_disp=chains_to_disp,
                                         stages_to_disp=stages_to_disp, observations=observations, cmap=cmap)
             img_base64 = fig_to_base64(fig)
@@ -2143,7 +2256,7 @@ class Samples:
             for stage_idx in stages_to_disp:
                 stage_name = self.stage_names[stage_idx]
                 html_parts.append(f'        <h4>Stage: {stage_name}</h4>')
-                fig = self.hist_observations(no_observations=no_observations, chosen_observations=chosen_observations,
+                fig = self.hist_observations(no_observations=no_observations, chosen_observations=observations_to_disp,
                                             grid=grid, grid_interp=grid_interp, bins=bins, chains_to_disp=chains_to_disp,
                                             stages_to_disp=[stage_idx], observations=observations, cmap=cmap)
                 img_base64 = fig_to_base64(fig)
