@@ -121,7 +121,10 @@ class SamplingFramework:
         elif self.rank_world == self.conf.rank_collector:
             assert self.surrogate_updater is not None
             if isinstance(self.surrogate_test_data, TestData):
-                self.surrogate_test_data = self.surrogate_test_data.as_surrogate_test_data(prior=self.prior, likelihood=self.likelihood)
+                td = self.surrogate_test_data
+                if td.log_posterior is None or td.weights is None:
+                    td.compute_log_posterior_and_weights(self.prior, self.likelihood)
+                self.surrogate_test_data = td.as_surrogate_test_data()
             initial_snapshots = self.initial_snapshots
             if initial_snapshots is None and self.surrogate_updater is not None:
                 initial_snapshots = self.surrogate_updater.get_initial_snapshots()
@@ -148,51 +151,6 @@ class SamplingFramework:
 
         return optional_output
 
-
-    def temptemptemp(self, no_observations: int = 0, observations_to_disp: np.ndarray | None = None,
-                            grid: np.ndarray | None = None, grid_interp: np.ndarray | None = None, 
-                            bins: List[int] | None = None, chains_to_disp: Iterable | None = None,
-                            stages_to_disp: List[int] | None = None, observations: np.ndarray | None = None, 
-                            cmap="viridis_r", output_file: str = "report_extended.html",
-                            bins1d: int = 20, bins2d: int = 20, par_names: List[str] | None = None,
-                            parameters_to_disp: Iterable | None = None,
-                            prior=None, no_best_fits: int = 0,
-                            obs_grid: np.ndarray | None = None,
-                            no_sensors: int | None = None,
-                            include_expensive_sections: bool = False,
-                            field_statistics: List[dict[str, Any]] | None = None,
-                            configuration: Any | None = None,
-                            ranking_mode: Literal["l2", "posterior", "likelihood"] = "l2"):
-        """
-        Creates an extended report in HTML format containing all available post-processing tools,
-        including visualizations and statistics for combined stages and individual stages separately.
-
-        Args:
-            no_observations (int): number of observations (default: 0, set to >0 if observations are available)
-            observations_to_disp (ndarray of int of length N): indices forming the time series (otherwise all are used)
-            grid (ndarray of float of length N): time values for the time series (otherwise range(N) is used)
-            grid_interp (ndarray of float): time grid for horizontal axis (otherwise grid_interp = grid)
-            bins (list of int of length 2): [bins_x, bins_y] for observation histograms (optional)
-            chains_to_disp (list of int of length N): chains that should be included (otherwise all chains are included)
-            stages_to_disp (list of int): stages that should be included (otherwise all stages are included)
-            observations (ndarray of shape (no_observations,)): vector of observations (optional)
-            cmap (str): colormap for observation histograms (default: "viridis_r")
-            output_file (str): name of the output HTML file (default: "report_extended.html")
-            bins1d (int): Number of bins in 1d histograms (default: 20)
-            bins2d (int): Number of bins in 2d histograms (default: 20)
-            par_names (list of str of length N): Parameter names for plots (optional)
-            prior (PriorIndependentComponents or None): Prior distribution. If provided, marginal prior PDFs
-                are overlaid on 1D histograms in the histogram grids.
-            no_best_fits (int): Number of exact-evaluation best fits to include from raw snapshots.
-            ranking_mode (str): Ranking metric for best-fit selection. One of 'l2', 'posterior', or 'likelihood'.
-            obs_grid (ndarray of float): Grid for plotting best-fit observation trajectories.
-            no_sensors (int): Number of sensors for reshaping observations in best-fit plots.
-            include_expensive_sections (bool): If true, include slow per-stage diagnostics,
-                autocorrelation plots, ESS/R-hat summaries, and observation histograms.
-            field_statistics (list of dict): Derived posterior field summaries. Each item should contain
-                keys "name", "mean", "std", and optionally "coordinates".
-            configuration (Any | None): Run configuration to render near the top of the report.)"""
-        return
 
     def write_report(self, stages_to_disp: list[int] | None = None, 
                      observations: np.ndarray | None = None,

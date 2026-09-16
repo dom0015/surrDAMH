@@ -3,7 +3,7 @@
 
 """
 Run with (replace 4 with required number of MPI processes):
-mpiexec -n 4 python3 -m mpi4py typical_example.py
+mpiexec -n 4 python3 -m mpi4py typical_example_generic.py
 
 (Here, one of the processes will be used as collector,
 one as solvers pool, remaining processes will be used as samplers.
@@ -32,7 +32,6 @@ conf = surrDAMH.Configuration(output_dir="out_typical_example_generic", no_param
 updater = surrDAMH.surrogates.PolynomialSklearnUpdater(no_parameters=conf.no_parameters, no_observations=conf.no_observations)
 # updater = surrDAMH.surrogates.RBFInterpolationUpdater(no_parameters=conf.no_parameters, no_observations=conf.no_observations)
 # updater = surrDAMH.surrogates.KDTreeUpdater(no_parameters=conf.no_parameters, no_observations=conf.no_observations, no_nearest_neighbors=5)
-# updater = surrDAMH.surrogates.PyTorchNNOngoingUpdater(no_parameters=conf.no_parameters, no_observations=conf.no_observations, hidden_layer_sizes=(20, 10))
 
 # Gaussian prior distribution:
 prior = surrDAMH.distributions.FromScipy(scipy.stats.multivariate_normal(mean=[-1.0, 1.0, 0.0], cov=np.eye(3)))

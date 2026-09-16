@@ -82,6 +82,11 @@ class CommEvaluator_collector():
     MPI communication between one sampler and collector regarding surrogate model evaluators,
     collector side.
     On initialization, prepares irecv request for a signal from sampler.
+
+    Invariant: the collector consumes a TAG_UPDATE signal (``sampler_requests_evaluator``)
+    only when it simultaneously sends an evaluator (``send_evaluator``); ``terminate()``
+    relies on this (``current_idx == max_idx`` <=> every request was answered) to decide
+    whether a final TAG_EVALUATOR_OBJECT message is still owed to the sampler.
     """
 
     def __init__(self, rank_sampler: int) -> None:
@@ -348,7 +353,8 @@ class SolverMPI(Communicator):
     def set_parameters(self, parameters: npt.ArrayLike) -> None:
         self.tag_solver += 1
         tmp = time.time()
-        self.comm_world.Send(parameters, dest=self.rank_solvers_pool, tag=self.tag_solver)
+        # the solvers pool receives into a float64 buffer; make the sent buffer match (e.g. float32 continued samples)
+        self.comm_world.Send(np.ascontiguousarray(parameters, dtype=np.float64), dest=self.rank_solvers_pool, tag=self.tag_solver)
         tmp2 = time.time() - tmp
         self.tt_send = self.tt_send + tmp2
 

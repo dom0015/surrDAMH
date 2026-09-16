@@ -33,8 +33,8 @@ setuptools.setup(
     ],
     # include_package_data=True, # package includes all files of the package directory
     zip_safe=False,
-    install_requires=['numpy>=1.13.4', 'scipy', 'pandas', 'matplotlib', 'mpi4py'],
-    python_requires='>=3',
+    install_requires=['numpy>=1.13.4', 'scipy', 'pandas', 'matplotlib', 'mpi4py', 'scikit-learn', 'torch', 'emcee'],
+    python_requires='>=3.10',  # PEP 604 unions in signatures; the project is developed on 3.12
 
     packages=setuptools.find_packages(),
     # package_dir={

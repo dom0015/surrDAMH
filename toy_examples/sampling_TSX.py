@@ -3,7 +3,7 @@
 
 """
 Run with (replace 4 with required number of MPI processes):
-mpirun -n 4 python3 -m mpi4py own_solver.py
+mpirun -n 4 python3 -m mpi4py sampling_TSX.py
 
 (Here, one process will be used as collector,
 and the remaining processes will be used as samplers.)

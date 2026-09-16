@@ -9,7 +9,6 @@ Created on Wed Oct 23 15:35:47 2019
 from typing import Any, List, cast
 
 from mpi4py import MPI
-from torch.mtia import snapshot
 
 from surrDAMH.configuration import Configuration
 from surrDAMH.distributions.parent import Distribution
@@ -69,6 +68,15 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
 
     proposal_cov_adaptive = None
     no_stages = len(list_of_stages)
+
+    first_stage = list_of_stages[0]
+    first_stage_needs_surrogate = (first_stage.algorithm_type == "DAMH"
+                                   or str(first_stage.proposal_type).startswith("Hamiltonian"))
+    if rank_world == 0 and first_stage_needs_surrogate and conf.use_collector and conf.min_snapshots_initial > 0:
+        print("WARNING: the first stage uses a surrogate model (DAMH or Hamiltonian proposal); it will block until the"
+              " collector has a surrogate, which requires initial_snapshots or a pretrained surrogate updater"
+              " (no snapshots are produced before the first stage).", flush=True)
+
     for i, stage in enumerate(list_of_stages):
         seed0 = 10*(no_stages*rank_world + i)
 
@@ -92,6 +100,7 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
                 step_size=stage.hamiltonian_step_size,
                 sd_or_cov=hamiltonian_sd_or_cov,
             )
+            assert conf.use_surrogate_gradients, "Hamiltonian proposals need use_surrogate_gradients=True (it may have been disabled by SamplingFramework, see warnings)"
         elif stage.proposal_type == "HamiltonianInfinite":
             hamiltonian_sd_or_cov = stage.proposal_sd_or_cov
             if hamiltonian_sd_or_cov is None:
@@ -103,6 +112,7 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
                 step_size=stage.hamiltonian_step_size,
                 sd_or_cov=hamiltonian_sd_or_cov,
             )
+            assert conf.use_surrogate_gradients, "Hamiltonian proposals need use_surrogate_gradients=True (it may have been disabled by SamplingFramework, see warnings)"
         elif stage.proposal_type == "block":
             my_Prop = proposals.BlockProposal(
                 no_parameters=conf.no_parameters,
@@ -161,6 +171,8 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
                 stage.name = 'alg' + str(i).zfill(4) + '_DAMH-SMU'
             else:
                 stage.name = 'alg' + str(i).zfill(4) + '_DAMH'
+        else:
+            raise ValueError(f"unknown algorithm_type {stage.algorithm_type!r} in stage {i} (expected 'MH' or 'DAMH')")
 
         # run sampling algorithm:
         alg_instance = alg_class(proposal=my_Prop,
@@ -193,9 +205,10 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
         # terminate communicators between sampler and collector if they will not be used later:
         following_DAMH = [list_of_stages[j].algorithm_type == "DAMH" for j in range(i+1, no_stages)]
         following_onlySurr = [list_of_stages[j].use_only_surrogate for j in range(i+1, no_stages)]
-        stages_will_use_surrogate = following_DAMH or following_onlySurr
+        following_hamiltonian = [list_of_stages[j].proposal_type in ("Hamiltonian", "HamiltonianInfinite") for j in range(i+1, no_stages)]
+        stages_will_use_surrogate = any(following_DAMH) or any(following_onlySurr) or any(following_hamiltonian)
         if commSnapshot is not None:
-            if any(stages_will_use_surrogate):
+            if stages_will_use_surrogate:
                 pass
             else:
                 assert commEvaluator is not None

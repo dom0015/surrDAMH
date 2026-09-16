@@ -7,7 +7,7 @@ Observations: 2D field values at a grid of points
 Sampling: Metropolis-Hastings (MH) and Delayed Acceptance MH (DAMH) with neural network surrogate
 
 Run with (replace 4 with required number of MPI processes):
-    mpiexec -n 4 python3 -m mpi4py toy_example_hamilton.py
+    mpiexec -n 4 python3 -m mpi4py sampling_diffusion_grf.py
 """
 
 import os

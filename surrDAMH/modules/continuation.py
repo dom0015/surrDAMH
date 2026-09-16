@@ -14,7 +14,7 @@ def save_last_sample(conf, stage_name: str, rank_world: int, parameters: np.ndar
     print(f"Saving last sample for stage {stage_name!r} at rank {rank_world} to {directory!r}", flush=True)
     np.savez(
         os.path.join(directory, f"rank{rank_world:04d}.npz"),
-        parameters=np.asarray(parameters, dtype=np.float32),
+        parameters=np.asarray(parameters, dtype=np.float64),
         no_parameters=conf.no_parameters,
     )
 
@@ -34,7 +34,7 @@ def load_last_samples(experiment_dir: str, no_parameters: int, no_chains: int, s
             f"but {no_chains} are required to continue from it."
         )
 
-    last_samples = np.zeros((no_chains, no_parameters), dtype=np.float32)
+    last_samples = np.zeros((no_chains, no_parameters), dtype=np.float64)  # older files stored float32; cast on load
     for i in range(no_chains):
         with np.load(os.path.join(stage_dir, files[i])) as loaded:
             stored_no_parameters = int(loaded["no_parameters"])

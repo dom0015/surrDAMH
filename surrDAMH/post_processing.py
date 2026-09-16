@@ -80,6 +80,7 @@ class StageSamples:
                 print(file_path + "EMPTY")
                 continue
             self.weights[i] = np.array(df_samples[0])
+            self.no_unique_samples[i] = len(self.weights[i])
             self.length[i] = sum(self.weights[i])
             self.samples_compressed[i] = np.array(df_samples.iloc[:, 1:1 + no_parameters])
             if decompress_samples:

@@ -44,21 +44,21 @@ def assemble_covariance_matrix(block_spec_list: list) -> npt.NDArray:
         grid = np.array(block_spec["time_grid"]).reshape((1, -1))
         distances = np.abs(grid - grid.transpose())
         corr_length = block_spec["corr_length"]
-        std_list = block_spec["std"]
-        if type(std_list) is list:
-            std = np.array(block_spec["std"]).reshape((1, -1))
-        else:
-            std = std_list
-        variance = std**2
+        # std as a 1-D vector (scalar std is broadcast to the whole block);
+        # block = diag(std) * corr * diag(std) is symmetric also for non-constant std
+        std = np.asarray(block_spec["std"], dtype=float).reshape(-1)
+        if std.size == 1:
+            std = np.full((distances.shape[0],), std[0])
         if "cov_type" not in block_spec.keys():
             cov_type = None
         else:
             cov_type = block_spec["cov_type"]
 
         if cov_type == "squared_exponential":
-            block = variance * autocorr_function_sqexp(distances, corr_length)
+            corr = autocorr_function_sqexp(distances, corr_length)
         else:
-            block = variance * autocorr_function_default(distances, corr_length)
+            corr = autocorr_function_default(distances, corr_length)
+        block = np.outer(std, std) * corr
         blocks.append(block)
     return scipy.linalg.block_diag(*blocks)
 

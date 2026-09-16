@@ -9,6 +9,10 @@ from typing import Callable
 class Proposal:
     """Parent class for proposal distributions."""
 
+    # class-level defaults so that subclasses skipping super().__init__() still expose them
+    needs_gradients: bool = False
+    subchain_length: int = 1
+
     def __init__(self) -> None:
         self.log_likelihood_gradient: Callable
         self.log_prior_gradient: Callable
@@ -93,6 +97,7 @@ class PCN(Proposal):  # preconditioned Crank-Nicolson proposal
             seed: random seed for reproducibility
         """
         super().__init__()
+        assert 0 < beta <= 1, f"pCN beta must be in (0, 1], got {beta}"
         self.no_parameters = no_parameters
         self.beta = beta
         self.prior_mean = np.array(prior_mean)
@@ -137,7 +142,7 @@ class GaussRandomWalk_adaptive(GaussRandomWalk):  # initiated by SAMPLERs
             corr_limit (float): maximal alowed correlation of proposal distribution
             period (int): number of proposed samples to adapt
         """
-        # TODO: super().__init__()
+        Proposal.__init__(self)  # not GaussRandomWalk.__init__: covariance is set below
         self.no_parameters = no_parameters
         self._generator = np.random.RandomState(seed=seed)
         self.set_covariance(sd_or_cov=sd_or_cov)
@@ -283,31 +288,22 @@ class Hamiltonian(Proposal):
         return q, p_end
 
 
-#class HamiltonianInfinite(Hamiltonian):
-    #def __init__(self, no_parameters, potential_gradient: Callable | None = None, step_size=0.1, num_steps=10, sd_or_cov=1.0, seed=0) -> None:
-        """
-        Hamiltonian proposal with Gaussian prior preserving integrator for Hamiltonian dynamics.
-
-        Parameters:
-            no_parameters: number of parameters
-            grad_U: callable — gradient of potential energy
-            sd_or_cov: scalar, vector of prior standard deviations, or prior covariance matrix
-            step_size: float — leapfrog step size
-            num_steps: int — number of leapfrog steps
-            seed: random seed for reproducibility
-        """
-        """self.no_parameters = no_parameters
-        self.potential_gradient = potential_gradient
-        self.step_size = step_size
-        self.num_steps = num_steps
-        self._generator = np.random.RandomState(seed=seed)
-        self.set_covariance(sd_or_cov=sd_or_cov)
-        self.p_current_start: npt.NDArray # current momentum, will be set in propose_sample
-        self.p_proposed_end: npt.NDArray # proposed momentum, will be set in propose_sample
-        self.M: npt.NDArray  # mass matrix, will be set in set_covariance
-        self.M_inv: npt.NDArray  # inverse mass matrix, will be set in set_covariance"""
-
 class HamiltonianInfinite(Hamiltonian):
+    """
+    Hamiltonian proposal whose free flow is the exact solution of the harmonic oscillator
+    H(q, p) = 0.5 q^T q + 0.5 p^T M^{-1} p (a rotation in phase space), so that only the
+    likelihood gradient is integrated numerically (split integrator).
+
+    The rotation is prior-preserving only when the INTERNAL prior is N(0, I) (zero mean,
+    identity covariance) and the mass matrix is M = diag(sd^2) built from ``sd_or_cov``
+    (or the full matrix passed as ``sd_or_cov``). For any other prior the map is still
+    volume-preserving and reversible (composition of symplectic maps and a momentum flip),
+    hence a valid Metropolis-Hastings proposal whose prior term enters through
+    ``get_log_acceptance_probability``; it is just no longer prior-preserving.
+    The relation between the mass matrix and the prior covariance is documented as-is
+    (library_notes/09 decision 8).
+    """
+
     def _apply_prior_kinetic_flow(self, q: npt.NDArray, p: npt.NDArray) -> tuple[npt.NDArray, npt.NDArray]:
         if self._mass_is_diagonal:
             frequencies = 1.0 / self._mass_sd

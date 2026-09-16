@@ -37,8 +37,9 @@ class Distribution:
 
     def get_covariance(self) -> npt.NDArray:
         """
-        Returns the covariance matrix (2D array) or vector of variances (1D array)
-        of the distribution. Required by pCN proposal.
+        Returns the covariance matrix (2D array) or the vector of STANDARD DEVIATIONS
+        (1D array, not variances) of the distribution, as returned by ``Normal`` and
+        expected by the pCN proposal. Required by pCN proposal.
         """
         raise NotImplementedError("get_covariance() not implemented for " + type(self).__name__)
 

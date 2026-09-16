@@ -32,13 +32,15 @@ class Evaluator:
         """
         raise NotImplementedError
 
-    def jacobian(self, datapoints: npt.NDArray) -> npt.NDArray:
+    def jacobian(self, datapoints: npt.NDArray) -> tuple[npt.NDArray, npt.NDArray]:
         """
-        Returns the Jacobian of surrogate outputs with respect to inputs.
+        Returns ``(J(x), evaluation)`` for ONE sample (convention used by all implementations
+        and by ``vjp`` / ``Algorithm.*_compute_surrogate_log_likelihood_gradient``).
 
-        datapoints shape: (number of datapoints, no_parameters)
+        datapoints shape: (no_parameters,)
 
-        output NDArray shape: (number of datapoints, no_observations, no_parameters)
+        output Jacobian shape: (no_observations, no_parameters)
+        output evaluation shape: (no_observations,)
         """
         raise NotImplementedError(f"Jacobian is not implemented for {type(self).__name__}")
 

@@ -225,6 +225,9 @@ def run_COLLECTOR(conf: Configuration, surrogate_updater: Updater, surrogate_del
                 except Exception as e:
                     print(f"Surrogate fixed-test monitoring error: {e}", flush=True)
         # send evaluator to samplers:
+        # invariant: an update request (TAG_UPDATE) is consumed only together with sending an
+        # evaluator; CommEvaluator_collector.terminate() relies on this to know whether a final
+        # message is owed to the sampler
         for i in range(conf.no_samplers):
             if needs_evaluator[i]:
                 comm: CommEvaluator_collector = comms_evaluators[i]
@@ -232,13 +235,15 @@ def run_COLLECTOR(conf: Configuration, surrogate_updater: Updater, surrogate_del
                     if comm.sampler_requests_evaluator():
                         comm.send_evaluator(evaluator_instance)
                         sampler_got_last_evaluator[i] = True
-                if no_snapshots_used > 0:
-                    if comm.sampler_stops():
-                        needs_evaluator[i] = False
-                        if sampler_got_last_evaluator[i]:
-                            comm.terminate(None)
-                        else:
-                            comm.terminate(evaluator_instance)
+                # poll the stop signal even before the first surrogate exists; otherwise a
+                # run whose samplers never need a surrogate (or stop before one is trained)
+                # hangs here forever
+                if comm.sampler_stops():
+                    needs_evaluator[i] = False
+                    if sampler_got_last_evaluator[i]:
+                        comm.terminate(None)
+                    else:
+                        comm.terminate(evaluator_instance)
 
     # save surrogate quality metrics to CSV:
     if len(surrogate_quality_rows) > 0:

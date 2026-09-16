@@ -3,7 +3,7 @@
 
 """
 Run with (replace 4 with required number of MPI processes):
-mpiexec -n 4 python3 -m mpi4py neural_network_surrogate.py
+mpiexec -n 4 python3 -m mpi4py neural_network_surrogate_copy.py
 
 (Here, one process will be used as collector,
 and the remaining processes will be used as samplers.)

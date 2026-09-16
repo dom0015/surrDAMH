@@ -14,7 +14,7 @@ from surrDAMH.modules.proposals import Proposal
 @dataclass
 class Stage:
     algorithm_type: Literal["MH", "DAMH"] = "MH"  # DAMH uses delayed acceptance, MH does not
-    proposal_type: Literal["RWMH", "pCN", "Hamiltonian", "HamiltonianInfinite"] = "RWMH"  # RWMH = Gaussian random walk, pCN = preconditioned Crank-Nicolson
+    proposal_type: Literal["RWMH", "pCN", "Hamiltonian", "HamiltonianInfinite", "block"] = "RWMH"  # RWMH = Gaussian random walk, pCN = preconditioned Crank-Nicolson
     proposal: Proposal | None = None
     proposal_sd_or_cov: float | npt.ArrayLike | None = None
     pcn_beta: float = 0.5  # pCN step size, only used when proposal_type == "pCN"
@@ -33,10 +33,9 @@ class Stage:
     save_to_file: bool = True  # samples are saved to file
     is_excluded: bool = False  # if True, the next stage starts from the same sample as this one
     adaptive_target_rate: float | None = None  # target acceptance rate of the adaptive algorithm
-    adaptive_corr_limit = None
+    adaptive_corr_limit: float | None = None  # maximal allowed correlation of the adaptive proposal
     adaptive_sample_limit: int | None = None
     name: str | None = None  # will be set later
-    artificial_acceptance_multiplicator: float = 1.0  # for testing purposes, can be used to artificially increase acceptance rate by multiplying acceptance probability by this factor
 
     def __post_init__(self):
         if self.max_samples == sys.maxsize and self.max_evaluations == sys.maxsize and self.time_limit == np.inf:

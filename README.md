@@ -46,7 +46,12 @@ Before running the sampling process, it is necessary to specify:
 
 See examples in the **toy_examples** folder, e.g.:
  - `cd toy_examples/`
- - `mpiexec -n 4 python3 -m mpi4py minimal_example.py`
+ - `mpiexec -n 2 python3 -m mpi4py minimal_example.py` (2 processes is the minimum for this example; more processes give more chains)
+
+Notes on running the examples:
+ - run them **from the `toy_examples/` directory**: the solver specifications use a relative `solver_module_path`
+ - `sampling_TSX.py` (with `wrapper.py`, `tunnel_with_subdomains.py`) and `sampling_diffusion_grf.py` (with `grf_diffusion.py`) require **FEniCSx / dolfinx** in addition to the requirements above
+ - the layout of the output directory: `sampling_output/`, `solver_output/`, `post_processing_output/`
 
 ## Surrogate models:
 The following non-intrusive surrogate models are implemented. They are constructed from snapshots $\left(u^{\left(k\right)},G\left(u^{\left(k\right)}\right)\right)$ and they can be adaptively refined during the sampling process.

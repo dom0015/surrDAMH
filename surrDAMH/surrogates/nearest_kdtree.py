@@ -30,10 +30,14 @@ class KDTreeEvaluator(Evaluator):
             interpolated_values = self.obs[indices, :]
         else:
             # Use inverse distances as weights for the weighted average
-            weights = 1 / distances
+            weights = 1 / np.maximum(distances, 1e-300)  # avoid division by zero
             weights /= np.sum(weights, axis=1, keepdims=True)  # Normalize weights to sum to 1
             weights = weights.reshape((no_datapoints, self.no_nearest_neighbors, 1))
             interpolated_values = np.sum(self.obs[indices] * weights, axis=1)
+            # exact hit of a training point: return its observations instead of the weighted average
+            exact_hit = distances[:, 0] == 0
+            if np.any(exact_hit):
+                interpolated_values[exact_hit] = self.obs[indices[exact_hit, 0]]
 
         return interpolated_values
 

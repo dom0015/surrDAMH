@@ -34,7 +34,7 @@ class CommunicationWithChild:
     def send_parameters(self, data_par):
         self.tag += 1
         self.comm.Bcast([np.array(self.tag, 'i'), MPI.INT], root=MPI.ROOT)
-        self.comm.Bcast([data_par, MPI.DOUBLE], root=MPI.ROOT)
+        self.comm.Bcast([np.ascontiguousarray(data_par, dtype=np.float64), MPI.DOUBLE], root=MPI.ROOT)
 
     def recv_observations(self):
         if self.pickled_observations:
@@ -96,10 +96,7 @@ def run_SOLVER(conf: Configuration, solver_spec: SolverSpec):
         sources = samplers_rank[sampler_can_send]
         sources = np.random.permutation(sources)
         for rank in sources:
-            if False and all(child_can_solve):  # no child is busy, wait for an incoming message from any sampler
-                probe = comm_world.Probe(source=MPI.ANY_SOURCE, tag=MPI.ANY_TAG, status=status)
-            else:
-                probe = comm_world.Iprobe(source=rank, tag=MPI.ANY_TAG, status=status)
+            probe = comm_world.Iprobe(source=rank, tag=MPI.ANY_TAG, status=status)
             if probe:  # if there is an incoming message from any sampler
                 # receive this message (one message from one sampler)
                 rank_source = status.Get_source()

@@ -384,8 +384,14 @@ class NeuralNetworkUpdaterBasic(Updater):
         self.pretrained_ready = True
         return loaded_arrays
 
-    def save_snapshots(self, path_par='torch_perceptron_par.csv',
-                       path_obs='torch_perceptron_obs.csv'):
+    def save_snapshots(self, path_par='torch_perceptron_par.csv', path_obs='torch_perceptron_obs.csv'):
+        """Debugging helper: writes the training snapshots as CSV. Relative paths are resolved
+        against ``self.output_dir`` if the updater has one, otherwise against the CWD."""
+        output_dir = getattr(self, "output_dir", None)
+        if output_dir is not None:
+            path_par = os.path.join(output_dir, path_par)
+            path_obs = os.path.join(output_dir, path_obs)
         parameters, observations, _ = self.get_training_data_arrays()
         np.savetxt(path_par, parameters, delimiter=',')
         np.savetxt(path_obs, observations, delimiter=',')
+        print(f"Snapshots saved to {os.path.abspath(path_par)} and {os.path.abspath(path_obs)}", flush=True)

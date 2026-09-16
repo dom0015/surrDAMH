@@ -7,6 +7,7 @@ Created on Sun Feb 28 12:32:40 2021
 """
 
 import sys
+import warnings
 from dataclasses import dataclass
 from typing import Literal
 
@@ -34,7 +35,7 @@ class Configuration:
     initial_samples_distribution: Distribution | None = None  # only if initial_sample_type == "user_specified"
     continued_from_dir: str | None = None  # experiment directory to continue from (only if initial_sample_type == "continued")
     lhs_scale: float | npt.NDArray = 1.0  # only if initial_sample_type == "lhs"
-    state_dependent_approximation: bool = False  # shift posterior approximation by surrogate model error in current sample
+    state_dependent_approximation: bool = False  # shift posterior approximation by surrogate model error in current sample; NOT verified (incorrect for subchain_max_length > 1, see library_notes/06 item 1.1), do not use unless you know what you are doing
     min_snapshots_initial: int = 1  # minimal number of snapshots for the construction of initial surrogate model
     min_snapshots_to_update: int = 1  # how many snapshots (at least) have to be added to update the surrogate model
     max_collected_snapshots_per_loop: int = 1000  # maximal number of snapshots to be collected in one loop
@@ -46,6 +47,13 @@ class Configuration:
     debug: bool = False
 
     def __post_init__(self) -> None:
+        if self.state_dependent_approximation:
+            warnings.warn(
+                "state_dependent_approximation=True is NOT verified (incorrect for subchain_max_length > 1, "
+                "see library_notes/06 item 1.1); do not use it unless you know what you are doing",
+                RuntimeWarning,
+                stacklevel=2,
+            )
         if self.paths_to_append is None:
             self.paths_to_append = []
         else:
@@ -70,7 +78,8 @@ class Configuration:
             self.no_samplers = size_world
             self.rank_collector = None
             self.rank_solvers_pool = None
-        assert self.no_samplers > 0, "number of MPI processes is too low, use at least 'mpirun -n 4'"
+        assert self.no_samplers > 0, ("number of MPI processes is too low: use at least 3 MPI processes with collector and "
+                                      "solvers pool (1 sampler + pool + collector); 4 recommended")
         self.sampler_ranks = np.arange(self.no_samplers)  # ranks 0, 1, ..., no_samplers-1
 
         self.continued_samples: npt.NDArray | None = None
