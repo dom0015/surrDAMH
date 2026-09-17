@@ -2,8 +2,11 @@
 # -*- coding: utf-8 -*-
 
 import os
+import sys
+import time
+import traceback
 import warnings
-from typing import List, Literal
+from typing import Any, Callable, List, Literal
 import numpy.typing as npt
 import numpy as np
 import matplotlib.pyplot as plt
@@ -15,10 +18,11 @@ import surrDAMH.process_SAMPLER
 import surrDAMH.process_SOLVER
 from surrDAMH.configuration import Configuration
 from surrDAMH.distributions.parent import Distribution
+from surrDAMH.modules.communication import ABORT_GRACE_SECONDS
 from surrDAMH.modules.tools import ensure_dir
 from surrDAMH.solver_specification import SolverSpec
 from surrDAMH.solvers import Solver, get_solver_from_spec
-from surrDAMH.stages import Stage
+from surrDAMH.stages import Stage, stage_name
 from surrDAMH.surrogates.parent import Evaluator, Updater
 from surrDAMH.modules.test_data import TestData
 
@@ -27,21 +31,22 @@ def identity(sample):
     return sample
 
 
+
+
 class SamplingFramework:
     """
-    Created on each MPI rank (except spawned solvers).
-    Forward model solver (mapping from parameters fo observations) must be specified,
-    if solvers pool is used, solver must be specified using solver_spec,
-    if solvers pool is not used, solver can be specified using solver_spec or solver_instance.
+    Entry point of the MPI-based sampler: construct one instance identically on every
+    rank of ``MPI.COMM_WORLD`` (except spawned solver children, which never see this
+    class), then call ``run()``. ``rank_world`` decides which role
+    (sampler/collector/solvers pool) each instance actually plays; see
+    ``docs/running.md`` for the process-count table.
 
-    Args:
-        conf (Configuration),
-        prior (Distribution),
-        likelihood (Distribution),
-        solver_spec (SolverSpec),
-        solver_instance (Solver): only if solvers pool is not used,
-        list_of_stages (List[Stage]),
-        surrogate_updater (Updater | None)
+    The forward model must be reachable on every rank that may need it:
+    - if ``use_solvers_pool=True``, ``solver_spec`` must be given (the pool rank loads
+      it via ``get_solver_from_spec`` and spawns ``conf.no_solvers`` children from it);
+    - if ``use_solvers_pool=False``, either ``solver_spec`` (loaded once per sampler
+      rank) or ``solver_instance`` (an already-constructed solver, reused as-is) may be
+      given.
     """
 
     def __init__(self, conf: Configuration, prior: Distribution, likelihood: Distribution,
@@ -49,7 +54,39 @@ class SamplingFramework:
                  surrogate_updater: Updater | None = None, surrogate_evaluator: Evaluator | None = None,
                  initial_snapshots: List[npt.NDArray] | None = None,
                  surrogate_test_data: TestData | tuple[npt.NDArray, npt.NDArray, npt.NDArray, npt.NDArray] | None = None):
+        """
+        Args:
+            conf: run configuration; identical on every rank (not broadcast/checked).
+            prior: prior distribution (internal space, see ``docs/concepts.md``).
+            likelihood: likelihood distribution, evaluated on solver/surrogate output.
+            list_of_stages: sampling stages, run in order on every sampler rank.
+            solver_spec: how to construct the forward-model solver; required when
+                ``conf.use_solvers_pool=True``, optional otherwise (see class docstring).
+            solver_instance: a pre-built solver, used only when ``use_solvers_pool=False``;
+                mutually substitutable with ``solver_spec`` in that case.
+            surrogate_updater: trains the surrogate on the collector rank; required for
+                any DAMH stage or Hamiltonian-family proposal when ``use_collector=True``.
+            surrogate_evaluator: initial/fixed surrogate evaluator, used directly by
+                samplers when ``use_collector=False`` (no in-run retraining).
+            initial_snapshots: ``(parameters, observations)`` pairs to preload into the
+                collector before sampling starts, so a first DAMH/Hamiltonian stage does
+                not need to wait for samplers to generate them (see
+                ``docs/running.md`` on the start-up handshake). Defaults to
+                ``surrogate_updater.get_initial_snapshots()`` if not given.
+            surrogate_test_data: fixed test set for surrogate-quality monitoring
+                (``surrogate_quality_test.csv``); either a ``TestData`` instance (its
+                posterior weights are computed here if missing) or the raw
+                ``(parameters, observations, log_posterior, weights)`` tuple.
+
+        Notes:
+            Nothing here is broadcast or validated across ranks; an inconsistent
+            ``conf``/stage list between ranks is not detected until it causes a
+            mismatched collective call.
+        """
         self.conf = conf
+        # captured before _configure_surrogate_gradients() may flip conf.use_surrogate_gradients,
+        # so the run manifest can record both the requested and the effective value:
+        self._use_surrogate_gradients_requested = conf.use_surrogate_gradients
         self.prior = prior
         self.likelihood = likelihood
         self.solver_spec = solver_spec
@@ -108,44 +145,143 @@ class SamplingFramework:
         if self.surrogate_evaluator is not None and hasattr(self.surrogate_evaluator, "set_use_gradients"):
             self.surrogate_evaluator.set_use_gradients(self.conf.use_surrogate_gradients)
 
+    def _run_role(self, role_callable: Callable[[], Any], role_name: str):
+        """
+        Run one MPI role body and turn any uncaught exception into a job-wide abort
+        (WS8, ``library_notes/09_improvement_plan.md``).
+
+        Without this, an exception on a single rank terminates only that rank; every other
+        rank stays blocked in a matching MPI call and the job has to be killed by the user
+        or the batch system. (Measured: a solver raising inside ``run_SAMPLER`` under plain
+        ``mpiexec python driver.py`` hangs forever. Runs launched with ``python -m mpi4py``
+        already abort, because ``mpi4py.run`` installs its own excepthook - that hook does
+        not cover ``mpiexec python ...`` nor the spawned solver children.)
+
+        ``KeyboardInterrupt`` and ``SystemExit`` are deliberately re-raised untouched: they
+        are not failures of the role body but a requested interruption / exit, mpiexec
+        forwards the interrupt signal to every rank itself, and converting them into
+        ``Abort(1)`` would only hide why the job stopped.
+        """
+        try:
+            return role_callable()
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except Exception:
+            print(f"FATAL: unhandled exception on MPI rank {self.rank_world} ({role_name} role);"
+                  " aborting the whole job.", file=sys.stderr, flush=True)
+            traceback.print_exc()
+            sys.stderr.flush()
+            sys.stdout.flush()
+            time.sleep(ABORT_GRACE_SECONDS)  # let the launcher forward the traceback before it kills the job
+            MPI.COMM_WORLD.Abort(1)
+            raise  # not reached (Abort does not return), kept so the exception is never swallowed
+
     def run(self):
+        """
+        Dispatch this rank to its role (sampler / solvers pool / collector) and run it
+        to completion; must be called on every rank of ``MPI.COMM_WORLD`` (it is a
+        collective operation: role dispatch ends in a ``comm_world.Barrier()``).
+
+        On rank 0, also writes ``sampling_output/run_manifest.json`` before dispatch and
+        finalizes it (``finished_at`` + per-stage counters) after the sampler role
+        returns; manifest failures are printed as warnings, never raised (writing the
+        manifest must not be able to abort an otherwise-successful run).
+
+        Returns:
+            The sampler role's return value (currently unused) on sampler ranks;
+            ``None`` (via ``_run_role``'s wrapped callables) is typical. Every rank
+            returns *something* only because ``optional_output`` is always assigned
+            before the trailing ``return`` — callers should not rely on its value.
+
+        Raises:
+            Nothing directly: any exception raised inside a role body is caught by
+            ``_run_role``, printed with a traceback, and turned into
+            ``MPI.COMM_WORLD.Abort(1)`` for the whole job (``KeyboardInterrupt`` and
+            ``SystemExit`` are re-raised instead of being turned into an abort).
+        """
         self._configure_surrogate_gradients()
 
         # check if prior has the "transform" method:
         if not hasattr(self.prior, "transform"):
             self.prior.transform = identity
 
-        if self.rank_world == self.conf.rank_solvers_pool:
-            assert self.solver_spec is not None, "solver_spec must be given"
-            optional_output = surrDAMH.process_SOLVER.run_SOLVER(self.conf, self.solver_spec)
-        elif self.rank_world == self.conf.rank_collector:
-            assert self.surrogate_updater is not None
-            if isinstance(self.surrogate_test_data, TestData):
-                td = self.surrogate_test_data
-                if td.log_posterior is None or td.weights is None:
-                    td.compute_log_posterior_and_weights(self.prior, self.likelihood)
-                self.surrogate_test_data = td.as_surrogate_test_data()
-            initial_snapshots = self.initial_snapshots
-            if initial_snapshots is None and self.surrogate_updater is not None:
-                initial_snapshots = self.surrogate_updater.get_initial_snapshots()
+        # stage names are the output-directory keys; assign them here (identically on every rank,
+        # the sampler re-derives the same names) so the run manifest records them:
+        for i, stage in enumerate(self.list_of_stages):
+            stage.name = stage_name(stage, i)
 
-            optional_output = surrDAMH.process_COLLECTOR.run_COLLECTOR(
-                self.conf,
-                surrogate_updater=self.surrogate_updater,
-                initial_snapshots=initial_snapshots,
-                surrogate_test_data=self.surrogate_test_data,
-            )
+        if self.rank_world == 0:
+            # run manifest (WS4, library_notes/09_improvement_plan.md §0 principle 4): must never
+            # abort a run, so any failure here is a printed warning, not an exception.
+            try:
+                from surrDAMH.modules.manifest import build_run_manifest, write_run_manifest
+                mpi_layout = {
+                    "size_world": self.comm_world.Get_size(),
+                    "no_samplers": self.conf.no_samplers,
+                    "rank_collector": self.conf.rank_collector,
+                    "rank_solvers_pool": self.conf.rank_solvers_pool,
+                    "no_solvers": self.conf.no_solvers,
+                    "solver_maxprocs": self.conf.solver_maxprocs,
+                }
+                manifest = build_run_manifest(
+                    self.conf, self.list_of_stages, self.prior, self.likelihood, runner="mpi",
+                    solver_spec=self.solver_spec, solver_instance=self.solver_instance,
+                    surrogate_updater=self.surrogate_updater, surrogate_evaluator=self.surrogate_evaluator,
+                    mpi_layout=mpi_layout,
+                    use_surrogate_gradients_requested=self._use_surrogate_gradients_requested)
+                write_run_manifest(self.conf.output_dir, manifest)
+            except Exception as exc:
+                print(f"WARNING: failed to write run manifest: {exc}", flush=True)
+
+        if self.rank_world == self.conf.rank_solvers_pool:
+            def _solver_pool_role():
+                assert self.solver_spec is not None, "solver_spec must be given"
+                return surrDAMH.process_SOLVER.run_SOLVER(self.conf, self.solver_spec)
+
+            optional_output = self._run_role(_solver_pool_role, "SOLVER")
+        elif self.rank_world == self.conf.rank_collector:
+            def _collector_role():
+                assert self.surrogate_updater is not None
+                if isinstance(self.surrogate_test_data, TestData):
+                    td = self.surrogate_test_data
+                    if td.log_posterior is None or td.weights is None:
+                        td.compute_log_posterior_and_weights(self.prior, self.likelihood)
+                    self.surrogate_test_data = td.as_surrogate_test_data()
+                initial_snapshots = self.initial_snapshots
+                if initial_snapshots is None and self.surrogate_updater is not None:
+                    initial_snapshots = self.surrogate_updater.get_initial_snapshots()
+
+                return surrDAMH.process_COLLECTOR.run_COLLECTOR(
+                    self.conf,
+                    surrogate_updater=self.surrogate_updater,
+                    initial_snapshots=initial_snapshots,
+                    surrogate_test_data=self.surrogate_test_data,
+                )
+
+            optional_output = self._run_role(_collector_role, "COLLECTOR")
         else:
-            if self.conf.use_solvers_pool is False:
-                if self.solver_instance is None:
-                    assert self.solver_spec is not None, "either solver_spec or solver_instance must be given"
-                    solver_output_dir = ensure_dir(os.path.join(self.conf.output_dir, "solver_output", "rank{}".format(self.rank_world)))
-                    self.solver_instance = get_solver_from_spec(self.solver_spec, solver_id=self.rank_world, solver_output_dir=solver_output_dir)
-            else:
-                self.solver_instance = None
-            optional_output = surrDAMH.process_SAMPLER.run_SAMPLER(
-                self.conf, self.prior, self.likelihood, self.list_of_stages,
-                solver_instance=self.solver_instance, surrogate_evaluator=self.surrogate_evaluator)
+            def _sampler_role():
+                if self.conf.use_solvers_pool is False:
+                    if self.solver_instance is None:
+                        assert self.solver_spec is not None, "either solver_spec or solver_instance must be given"
+                        solver_output_dir = ensure_dir(os.path.join(self.conf.output_dir, "solver_output", "rank{}".format(self.rank_world)))
+                        self.solver_instance = get_solver_from_spec(self.solver_spec, solver_id=self.rank_world, solver_output_dir=solver_output_dir)
+                else:
+                    self.solver_instance = None
+                return surrDAMH.process_SAMPLER.run_SAMPLER(
+                    self.conf, self.prior, self.likelihood, self.list_of_stages,
+                    solver_instance=self.solver_instance, surrogate_evaluator=self.surrogate_evaluator)
+
+            optional_output = self._run_role(_sampler_role, "SAMPLER")
+
+            if self.rank_world == 0:
+                # rank 0 is always a sampler rank (ranks 0..no_samplers-1); finalize here is the
+                # natural end point for it, with no extra MPI communication or barrier.
+                try:
+                    from surrDAMH.modules.manifest import finalize_run_manifest
+                    finalize_run_manifest(self.conf.output_dir, extra={})
+                except Exception as exc:
+                    print(f"WARNING: failed to finalize run manifest: {exc}", flush=True)
 
         self.comm_world.Barrier()
 
@@ -164,8 +300,13 @@ class SamplingFramework:
                      grid = None, grid_interp = None, obs_grid = None,
                      no_sensors = None, cmap = "viridis_r", chains_to_disp = None) -> surrDAMH.post_processing.Samples | None:
         """
-        Writes a html report to the output directory.
-        
+        Writes a HTML report and ``post_processing_output/summary.csv`` to the output
+        directory. Reads samples from ``conf.output_dir`` on disk (today's v1 layout,
+        see ``docs/outputs.md``), it does not use any in-memory state from ``run()``.
+
+        Rank-0-only: every other rank only participates in the two barriers (call this
+        on every rank, like ``run()``, or the collective will hang).
+
         Args:
             stages_to_disp: list of stage indices to include in the report, if None, all stages are included
             observations: reference observations, if None, no reference observations are used
@@ -178,6 +319,20 @@ class SamplingFramework:
             observations_to_disp: list of observation indices to include in the report, if None, all observations are included
             include_expensive_sections: whether to include sections that are expensive to compute
             grid: grid for 2D histograms, if None, a default grid is used
+
+        Returns:
+            ``surrDAMH.post_processing.Samples`` on rank 0 (already used to write the
+            report/summary); ``None`` on every other rank.
+
+        Raises:
+            ValueError: if ``stages_to_disp`` resolves to an empty list.
+
+        Notes:
+            If ``solver_instance`` was given to ``__init__`` and exposes
+            ``field_builder``/``coords``/``measurement_points``, posterior field
+            statistics are added to the report; the best-fit sample is also
+            re-evaluated with the solver for ``visualize_solution()`` figures (solver
+            errors here are caught and only printed, they do not fail the report).
         """
 
         if self.rank_world != 0:

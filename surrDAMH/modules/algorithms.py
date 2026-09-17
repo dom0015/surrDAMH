@@ -31,6 +31,14 @@ class Sample:
     log_likelihood: float | None = None
     log_prior: float | None = None
     log_likelihood_approx: float | None = None
+    # Status reported by the solver for this sample:
+    #   0 (or any non-negative value) - the solver succeeded, ``observations`` are valid;
+    #   < 0                           - the solver FAILED, ``observations`` are invalid
+    #                                   (typically zero-filled) and must not be used.
+    # A failed sample gets ``log_likelihood = -inf`` (``_compute_log_posterior_terms``) with a
+    # finite ``log_prior``, so it is always rejected, and ``_handle_rejection`` does not forward
+    # it to the surrogate collector (items B4/C2/C3). A failed INITIAL sample is a fatal error
+    # (``_prepare_run`` raises), because the chain could never leave it.
     solver_tag: int = 0
 
     @property
@@ -64,6 +72,30 @@ class Sample:
                                   log_likelihood_approx=self.log_likelihood_approx,
                                   solver_tag=self.solver_tag)
         return new_instance
+
+
+def sample_carried_to_next_stage(sample: Sample, finished_stage: Stage) -> Sample:
+    """
+    Sample handed over as the initial sample of the stage following ``finished_stage``.
+
+    After a ``use_only_surrogate`` stage the chain state carries SURROGATE observations and
+    log-likelihood. Keeping them would make the next (exact) stage compare an exact ``log L(y)``
+    against a surrogate ``log L(x)`` in its first acceptance ratio, and write a surrogate
+    log-posterior in its first output row (finding A11). The model-dependent terms are therefore
+    dropped here so that ``AlgorithmBase._prepare_run`` re-evaluates the state with the full
+    model - one extra solver call per chain and per such stage boundary. ``log_prior`` does not
+    depend on the model and is kept (it is recomputed anyway).
+
+    Used identically by ``process_SAMPLER.run_SAMPLER`` and ``runner_local.run_local``.
+    """
+    if not finished_stage.use_only_surrogate:
+        return sample
+    carried = sample.copy()
+    carried.observations = None
+    carried.log_likelihood = None
+    carried.observations_approx = None
+    carried.log_likelihood_approx = None
+    return carried
 
 
 class AlgorithmBase:
@@ -341,6 +373,23 @@ class Algorithm_DAMH(AlgorithmBase):  # initiated by SAMPLERs
         return False
 
     def _evaluate_surrogate_transition(self, subchain_current: Sample, subchain_proposed: Sample, surrogate_evaluator_changed: bool) -> None:
+        """
+        Fill in the surrogate terms of one sub-chain transition ``subchain_current -> subchain_proposed``.
+
+        Sets ``observations_approx``, ``log_likelihood_approx`` and ``log_prior`` of
+        ``subchain_proposed`` (and of ``subchain_current``), so that the caller can form the
+        sub-chain MH ratio w.r.t. the surrogate posterior.
+
+        ``surrogate_evaluator_changed=True`` means "the evaluator was just replaced": the
+        surrogate terms cached on ``subchain_current`` and on ``self.current`` refer to the old
+        surrogate and are re-scored here. It is passed only on the first iteration of a sub-chain
+        (the evaluator is frozen for the rest of it), and only if the evaluator really changed.
+        With ``False``, only the newly proposed state has to be evaluated.
+
+        If ``conf.state_dependent_approximation`` is True the surrogate is used as an additive
+        correction around ``self.current`` instead of directly; that option is UNVERIFIED for
+        ``subchain_max_length > 1`` (finding 1.1) and is left unchanged.
+        """
         if surrogate_evaluator_changed:
             subchain_current.observations_approx, subchain_proposed.observations_approx = cast(
                 tuple[npt.NDArray, npt.NDArray],
@@ -387,17 +436,38 @@ class Algorithm_DAMH(AlgorithmBase):  # initiated by SAMPLERs
             )
 
     def _propose_new_sample_using_subchain(self) -> tuple[Sample, int, float]:
+        """
+        Run one sub-chain of at most ``stage.subchain_max_length`` MH steps that use only the
+        surrogate, starting from ``self.current``.
+
+        Returns ``(subchain_current, counter_subchain_accepted, correction_log_ratio)``:
+        the sub-chain end state (the proposal for the outer/exact MH step), the number of
+        accepted sub-chain steps, and the sum of the surrogate log-likelihood ratios of those
+        accepted steps.
+
+        The surrogate evaluator is FROZEN for the whole sub-chain: it is refreshed once, here,
+        before the loop (finding 1.2). That is what makes ``correction_log_ratio`` telescope to
+        ``log L~(y) - log L~(x)`` for a single surrogate, as the outer correction in ``run()``
+        requires; refreshing inside the loop would sum ratios taken under different surrogates.
+        The evaluator that arrives while a sub-chain is running is picked up at the start of the
+        next one (one poll per outer step; the request/poll protocol with the collector is
+        unchanged - at most one outstanding request at a time).
+        """
         counter_subchain_accepted = 0
         subchain_current = self.current.copy()
         correction_log_ratio = 0.0
+        # refresh once per sub-chain, then keep the surrogate fixed until the sub-chain ends:
+        bool_evaluator_changed = self._refresh_surrogate_evaluator_if_needed()
         for _ in range(self.stage.subchain_max_length):
-            bool_evaluator_changed = self._refresh_surrogate_evaluator_if_needed()
             subchain_proposed = self._propose_new_sample(subchain_current.parameters)
             self._evaluate_surrogate_transition( # evaluate surrogate for current, subchain_surrent, subchain_proposed
                 subchain_current=subchain_current,
                 subchain_proposed=subchain_proposed,
                 surrogate_evaluator_changed=bool_evaluator_changed,
             )
+            # self.current and the sub-chain start were re-scored with the new evaluator above;
+            # from here on the surrogate does not change, so only the proposal has to be evaluated:
+            bool_evaluator_changed = False
             assert subchain_proposed.log_likelihood_approx is not None
             assert subchain_current.log_likelihood_approx is not None
             assert subchain_proposed.log_prior is not None
@@ -446,7 +516,12 @@ class Algorithm_DAMH(AlgorithmBase):  # initiated by SAMPLERs
                 #     log alpha = [log L(y) - log L(x)] - [log L~(y) - log L~(x)].
                 # correction_log_ratio accumulates the surrogate likelihood log-ratios of the accepted
                 # sub-chain steps, which telescopes to log L~(y) - log L~(x) for a surrogate that is
-                # FIXED during the sub-chain (see library_notes/06 items 1.1-1.2 for the SMU caveat).
+                # FIXED during the sub-chain. This is guaranteed: _propose_new_sample_using_subchain
+                # refreshes the evaluator once, before the sub-chain starts, and freezes it until the
+                # sub-chain ends (finding 1.2, WS3). Remaining caveat: with
+                # conf.state_dependent_approximation=True the surrogate terms are state-dependent
+                # shifts around self.current, for which this derivation has not been verified for
+                # subchain_max_length > 1 (finding 1.1, library_notes/06; option unverified by design).
                 exact_likelihood_log_ratio = self.proposed.log_likelihood - self.current.log_likelihood
                 accepted = self._draw_acceptance_decision(exact_likelihood_log_ratio - correction_log_ratio)
                 if accepted:

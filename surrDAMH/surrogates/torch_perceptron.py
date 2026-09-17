@@ -113,9 +113,39 @@ class PyTorchNNEvaluator(Evaluator):
 
 
 class NeuralNetworkUpdaterBasic(Updater):
+    """
+    Full-batch torch MLP surrogate (single dense network, ``PyTorchMLP``), retrained by
+    ``train()`` incrementally over all accumulated snapshots on every call.
+
+    Scheduled for deletion (``library_notes/09_improvement_plan.md`` decision 4,
+    WS6/WS10): superseded by ``NeuralNetworkUpdaterMinibatches``, which reproduces this
+    class's full-batch L-BFGS behaviour as a preset (``solver="lbfgs", batch_size=None,
+    replay_ratio=0.0, train_on_added_data=False``, see
+    ``library_notes/12_evaluator_contract_spec.md`` §3). Not registered with
+    ``surrogates.reuse.register_updater``, so a saved checkpoint of this class cannot be
+    restored via ``SurrogateReused`` (finding S5); its ``supports_*_persistence()``
+    report ``False`` even though ``save_state``/``load_state`` are implemented.
+    """
+
     def __init__(self, no_parameters, no_observations, hidden_layer_sizes=(100,), solver: Literal["adam", "lbfgs"] = "lbfgs",
                  activation='tanh', learning_rate=1e-3, iterations_batch=100, loss_target=1e-5,
                  device: Literal["cpu", "cuda"] = "cpu", verbose: bool = False, seed: int | None = None) -> None:
+        """
+        Args:
+            no_parameters: dimension of the parameter space.
+            no_observations: dimension of the observation space.
+            hidden_layer_sizes: tuple of hidden layer widths.
+            solver: torch optimizer, ``"adam"`` or ``"lbfgs"``.
+            activation: hidden-layer activation, ``"relu"`` or (anything else, incl. the
+                default) ``"tanh"`` -- see ``PyTorchMLP.create_activation_layer``.
+            learning_rate: optimizer learning rate.
+            iterations_batch: maximum optimizer iterations per ``train()`` call; ``train()``
+                stops early once the full-batch MSE loss drops below ``loss_target``.
+            loss_target: early-stopping threshold on the full-batch MSE loss.
+            device: ``"cpu"`` or ``"cuda"``.
+            verbose: print extra fit diagnostics.
+            seed: torch RNG seed for weight initialization (``None`` = unseeded).
+        """
         self.no_parameters = no_parameters
         self.no_observations = no_observations
         self.hidden_layer_sizes = hidden_layer_sizes

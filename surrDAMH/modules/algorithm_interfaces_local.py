@@ -205,7 +205,14 @@ class LocalEvaluatorProvider(EvaluatorProvider):
         self._request_pending = True
 
     def evaluator_is_available(self) -> bool:
-        return self._pending_evaluator is not None or self.evaluator is not None
+        """
+        Return ``True`` only if a *new* (not yet picked up) evaluator is pending.
+
+        This mirrors the MPI implementation (``CommEvaluator_sampler``), where
+        the method reports the status of the pending ``irecv``, i.e. whether a
+        newer evaluator has arrived - not whether some evaluator exists.
+        """
+        return self._pending_evaluator is not None
 
     def get_evaluator(self) -> Evaluator:
         if self._pending_evaluator is not None:
@@ -282,7 +289,15 @@ class LocalSurrogateManager(SnapshotCollector, EvaluatorProvider):
         self._request_pending = True
 
     def evaluator_is_available(self) -> bool:
-        return self._pending_evaluator is not None or self.evaluator is not None
+        """
+        Return ``True`` only if a *newly trained* evaluator is waiting to be picked up.
+
+        Same semantics as the MPI ``CommEvaluator_sampler``: "a new evaluator can
+        be obtained immediately", not "an evaluator exists". Reporting the latter
+        made DAMH-SMU treat the surrogate as changed on every sub-chain step
+        (3 surrogate calls per step instead of 1, see findings A27/M25).
+        """
+        return self._pending_evaluator is not None
 
     def get_evaluator(self) -> Evaluator:
         if self._pending_evaluator is not None:

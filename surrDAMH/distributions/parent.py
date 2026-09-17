@@ -6,8 +6,22 @@ import numpy.typing as npt
 
 class Distribution:
     """
-    Parent class for prior distributions and likelihoods.
-    The prior distribution is a function composition: transform(internal_prior()).
+    Parent class for prior distributions and likelihoods (also used for observation
+    noise on the likelihood side). See ``docs/concepts.md`` for the internal-vs-physical
+    space design this class formalises.
+
+    A prior is the function composition ``transform ∘ internal_prior``: ``rvs()``/
+    ``logpdf()``/``grad_logpdf()`` operate on the INTERNAL sample (what the MCMC chain
+    actually stores and proposes on), and ``transform()`` maps it to the PHYSICAL
+    parameters the solver/surrogate receives (and what gets written to
+    ``samples/*.csv`` when ``Configuration.transform_before_saving=True``, the default).
+    For a likelihood, ``transform`` is not used; ``logpdf`` is evaluated directly on
+    observations.
+
+    Convention used by every subclass here: ``logpdf`` returns the log-density UP TO AN
+    ADDITIVE CONSTANT (the constant cancels in every Metropolis-Hastings acceptance
+    ratio, so it is never computed). Do not compare `logpdf` values across different
+    ``Distribution`` instances/classes expecting them to be on a common normalized scale.
     """
 
     def __init__(self) -> None:
@@ -51,6 +65,21 @@ class Distribution:
 
 
 class FromScipy(Distribution):
+    """
+    Wraps a frozen scipy.stats distribution (e.g. ``scipy.stats.norm(...)`` or
+    ``scipy.stats.multivariate_normal(...)``) as a ``Distribution``: ``logpdf``/``rvs``
+    are simply the scipy object's own methods (scipy's ``logpdf`` is normalized, unlike
+    the "up to a constant" convention of the other ``Distribution`` subclasses here —
+    harmless for MCMC since only differences matter, but do not rely on the constant).
+
+    Notes:
+        No ``transform`` override (identity, i.e. internal space == physical space);
+        no ``get_covariance()`` (`NotImplementedError` from the base class) or
+        ``grad_logpdf()``, so this class cannot be used with pCN (``build_proposal``
+        rejects it, see ``proposal_builder.py:_prior_is_gaussian``) or with any
+        gradient-based (Hamiltonian) proposal.
+    """
+
     def __init__(self, scipy_rv) -> None:
         """
         Args:

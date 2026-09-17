@@ -14,7 +14,8 @@ from mpi4py import MPI
 
 from surrDAMH.configuration import Configuration
 from surrDAMH.modules.communication import (CommEvaluator_collector,
-                                            CommSnapshot_collector)
+                                            CommSnapshot_collector,
+                                            send_initial_surrogate_availability)
 from surrDAMH.modules.tools import ensure_dir
 from surrDAMH.surrogates.parent import Updater
 
@@ -127,11 +128,17 @@ def run_COLLECTOR(conf: Configuration, surrogate_updater: Updater, surrogate_del
         list_new_snapshots = initial_snapshots
 
     if preloaded_snapshots is not None:
-        no_snapshots_total = int(preloaded_snapshots[0].shape[0])
+        no_preloaded_snapshots = int(preloaded_snapshots[0].shape[0])
         if getattr(surrogate_updater, "training_data_loaded", False):
+            # the updater already contains these snapshots (restored training data or state):
+            # count them here and do NOT hand the same batch to add_data() again
+            no_snapshots_total = no_preloaded_snapshots
             list_new_snapshots = [np.empty((0, conf.no_parameters)), np.empty((0, conf.no_observations)), np.empty((0, 1))]
-        if getattr(surrogate_updater, "pretrained_ready", False) and no_snapshots_total > 0:
-            no_snapshots_used = no_snapshots_total
+        # otherwise the preloaded snapshots stay in list_new_snapshots and are counted exactly
+        # once, below, when they are added to the updater (finding 2.8: no_snapshots_total used
+        # to be pre-set to N here and incremented by the same N in the loop -> 2N)
+        if getattr(surrogate_updater, "pretrained_ready", False) and no_preloaded_snapshots > 0:
+            no_snapshots_used = no_preloaded_snapshots
             evaluator_instance = surrogate_updater.get_evaluator()
             sampler_got_last_evaluator = [False] * conf.no_samplers
 
@@ -143,6 +150,18 @@ def run_COLLECTOR(conf: Configuration, surrogate_updater: Updater, surrogate_del
     surrogate_test_csv_path = os.path.join(conf.output_dir, "sampling_output", "surrogate_quality_test.csv")
     surrogate_test_rows = []  # accumulate rows with unweighted and posterior-weighted metrics
     surrogate_update_index = 1 if evaluator_instance is not None else 0
+
+    # start-up handshake (WS8, finding 2.2): tell every sampler whether a surrogate evaluator can
+    # be provided before any new snapshot arrives. A sampler whose first stage needs a surrogate
+    # (DAMH or a Hamiltonian proposal) then raises immediately instead of deadlocking: it would
+    # wait in get_evaluator() for a surrogate that can only be trained from snapshots which only
+    # that very sampler can produce. Sent before the main loop and without waiting for anything
+    # from the samplers, so it cannot deadlock against their own start-up messages.
+    no_snapshots_available = no_snapshots_total + int(list_new_snapshots[0].shape[0])
+    can_provide_evaluator = bool(evaluator_instance is not None
+                                 or no_snapshots_available >= conf.min_snapshots_initial)
+    for r in sampler_ranks:
+        send_initial_surrogate_availability(int(r), can_provide_evaluator)
 
     while any(needs_evaluator):  # while at least 1 sampling algorithm still requires updates
 

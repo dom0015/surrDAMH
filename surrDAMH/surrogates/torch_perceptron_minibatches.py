@@ -169,6 +169,21 @@ class PyTorchNNEvaluator(Evaluator):
 
 @register_updater
 class NeuralNetworkUpdaterMinibatches(Updater):
+    """
+    Torch MLP surrogate trained with persistent optimizer state over minibatches drawn
+    from all accumulated snapshots, with a replay mechanism so old data is not
+    forgotten as new snapshots arrive (see ``_get_replay_indices``/``_iter_minibatches``).
+    Registered with ``surrogates.reuse.register_updater`` (``surrogate_type =
+    "NeuralNetworkUpdaterMinibatches"``), so checkpoints round-trip through
+    ``SurrogateReused``. Currently the only supported evaluator/updater implementation
+    with input/output normalization hooks (``output_mean``/``output_scale``) and a
+    documented ``snapshot_weighting``-style knob (``_weighted_loss``, see the
+    conformance table in ``library_notes/12_evaluator_contract_spec.md`` §1 — today's
+    weighting is unconditionally "multiplicity", i.e. rejected proposals at weight 0 are
+    not used for training; the planned ``snapshot_weighting`` parameter is not
+    implemented yet).
+    """
+
     def __init__(
         self,
         no_parameters,
@@ -192,6 +207,47 @@ class NeuralNetworkUpdaterMinibatches(Updater):
         gradient_clip_norm: float | None = None,
         weight_decay: float = 1e-4,
     ) -> None:
+        """
+        Args:
+            no_parameters: dimension of the parameter space.
+            no_observations: dimension of the observation space.
+            hidden_layer_sizes: tuple of hidden layer widths.
+            solver: torch optimizer; ``"lbfgs"`` also forces
+                ``_infer_batch_size`` to use the whole available subset as one batch
+                (full-batch behaviour, see ``library_notes/12_evaluator_contract_spec.md``
+                §3 for the resulting "Basic-equivalent" preset).
+            activation: hidden-layer activation.
+            learning_rate: optimizer learning rate.
+            iterations_batch: optimizer **steps** (not epochs) run per ``train()`` call.
+            loss_target: early-stopping threshold on the training loss.
+            device: ``"cpu"`` or ``"cuda"``.
+            verbose: print extra fit diagnostics.
+            seed: seeds both the torch model init and this updater's own
+                ``numpy.random.default_rng`` (minibatch/replay sampling).
+            output_mean, output_scale: fixed per-observation normalization statistics
+                applied before the loss and undone in ``denormalize_outputs``; default
+                (``None``) is the identity (mean 0, scale 1, i.e. no normalization) --
+                there is no "auto-estimate from data" option today (planned, see spec 12 §2).
+            batch_size: fixed minibatch size; ``None`` picks a size from the current
+                subset size (``_infer_batch_size``: whole subset if `<100`, else 64 or
+                256), ignored when ``solver="lbfgs"``.
+            replay_ratio: fraction of *old* (previously seen) snapshots mixed into each
+                training call alongside the newly added ones, relative to the number of
+                new snapshots; ``0`` trains on new data only.
+            replay_max_old_samples: caps how many old snapshots ``replay_ratio`` may add.
+            train_on_added_data: if True, ``add_data`` itself triggers a training pass
+                (in addition to the collector's periodic ``train()`` calls); can be
+                overridden per call via ``add_data(..., train_on_added_data=...)``.
+            shuffle_batches: shuffle sample order within each training call.
+            gradient_clip_norm: if given, clip the gradient norm to this value before
+                each optimizer step.
+            weight_decay: AdamW/Adam weight decay.
+
+        Raises:
+            ValueError: if ``output_mean``/``output_scale`` are non-finite, if
+                ``output_scale`` contains zeros, if ``replay_ratio < 0``, or if
+                ``batch_size <= 0`` when given.
+        """
         self.no_parameters = no_parameters
         self.no_observations = no_observations
         self.hidden_layer_sizes = tuple(hidden_layer_sizes)

@@ -28,7 +28,21 @@ class PolynomialSklearnEvaluator(Evaluator):
 
 
 class PolynomialSklearnUpdater(Updater):  # initiated by COLLECTOR
+    """Polynomial regression surrogate (``sklearn`` ``PolynomialFeatures`` + ``LinearRegression``).
+
+    The degree starts at 1 and is grown automatically as more snapshots accumulate
+    (``get_evaluator()`` refits from scratch on the full accumulated data whenever the
+    snapshot count increases enough to afford the next degree, up to ``max_degree``);
+    there is no minimum-snapshot guard before the first fit.
+    """
+
     def __init__(self, no_parameters: int, no_observations: int, max_degree: int = 5):
+        """
+        Args:
+            no_parameters: dimension of the parameter space.
+            no_observations: dimension of the observation space.
+            max_degree: highest polynomial degree the model is allowed to grow to.
+        """
         self.no_parameters = no_parameters
         self.no_observations = no_observations
         self.max_degree = max_degree
@@ -45,7 +59,9 @@ class PolynomialSklearnUpdater(Updater):  # initiated by COLLECTOR
         self.model = None
 
     def add_data(self, parameters: npt.NDArray, observations: npt.NDArray, weights: npt.NDArray | None = None):
-        # add new data
+        # add new data. The caller's weights are discarded (hard-set to None below, then
+        # defaulted to all-ones internally): every snapshot is treated as equally
+        # informative regardless of its (multiplicity) weight.
         weights = None
         parameters = parameters.reshape(-1, self.no_parameters)
         observations = observations.reshape(-1, self.no_observations)

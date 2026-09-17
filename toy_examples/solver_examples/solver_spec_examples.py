@@ -82,6 +82,22 @@ class SolverSpecSinProdGeneric(SolverSpec):
         self.solver_parameters = {"no_parameters": no_parameters, "no_observations": no_observations, "sleep": sleep}
 
 
+class SolverSpecLinearGaussian(SolverSpec):
+    """
+    no_parameters = 2, no_observations = 2
+    observation = A @ parameters, A = [[1, 0.5], [0, 1]] (fixed)
+
+    Genuinely linear forward model; used by template_experiment.py as the canonical
+    starting point (closed-form posterior for a Gaussian prior + Gaussian noise).
+    """
+
+    def __init__(self) -> None:
+        self.solver_module_path = "solver_examples/solver_examples.py"
+        self.solver_module_name = "solver_examples"
+        self.solver_class_name = "LinearGaussianSolver"
+        self.solver_parameters = {}
+
+
 class SolverSpecNonlinearGeneric(SolverSpec):
     """
     Serves only for test purposes.

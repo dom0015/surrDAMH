@@ -177,3 +177,24 @@ class Generic(Solver):
         #     convergence_tag = -1
         # return res, convergence_tag
         return res
+
+
+class LinearGaussianSolver(Solver):
+    """
+    Linear forward model, no_parameters = 2, no_observations = 2.
+    observation = A @ parameters, with a fixed A = [[1, 0.5], [0, 1]].
+    Genuinely linear (not just piecewise/approximately), so with a Gaussian prior and
+    additive Gaussian noise the posterior has a closed form -- useful as the canonical
+    "does the sampler reproduce the right answer" toy problem (see tests/conftest.py).
+    """
+
+    def __init__(self, solver_id=0, output_dir=None):
+        self.no_parameters = 2
+        self.no_observations = 2
+        self.A = np.array([[1.0, 0.5], [0.0, 1.0]])
+
+    def set_parameters(self, parameters: npt.NDArray):
+        self.par = np.asarray(parameters, dtype=float)
+
+    def get_observations(self):
+        return self.A @ self.par

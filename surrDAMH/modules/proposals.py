@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+import warnings
+
 import numpy as np
 import numpy.typing as npt
 from typing import Callable
@@ -52,6 +54,8 @@ class Proposal:
 
 
 class GaussRandomWalk(Proposal):  # initiated by SAMPLERs
+    """Symmetric Gaussian random-walk proposal (no prior assumption): ``x' = x + N(0, sd_or_cov)``."""
+
     def __init__(self, no_parameters, sd_or_cov=1.0, seed=0) -> None:
         super().__init__()
         self.no_parameters = no_parameters
@@ -86,6 +90,17 @@ class GaussRandomWalk(Proposal):  # initiated by SAMPLERs
 
 
 class PCN(Proposal):  # preconditioned Crank-Nicolson proposal
+    """
+    Preconditioned Crank-Nicolson proposal: ``get_log_acceptance_probability`` drops
+    the prior ratio unconditionally, which is only correct when the internal prior
+    really is ``N(prior_mean, prior_sd_or_cov)`` -- ``build_proposal`` enforces this by
+    only constructing a ``PCN`` for a ``Normal`` or ``PriorIndependentComponents``
+    prior (whose internal prior is standard normal by design), see
+    ``proposal_builder.py:_prior_is_gaussian``. Constructing this class directly with a
+    non-Gaussian prior silently produces an incorrect chain; go through
+    ``build_proposal``/``Stage(proposal_type="pCN")`` instead of instantiating it by hand.
+    """
+
     def __init__(self, no_parameters: int, beta: float, prior_mean: npt.NDArray,
                  prior_sd_or_cov: npt.ArrayLike, seed: int = 0) -> None:
         """
@@ -133,6 +148,17 @@ class PCN(Proposal):  # preconditioned Crank-Nicolson proposal
 
 
 class GaussRandomWalk_adaptive(GaussRandomWalk):  # initiated by SAMPLERs
+    """
+    ``GaussRandomWalk`` whose covariance is periodically re-estimated from the
+    accepted-vs-rejected history (Haario-style adaptation) to chase ``target_rate``.
+    Sample history accumulates without bound across the whole stage (``self.samples``
+    is never trimmed or reset, finding G1) and ``corr_limit`` is fixed at construction
+    (``Stage.adaptive_corr_limit``/``adaptive_sample_limit`` are NOT wired to this class,
+    see ``stages.py``). Note for DAMH stages: ``adapt()`` is only called once per OUTER
+    step (from the exact acceptance test on the sub-chain endpoint), so ``target_rate``
+    is a target for the outer/second-stage acceptance rate, not the sub-chain rate.
+    """
+
     def __init__(self, no_parameters: int, sd_or_cov: npt.ArrayLike = 1.0, seed: int = 0,
                  target_rate: float = 0.25, corr_limit: float = 0.3,
                  period: int = 10) -> None:
@@ -170,29 +196,61 @@ class GaussRandomWalk_adaptive(GaussRandomWalk):  # initiated by SAMPLERs
 
         self.counter += 1
         if self.counter % self.period == 0:
-            current_rate = np.mean(self.aweights)
-            sample_cov = np.cov(self.samples, aweights=self.aweights, rowvar=False)
-            sd = np.sqrt(np.diag(sample_cov))
-            sample_corr = sample_cov/sd.reshape((self.no_parameters, 1))
-            sample_corr = sample_corr/sd.reshape(1, self.no_parameters)
-            sample_corr[sample_corr < -self.corr_limit] = -self.corr_limit
-            sample_corr[sample_corr > self.corr_limit] = self.corr_limit
-            np.fill_diagonal(sample_corr, 1.0)
-            sample_cov = sample_corr*sd.reshape((self.no_parameters, 1))
-            sample_cov = sample_cov*sd.reshape((1, self.no_parameters))
-            if self.init_flag:
-                self.init_flag = False
-                self.coef = np.mean(self.initial_sd/sd)
-            ratio = current_rate/self.target_rate
-            if ratio > 1.2:  # acceptance rate is too high:
-                self.coef = self.coef*min(ratio**(2/self.no_parameters), 2.0)
-                self.set_covariance(self.coef*sample_cov)
-            elif (1/ratio) > 1.2:  # acceptance rate is too low:
-                self.coef = self.coef*max(ratio**(2/self.no_parameters), 0.5)
-                self.set_covariance(self.coef*sample_cov)
+            # Guard (WS7 "NaN-safe weights", finding A15c/d): if every acceptance weight in
+            # this period is zero (e.g. all proposals in the period were rejected) or
+            # non-finite, np.cov(..., aweights=...) divides by their sum and raises
+            # ZeroDivisionError; even when it does not raise, a degenerate weight set can
+            # yield a covariance with a zero/non-finite diagonal. In either case skip this
+            # adaptation step and keep the previous proposal covariance instead of crashing
+            # or corrupting sd_or_cov; the arithmetic below is otherwise unchanged, so every
+            # non-degenerate adaptation is bit-identical to before this guard was added.
+            weights_sum = np.sum(self.aweights)
+            degenerate = not np.isfinite(weights_sum) or weights_sum == 0 or np.any(~np.isfinite(self.aweights))
+            sample_cov = None
+            diag = None
+            if not degenerate:
+                sample_cov = np.cov(self.samples, aweights=self.aweights, rowvar=False)
+                diag = np.diag(sample_cov)
+                degenerate = bool(np.any(~np.isfinite(diag)) or np.any(diag == 0))
+            if degenerate:
+                warnings.warn(
+                    "adaptive proposal: degenerate acceptance weights/covariance in this "
+                    "period, keeping the previous proposal covariance",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+            else:
+                current_rate = np.mean(self.aweights)
+                sd = np.sqrt(diag)
+                sample_corr = sample_cov/sd.reshape((self.no_parameters, 1))
+                sample_corr = sample_corr/sd.reshape(1, self.no_parameters)
+                sample_corr[sample_corr < -self.corr_limit] = -self.corr_limit
+                sample_corr[sample_corr > self.corr_limit] = self.corr_limit
+                np.fill_diagonal(sample_corr, 1.0)
+                sample_cov = sample_corr*sd.reshape((self.no_parameters, 1))
+                sample_cov = sample_cov*sd.reshape((1, self.no_parameters))
+                if self.init_flag:
+                    self.init_flag = False
+                    self.coef = np.mean(self.initial_sd/sd)
+                ratio = current_rate/self.target_rate
+                if ratio > 1.2:  # acceptance rate is too high:
+                    self.coef = self.coef*min(ratio**(2/self.no_parameters), 2.0)
+                    self.set_covariance(self.coef*sample_cov)
+                elif (1/ratio) > 1.2:  # acceptance rate is too low:
+                    self.coef = self.coef*max(ratio**(2/self.no_parameters), 0.5)
+                    self.set_covariance(self.coef*sample_cov)
 
 
 class Hamiltonian(Proposal):
+    """
+    Standard Hamiltonian (leapfrog) proposal with mass matrix ``sd_or_cov``.
+    ``needs_gradients=True``: requires ``set_gradient_functions`` to be called before
+    ``propose_sample`` (``build_proposal``/the algorithm classes wire this to the
+    surrogate's ``vjp``/``jacobian``, never the exact model -- see
+    ``docs/concepts.md``), and requires ``Configuration.use_surrogate_gradients=True``
+    in effect (``build_proposal`` asserts this).
+    """
+
     def __init__(self, no_parameters, step_size=0.1, num_steps=10, sd_or_cov=1.0, seed=0) -> None:
         """
         Hamiltonian proposal with leapfrog integrator for Hamiltonian dynamics.
@@ -351,6 +409,22 @@ class HamiltonianInfinite(Hamiltonian):
 
 
 class BlockProposal(Proposal):
+    """
+    Applies a different sub-``Proposal`` to a different, non-overlapping group of
+    parameters on each call (``choose_group`` picks the group; only that group is
+    updated per proposal). ``needs_gradients`` is True iff any sub-proposal needs
+    gradients, in which case ``set_gradient_functions`` wraps the full gradient
+    functions to only expose that group's slice to each Hamiltonian-family
+    sub-proposal (other groups' gradient components are zeroed, not the sample's
+    actual values -- a known inefficiency for nonlinear models, not a correctness
+    bug: any gradient field still yields a valid reversible HMC proposal).
+
+    Known limitation: the sub-proposals' own RNGs are NOT re-seeded per MPI rank
+    (finding 1.9/G5), so identical ``seed``s across chains can produce correlated
+    group choices/increments across ranks -- do not rely on independence between
+    chains built this way until G5 is addressed.
+    """
+
     def __init__(self, no_parameters: int, list_of_proposals: list[Proposal], list_of_groups: list[list[int]], seed: int = 0, group_probabilities: list[float] | None = None) -> None:
         """ Block proposal that applies different proposal distributions to different groups of parameters.
         Args:

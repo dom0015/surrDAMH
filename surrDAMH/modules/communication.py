@@ -18,7 +18,45 @@ TAG_DATA = 2
 TAG_UPDATE = 3  # signal that sampler wants new evaluator if available
 TAG_EVALUATOR_OBJECT = 4  # this message contains evaluator object (or None if sampler terminated)
 TAG_STOP_UPDATING = 5  # when sampler knows that it will not want new evaluator later
+TAG_INITIAL_SURROGATE = 6  # collector -> sampler, once at start-up: can an evaluator be provided?
 TAG_FIRST_SNAPSHOT = 10
+
+# Seconds to wait between printing a fatal traceback and calling MPI_Abort. MPI_Abort makes the
+# launcher tear the job down immediately, and mpiexec (MPICH/Hydra) then discards whatever its I/O
+# forwarding still holds: without this grace period the traceback of a rank that fails while
+# another rank is inside MPI_Comm_spawn is lost entirely and the user only sees a silent exit 1
+# (measured: 0/3 runs kept the message, 5/5 keep it with 0.5 s). Lives here (not in core.py) so
+# the spawned solver children can import it without pulling in the whole framework.
+ABORT_GRACE_SECONDS = 0.5
+
+
+def send_initial_surrogate_availability(rank_sampler: int, can_provide_evaluator: bool) -> None:
+    """
+    Collector side of the start-up handshake (WS8, finding 2.2).
+
+    Tells one sampler whether the collector can hand out a surrogate evaluator *before*
+    receiving any new snapshot, i.e. whether it has a pretrained/restored surrogate or
+    already holds at least ``min_snapshots_initial`` snapshots.
+
+    Sent once per sampler, right after the collector's set-up and before its main loop, so
+    it never waits for anything the samplers do first. The message has its own tag and is
+    consumed exactly once, so it does not interfere with the TAG_UPDATE /
+    TAG_EVALUATOR_OBJECT bookkeeping of ``CommEvaluator_collector`` (see its invariant).
+    """
+    buf = np.array([1 if can_provide_evaluator else 0], dtype=int)
+    MPI.COMM_WORLD.Send(buf=buf, dest=rank_sampler, tag=TAG_INITIAL_SURROGATE)
+
+
+def recv_initial_surrogate_availability(rank_collector: int) -> bool:
+    """
+    Sampler side of the start-up handshake; see ``send_initial_surrogate_availability``.
+
+    Blocking on purpose: the collector sends this message before its main loop and without
+    waiting for the sampler, so it is (or will shortly be) available.
+    """
+    buf = np.zeros(shape=(1,), dtype=int)
+    MPI.COMM_WORLD.Recv(buf=buf, source=rank_collector, tag=TAG_INITIAL_SURROGATE)
+    return bool(buf[0])
 
 
 class CommEvaluator_sampler:

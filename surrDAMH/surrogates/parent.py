@@ -8,6 +8,8 @@ from surrDAMH.solvers import Solver
 
 
 class SurrogateAsSolver(Solver):
+    """Exposes an ``Evaluator`` through the ``Solver`` interface (``use_only_surrogate`` stages)."""
+
     def __init__(self, call_method) -> None:
         self.call_method = call_method
 
@@ -15,10 +17,35 @@ class SurrogateAsSolver(Solver):
         self.parameters = parameters
 
     def get_observations(self) -> npt.NDArray:
-        return self.call_method(self.parameters)
+        """
+        Returns observations of shape ``(no_observations,)``, i.e. the ``Solver`` contract.
+
+        The evaluator is called on a ``(1, no_parameters)`` batch; its result is flattened,
+        because implementations differ (batched evaluators return ``(1, no_observations)``,
+        the torch ones return a flattened ``(no_observations,)``, see finding 3.5). Without
+        this, a ``(1, no_observations)`` array reached ``Normal.logpdf`` and broke for
+        ``no_observations > 1`` (finding A20).
+        """
+        result = self.call_method(np.atleast_2d(self.parameters))
+        return np.asarray(result).reshape(-1)
 
 
 class Evaluator:
+    """
+    Parent class for surrogate evaluators, produced by ``Updater.get_evaluator()`` and
+    picklable so they can be shipped from the collector to sampler ranks over MPI.
+
+    Today's contract (this base class only documents the interface; it does not enforce
+    shapes, and concrete evaluators do not all agree — see the file:line-referenced
+    conformance table in ``library_notes/12_evaluator_contract_spec.md`` §1, e.g. the two
+    torch evaluators flatten ``__call__``'s output to ``(n*no_observations,)`` instead of
+    ``(n, no_observations)``; ``SurrogateAsSolver.get_observations`` compensates for this
+    so ``use_only_surrogate`` stages see a uniform ``(no_observations,)`` regardless).
+    That table also lists the standardized contract WS6 will migrate to (batch shapes
+    always 2-D, ``no_parameters``/``no_observations`` set on this base class) — not
+    implemented yet, so code against today's per-class shapes, not the proposed ones.
+    """
+
     def __init__(self) -> None:
         self.no_parameters: int
 
@@ -28,7 +55,10 @@ class Evaluator:
 
         datapoints shape: (number of datapoints, no_parameters)
 
-        output NDArray shape: (number of datapoints, no_observations)
+        output NDArray shape: (number of datapoints, no_observations) for the classical
+        (polynomial/RBF/kd-tree) evaluators; the two torch evaluators instead return a
+        flattened ``(number of datapoints * no_observations,)`` array (see class
+        docstring). Not implemented by the base class.
         """
         raise NotImplementedError
 
@@ -71,7 +101,18 @@ class Evaluator:
     
 class Updater:
     """
-    Parent class for surrogate model updaters.
+    Parent class for surrogate model updaters: owns the training data and the
+    trainable state (e.g. a fitted sklearn pipeline or a torch model + optimizer), runs
+    on the collector rank (or in-process for ``run_local``'s ``LocalSurrogateManager``).
+    ``process_COLLECTOR``/``LocalSurrogateManager`` decide *when* to call ``add_data``/
+    ``train``/``get_evaluator`` (governed by ``Configuration.min_snapshots_initial``/
+    ``min_snapshots_to_update``); the updater itself is passive.
+
+    Which methods each of the five concrete updaters (polynomial/RBF/kd-tree, two torch
+    variants) actually implement, including weight handling and persistence, is
+    tabulated in ``library_notes/12_evaluator_contract_spec.md`` §1 — several
+    ``supports_*`` methods below report ``False`` for functionality that is in fact
+    implemented (documented mismatch, not fixed here).
     """
 
     def __init__(self, no_parameters: int, no_observations: int) -> None:
@@ -89,7 +130,10 @@ class Updater:
         Adds more snapshots to the surrogate model.
         parameters shape: (number of snapshots, no_parameters)
         observations shape: (number of snapshots, no_observations)
-        weights shape: (number of snapshots, 1)
+        weights shape: (number of snapshots, 1); a rejected proposal is sent with
+        weight 0 (multiplicity weighting, ``algorithms.py``). Whether/how a concrete
+        updater actually uses ``weights`` (some ignore them outright) is documented per
+        class and in ``library_notes/12_evaluator_contract_spec.md`` §1 ("weight handling" row).
         """
         pass
 
@@ -97,6 +141,8 @@ class Updater:
         """
         Trains the surrogate model, e.g. neural network.
         Called periodically by collector, regardless of whether new data have been added.
+        Several updaters instead (re)train inside ``get_evaluator()`` and leave this a
+        no-op — see the "train() semantics" row of the spec referenced in the class docstring.
         """
 
     def get_evaluator(self) -> Evaluator:

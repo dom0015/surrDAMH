@@ -12,6 +12,15 @@ from surrDAMH.distributions.parent import Distribution
 class GaussianMixture(Distribution):
     """
     Gaussian mixture distribution given by list of means, list of covariance matrices and list of weights.
+    No ``transform`` override (identity: internal space == physical space).
+
+    Notes:
+        Known, currently-unfixed edge cases (pinned by ``tests/unit/test_distributions.py``,
+        see ``library_notes/10_manual_review_notes.md`` §3, finding 1.11): far from every
+        component, ``logpdf`` returns ``-inf`` (``log(0)``, no warning) and
+        ``grad_logpdf`` returns an all-zero vector instead of pointing back towards the
+        mixture; ``rvs(n)`` returns shape ``(n, d)`` even for the default ``n=1``, unlike
+        the ``(d,)`` returned by ``Normal``/``PriorIndependentComponents.rvs()``.
     """
 
     def __init__(self, means: List[npt.NDArray], covs: List[npt.NDArray] | None = None, weights: List[float] | None = None):

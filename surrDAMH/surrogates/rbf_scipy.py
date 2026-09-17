@@ -40,6 +40,26 @@ class RBFInterpolationUpdater(Updater):  # initiated by COLLECTOR
                  epsilon: float | None = None,
                  degree: int | None = None,
                  verbose: bool = False):
+        """
+        Args, forwarded to ``scipy.interpolate.RBFInterpolator`` at fit time (see its
+        docs for exact semantics): ``neighbors`` (local RBF using only the ``neighbors``
+        nearest points if given, global otherwise), ``smoothing``, ``kernel``,
+        ``epsilon``, ``degree``.
+
+        Args:
+            no_parameters: dimension of the parameter space.
+            no_observations: dimension of the observation space.
+            verbose: print fit timing/shape on every ``get_evaluator()`` call.
+
+        Notes:
+            ``get_evaluator()`` refits from scratch on the full accumulated dataset
+            every call (O(N^3)); duplicated/degenerate snapshot locations raise inside
+            ``RBFInterpolator`` and are caught by falling back to a shifted-copy,
+            ``kernel="linear"`` construction (see the ``except ValueError`` branch) --
+            this changes the fitted surrogate's behaviour, not just its performance.
+            ``weights`` passed to ``add_data`` are accepted but ignored (no weighted RBF
+            variant is wired in).
+        """
         self.no_parameters = no_parameters
         self.no_observations = no_observations
         self.neighbors = neighbors

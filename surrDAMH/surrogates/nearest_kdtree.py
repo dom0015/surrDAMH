@@ -50,6 +50,14 @@ class KDTreeUpdater(Updater):  # initiated by COLLECTOR
 
     def __init__(self, no_parameters: int, no_observations: int,
                  no_nearest_neighbors: int):
+        """
+        Args:
+            no_parameters: dimension of the parameter space.
+            no_observations: dimension of the observation space.
+            no_nearest_neighbors: number of neighbors averaged per query (inverse-distance
+                weights); clamped to the number of stored snapshots in ``get_evaluator()``
+                if fewer are available. ``1`` = nearest-neighbor lookup, no averaging.
+        """
         self.no_parameters = no_parameters
         self.no_observations = no_observations
         self.no_nearest_neighbors = no_nearest_neighbors
@@ -59,7 +67,8 @@ class KDTreeUpdater(Updater):  # initiated by COLLECTOR
         self.obs = np.empty((0, self.no_observations))
 
     def add_data(self, parameters: npt.NDArray, observations: npt.NDArray, weights: npt.NDArray | None = None):
-        # add new data
+        # add new data. ``weights`` is accepted but ignored: every snapshot is treated
+        # as equally informative regardless of its (multiplicity) weight.
         parameters = parameters.reshape(-1, self.no_parameters)
         observations = observations.reshape(-1, self.no_observations)
         self.par = np.vstack((self.par, parameters))

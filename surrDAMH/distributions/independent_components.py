@@ -9,22 +9,37 @@ from surrDAMH.distributions.parent import Distribution
 
 
 class UnivariateComponent:
+    """
+    One marginal of a ``PriorIndependentComponents`` prior: maps a standard-normal
+    internal coordinate to a physical value with the component's own distribution via
+    ``transform`` (an inverse-CDF-style transformation, see
+    ``surrDAMH.distributions.transformations``), independent of every other component.
+    """
+
     def __init__(self):
         pass
 
     def transform(self, parameter):
+        """Maps one standard-normal internal value to this component's physical value."""
         pass
 
     def pdf(self, x):
-        """Evaluate the marginal prior PDF at value(s) *x* in transformed space."""
+        """Evaluate the marginal prior PDF at value(s) *x* in transformed (physical) space."""
         raise NotImplementedError
 
 
 class PriorIndependentComponents(Distribution):
     """
-    Internally, the sampling framework uses the Gaussian prior distribution N(zeros,ones).
-    Other distributions are transformed to Gaussian, component by component.
-    Available univariate components: Uniform, Normal, Lognormal, Beta
+    Prior built from independent univariate components (``UniformComponent``,
+    ``NormalComponent``, ``LognormalComponent``, ``BetaComponent``), each with its own
+    physical-space marginal. Internally the sampler always works with the STANDARD
+    NORMAL N(0, I) (design decision, not an approximation): ``logpdf``/``grad_logpdf``
+    are exactly the standard-normal log-density/gradient with no Jacobian term for
+    ``transform``, because MCMC acceptance ratios are computed entirely in this internal
+    space (pinned by
+    ``tests/unit/test_distributions.py::TestPriorIndependentComponentsLogpdfDesign``).
+    ``transform(sample)`` maps an internal N(0, I) sample to the physical parameters,
+    component by component, only for the solver/surrogate and for on-disk output.
     """
 
     def __init__(self, list_of_components: list[UnivariateComponent]):

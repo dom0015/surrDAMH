@@ -16,11 +16,12 @@ from surrDAMH.modules.algorithm_interfaces_local import LocalEvaluatorProvider
 from surrDAMH.modules.algorithm_interfaces_mpi import (MpiEvaluatorProvider,
                                                        MpiSnapshotSink,
                                                        MpiSolverPoolObservationProvider)
+from surrDAMH.modules.communication import recv_initial_surrogate_availability
 from surrDAMH.modules import algorithms as alg
 from surrDAMH.modules import lhs_normal as lhs
-from surrDAMH.modules import proposals
+from surrDAMH.modules.proposal_builder import build_proposal
 from surrDAMH.solvers import Solver
-from surrDAMH.stages import Stage
+from surrDAMH.stages import Stage, stage_name
 from surrDAMH.surrogates.parent import Evaluator
 from surrDAMH.modules.continuation import save_last_sample
 
@@ -72,68 +73,26 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
     first_stage = list_of_stages[0]
     first_stage_needs_surrogate = (first_stage.algorithm_type == "DAMH"
                                    or str(first_stage.proposal_type).startswith("Hamiltonian"))
-    if rank_world == 0 and first_stage_needs_surrogate and conf.use_collector and conf.min_snapshots_initial > 0:
-        print("WARNING: the first stage uses a surrogate model (DAMH or Hamiltonian proposal); it will block until the"
-              " collector has a surrogate, which requires initial_snapshots or a pretrained surrogate updater"
-              " (no snapshots are produced before the first stage).", flush=True)
+    if conf.use_collector:
+        # start-up handshake (WS8, finding 2.2), counterpart of the send in process_COLLECTOR:
+        # every sampler consumes exactly one message here, whether or not it needs a surrogate.
+        assert conf.rank_collector is not None
+        collector_can_provide_evaluator = recv_initial_surrogate_availability(conf.rank_collector)
+        if first_stage_needs_surrogate and not collector_can_provide_evaluator:
+            raise RuntimeError(
+                "The first stage requires a surrogate model (DAMH algorithm or Hamiltonian proposal), but the"
+                " collector cannot provide one: it has no pretrained surrogate and fewer than"
+                f" min_snapshots_initial={conf.min_snapshots_initial} preloaded snapshots, while new snapshots"
+                " can only be produced by the samplers themselves - the run would deadlock. Start with an MH"
+                " stage, pass initial_snapshots, use a pretrained/restored surrogate updater, or lower"
+                " min_snapshots_initial.")
 
     for i, stage in enumerate(list_of_stages):
         seed0 = 10*(no_stages*rank_world + i)
 
         # choice of proposal distribution for this stage:
-        if stage.proposal_type == "pCN":
-            my_Prop = proposals.PCN(
-                no_parameters=conf.no_parameters,
-                beta=stage.pcn_beta,
-                prior_mean=prior.mean,
-                prior_sd_or_cov=prior.get_covariance(),
-                seed=seed0+1
-            )
-        elif stage.proposal_type == "Hamiltonian":
-            hamiltonian_sd_or_cov = stage.proposal_sd_or_cov
-            if hamiltonian_sd_or_cov is None:
-                hamiltonian_sd_or_cov = 1.0
-            my_Prop = proposals.Hamiltonian(
-                no_parameters=conf.no_parameters,
-                seed=seed0+1,
-                num_steps=stage.hamiltonian_num_steps,
-                step_size=stage.hamiltonian_step_size,
-                sd_or_cov=hamiltonian_sd_or_cov,
-            )
-            assert conf.use_surrogate_gradients, "Hamiltonian proposals need use_surrogate_gradients=True (it may have been disabled by SamplingFramework, see warnings)"
-        elif stage.proposal_type == "HamiltonianInfinite":
-            hamiltonian_sd_or_cov = stage.proposal_sd_or_cov
-            if hamiltonian_sd_or_cov is None:
-                hamiltonian_sd_or_cov = 1.0
-            my_Prop = proposals.HamiltonianInfinite(
-                no_parameters=conf.no_parameters,
-                seed=seed0+1,
-                num_steps=stage.hamiltonian_num_steps,
-                step_size=stage.hamiltonian_step_size,
-                sd_or_cov=hamiltonian_sd_or_cov,
-            )
-            assert conf.use_surrogate_gradients, "Hamiltonian proposals need use_surrogate_gradients=True (it may have been disabled by SamplingFramework, see warnings)"
-        elif stage.proposal_type == "block":
-            my_Prop = proposals.BlockProposal(
-                no_parameters=conf.no_parameters,
-                list_of_groups=stage.block_proposal_groups,
-                list_of_proposals=stage.block_proposal_list,
-                seed=seed0+1
-            )
-        elif stage.adaptive:
-            my_Prop = proposals.GaussRandomWalk_adaptive(no_parameters=conf.no_parameters, seed=seed0+1)
-            if stage.proposal_sd_or_cov is None:
-                assert proposal_cov_adaptive is not None, f"proposal sd/cov not specified for stage {i}"
-                my_Prop.set_covariance(sd_or_cov=proposal_cov_adaptive)
-            else:
-                my_Prop.set_covariance(sd_or_cov=stage.proposal_sd_or_cov)
-        else:
-            my_Prop = proposals.GaussRandomWalk(no_parameters=conf.no_parameters, seed=seed0+1)
-            if stage.proposal_sd_or_cov is None:
-                assert proposal_cov_adaptive is not None, f"proposal sd/cov not specified for stage {i}"
-                my_Prop.set_covariance(sd_or_cov=proposal_cov_adaptive)
-            else:
-                my_Prop.set_covariance(sd_or_cov=stage.proposal_sd_or_cov)
+        my_Prop = build_proposal(stage=stage, conf=conf, prior=prior, seed=seed0+1,
+                                 prev_cov=proposal_cov_adaptive, stage_index=i)
 
         # choice of communicators for this stage:
         if stage.send_snapshots_to_collector:
@@ -158,21 +117,9 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
         else:
             commSolver_stage = commSolver
 
-        # choice of algorithm for this stage:
-        if stage.algorithm_type == 'MH':
-            alg_class = alg.Algorithm_MH
-            if stage.adaptive:
-                stage.name = 'alg' + str(i).zfill(4) + '_MH-adaptive'
-            else:
-                stage.name = 'alg' + str(i).zfill(4) + '_MH'
-        elif stage.algorithm_type == 'DAMH':
-            alg_class = alg.Algorithm_DAMH
-            if stage.surrogate_model_updates:
-                stage.name = 'alg' + str(i).zfill(4) + '_DAMH-SMU'
-            else:
-                stage.name = 'alg' + str(i).zfill(4) + '_DAMH'
-        else:
-            raise ValueError(f"unknown algorithm_type {stage.algorithm_type!r} in stage {i} (expected 'MH' or 'DAMH')")
+        # choice of algorithm for this stage (stage_name raises for an unknown algorithm_type):
+        stage.name = stage_name(stage, i)
+        alg_class = alg.Algorithm_MH if stage.algorithm_type == 'MH' else alg.Algorithm_DAMH
 
         # run sampling algorithm:
         alg_instance = alg_class(proposal=my_Prop,
@@ -196,9 +143,10 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
             proposal_cov_adaptive = recvbuf/conf.no_samplers
             print('Stage', alg_instance.stage.name, 'at MPI rank', rank_world, 'prop_cov', my_Prop.sd_or_cov)
 
-        # set initial sample for next stage:
+        # set initial sample for next stage (after a use_only_surrogate stage its surrogate
+        # observations are dropped so that the next stage re-evaluates it exactly, finding A11):
         if not stage.is_excluded:
-            initial_sample = alg_instance.current
+            initial_sample = alg.sample_carried_to_next_stage(alg_instance.current, stage)
         # persist this stage's last sample so another experiment can continue from it
         save_last_sample(conf, stage.name, rank_world, alg_instance.current.parameters)
 

@@ -1,5 +1,7 @@
 # surrDAMH/modules/continuation.py
 import os
+import warnings
+
 import numpy as np
 
 from surrDAMH.modules.tools import ensure_dir
@@ -32,6 +34,15 @@ def load_last_samples(experiment_dir: str, no_parameters: int, no_chains: int, s
         raise ValueError(
             f"{experiment_dir!r} stage {stage_name!r} has {len(files)} saved chains, "
             f"but {no_chains} are required to continue from it."
+        )
+    if len(files) != no_chains:
+        warnings.warn(
+            f"{experiment_dir!r} stage {stage_name!r} has {len(files)} saved chains, but "
+            f"{no_chains} were requested; using the first {no_chains} (sorted by filename, i.e. "
+            f"chains {files[:no_chains]}), the remaining {len(files) - no_chains} saved chain(s) "
+            "are ignored.",
+            RuntimeWarning,
+            stacklevel=2,
         )
 
     last_samples = np.zeros((no_chains, no_parameters), dtype=np.float64)  # older files stored float32; cast on load
