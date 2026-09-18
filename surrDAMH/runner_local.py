@@ -47,6 +47,7 @@ from surrDAMH.modules.manifest import (build_run_manifest, finalize_run_manifest
 from surrDAMH.modules.proposal_builder import build_proposal
 from surrDAMH.modules.proposals import as_covariance_matrix
 from surrDAMH.modules.seeds import initial_sample_seed, stage_seed0
+from surrDAMH.modules.torch_threads import apply_torch_threads
 from surrDAMH.solvers import Solver
 from surrDAMH.stages import Stage, stage_name
 from surrDAMH.surrogates.parent import (Evaluator, Updater,
@@ -140,6 +141,11 @@ def run_local(conf: Configuration, prior: Distribution, likelihood: Distribution
     if updater is not None and evaluator is not None:
         raise ValueError("run_local() accepts either 'updater' (surrogate is trained in process) or 'evaluator' "
                          "(fixed surrogate), not both")
+
+    # Configuration.torch_threads (WS4/2026-09-18): before anything evaluates/trains a network
+    # and before the run manifest is built at the end of this function (so
+    # manifest["environment"]["torch_num_threads"] records the effective value).
+    apply_torch_threads(conf)
 
     # effective settings, once (WS5); same block as SamplingFramework.run() prints on rank 0
     print(conf.describe(), flush=True)

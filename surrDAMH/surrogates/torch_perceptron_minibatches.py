@@ -8,6 +8,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
+from surrDAMH.modules.torch_threads import apply_desired_torch_threads_lazy
 from surrDAMH.surrogates.parent import Evaluator, Updater, WeightingPolicy
 from surrDAMH.surrogates.reuse import register_updater
 
@@ -71,11 +72,26 @@ class PyTorchNNEvaluator(Evaluator):
     def __init__(self, no_parameters, no_observations, model,
                  output_mean: npt.NDArray, output_scale: npt.NDArray,
                  use_gradients: bool = True):
+        # Configuration.torch_threads (WS4/2026-09-18): torch is already imported by this point
+        # (this module imports it at the top), so this is always the direct
+        # torch.set_num_threads path of apply_torch_threads(), not the env-var fallback.
+        apply_desired_torch_threads_lazy()
         super().__init__(no_parameters, no_observations)
         self.model = self.clone_model_to_cpu(model)
         self.output_mean = np.asarray(output_mean, dtype=np.float32).reshape(self.no_observations)
         self.output_scale = np.asarray(output_scale, dtype=np.float32).reshape(self.no_observations)
         self.use_gradients = use_gradients
+
+    def __setstate__(self, state: dict) -> None:
+        """
+        Unpickle hook: an evaluator built on the collector rank is sent to samplers as a
+        pickled object (``modules/communication.py``), which uses ``__new__``/``__setstate__``
+        and never calls ``__init__``. Re-applying the desired torch thread count here (WS4/
+        2026-09-18) keeps ``torch.get_num_threads()`` correct on sampler ranks too, regardless
+        of import order.
+        """
+        self.__dict__.update(state)
+        apply_desired_torch_threads_lazy()
 
     def clone_model_to_cpu(self, model):
         model_clone = model.__class__(
@@ -278,6 +294,8 @@ class NeuralNetworkUpdaterMinibatches(Updater):
                 ``output_scale`` contains zeros, if ``replay_ratio < 0``, or if
                 ``batch_size <= 0`` when given.
         """
+        # Configuration.torch_threads (WS4/2026-09-18): see PyTorchNNEvaluator.__init__.
+        apply_desired_torch_threads_lazy()
         super().__init__(no_parameters, no_observations, weighting=weighting)
         self.hidden_layer_sizes = tuple(hidden_layer_sizes)
         self.solver_name = solver.lower()

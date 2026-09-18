@@ -51,7 +51,9 @@ class Configuration:
     from ``np.random.default_rng(10*no_stages*rank_world + 3)``, see
     ``surrDAMH.modules.seeds``), and everything under "invalid combinations" below.
     ``transform_before_saving`` and ``save_snapshots_to_file`` affect only what is
-    written to disk, not the posterior itself.
+    written to disk, not the posterior itself; ``torch_threads`` is a performance-only
+    knob (intra-op CPU thread count for torch) and does not affect the posterior,
+    acceptance rate or surrogate accuracy.
 
     Unverified: ``state_dependent_approximation=True`` shifts the DAMH surrogate
     approximation by the model-vs-surrogate error at the current state; it is not
@@ -114,8 +116,13 @@ class Configuration:
     paths_to_append: list[str] | None = None  # appended to sys.path in this process only; does NOT reach spawned solver-pool children (M18) -- ineffective for them, and no longer needed to find the solver module itself (SolverSpec stores an absolute path since WS5)
     max_buffer_size: int = 1 << 30  # size (bytes) of the pre-allocated irecv buffer used to receive a pickled Evaluator from the collector; performance/buffering knob, not posterior-affecting
     debug: bool = False  # collector-side: print extra diagnostics; not posterior-affecting
+    torch_threads: int | None = 1  # number of torch intra-op CPU threads set on every rank that has torch loaded (samplers evaluating the NN surrogate; the collector when it trains on CPU -- irrelevant on GPU); None = leave torch's default (all cores per process), which oversubscribes the node when several ranks evaluate the NN
 
     def __post_init__(self) -> None:
+        if self.torch_threads is not None and (
+                not isinstance(self.torch_threads, int) or isinstance(self.torch_threads, bool)
+                or self.torch_threads <= 0):
+            raise ValueError(f"torch_threads must be None or a positive int, got {self.torch_threads!r}")
         if self.state_dependent_approximation:
             warnings.warn(
                 "state_dependent_approximation=True is NOT verified (incorrect for subchain_max_length > 1, "

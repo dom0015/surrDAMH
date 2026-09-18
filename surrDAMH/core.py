@@ -21,6 +21,7 @@ from surrDAMH.distributions.parent import Distribution
 from surrDAMH.modules.communication import ABORT_GRACE_SECONDS
 from surrDAMH.modules.surrogate_restart import SurrogateRestart
 from surrDAMH.modules.tools import ensure_dir
+from surrDAMH.modules.torch_threads import apply_torch_threads
 from surrDAMH.solver_specification import SolverSpec
 from surrDAMH.solvers import Solver, get_solver_from_spec
 from surrDAMH.stages import Stage, stage_name
@@ -222,6 +223,11 @@ class SamplingFramework:
             ``MPI.COMM_WORLD.Abort(1)`` for the whole job (``KeyboardInterrupt`` and
             ``SystemExit`` are re-raised instead of being turned into an abort).
         """
+        # Configuration.torch_threads (WS4/2026-09-18): on every rank, before anything
+        # evaluates/trains a network and before the run manifest is built below (so
+        # manifest["environment"]["torch_num_threads"] records the effective value).
+        apply_torch_threads(self.conf)
+
         self._configure_surrogate_gradients()
 
         # check if prior has the "transform" method:
