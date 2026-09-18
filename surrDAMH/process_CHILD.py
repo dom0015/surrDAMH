@@ -69,10 +69,9 @@ try:
                 solver_tag = 0
             counter += 1
             if rank == 0:
-                if conf.pickled_observations:
-                    parent_comm.send([sent_data, solver_tag], dest=0, tag=int(tag))
-                else:
-                    parent_comm.Send(sent_data, dest=0, tag=solver_tag)
+                # solver_tag travels inside the pickled payload; the MPI tag is the request
+                # counter, so a negative (error) solver_tag is never used as an MPI tag (2.4)
+                parent_comm.send([sent_data, solver_tag], dest=0, tag=int(tag))
     print("Solver at spawned process - evaluations:", counter, flush=True)
 except (KeyboardInterrupt, SystemExit):
     raise

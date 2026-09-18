@@ -19,11 +19,13 @@ import surrDAMH.process_SOLVER
 from surrDAMH.configuration import Configuration
 from surrDAMH.distributions.parent import Distribution
 from surrDAMH.modules.communication import ABORT_GRACE_SECONDS
+from surrDAMH.modules.surrogate_restart import SurrogateRestart
 from surrDAMH.modules.tools import ensure_dir
 from surrDAMH.solver_specification import SolverSpec
 from surrDAMH.solvers import Solver, get_solver_from_spec
 from surrDAMH.stages import Stage, stage_name
-from surrDAMH.surrogates.parent import Evaluator, Updater
+from surrDAMH.surrogates.parent import (Evaluator, Updater,
+                                        apply_output_normalization_from_likelihood)
 from surrDAMH.modules.test_data import TestData
 
 
@@ -53,7 +55,8 @@ class SamplingFramework:
                  list_of_stages: List[Stage], solver_spec: SolverSpec | None = None, solver_instance: Solver | None = None,
                  surrogate_updater: Updater | None = None, surrogate_evaluator: Evaluator | None = None,
                  initial_snapshots: List[npt.NDArray] | None = None,
-                 surrogate_test_data: TestData | tuple[npt.NDArray, npt.NDArray, npt.NDArray, npt.NDArray] | None = None):
+                 surrogate_test_data: TestData | tuple[npt.NDArray, npt.NDArray, npt.NDArray, npt.NDArray] | None = None,
+                 surrogate_restart: SurrogateRestart | None = None):
         """
         Args:
             conf: run configuration; identical on every rank (not broadcast/checked).
@@ -68,15 +71,21 @@ class SamplingFramework:
                 any DAMH stage or Hamiltonian-family proposal when ``use_collector=True``.
             surrogate_evaluator: initial/fixed surrogate evaluator, used directly by
                 samplers when ``use_collector=False`` (no in-run retraining).
-            initial_snapshots: ``(parameters, observations)`` pairs to preload into the
-                collector before sampling starts, so a first DAMH/Hamiltonian stage does
-                not need to wait for samplers to generate them (see
-                ``docs/running.md`` on the start-up handshake). Defaults to
+            initial_snapshots: ``(parameters, observations, multiplicity)`` arrays to
+                preload into the collector before sampling starts, so a first
+                DAMH/Hamiltonian stage does not need to wait for samplers to generate them
+                (see ``docs/running.md`` on the start-up handshake). Defaults to
                 ``surrogate_updater.get_initial_snapshots()`` if not given.
             surrogate_test_data: fixed test set for surrogate-quality monitoring
                 (``surrogate_quality_test.csv``); either a ``TestData`` instance (its
                 posterior weights are computed here if missing) or the raw
                 ``(parameters, observations, log_posterior, weights)`` tuple.
+            surrogate_restart: where to restore the surrogate from, see
+                ``surrDAMH.modules.surrogate_restart.SurrogateRestart``. Applied on the
+                collector rank only, immediately before ``run_COLLECTOR``; the restored
+                snapshots become ``initial_snapshots`` unless the updater reports them
+                itself via ``get_initial_snapshots()`` or ``initial_snapshots`` was given
+                explicitly.
 
         Notes:
             Nothing here is broadcast or validated across ranks; an inconsistent
@@ -90,15 +99,29 @@ class SamplingFramework:
         self.prior = prior
         self.likelihood = likelihood
         self.solver_spec = solver_spec
+        if solver_spec is not None and hasattr(solver_spec, "resolve_module_path"):
+            # M18/WS5: make the solver module path absolute here, on the launching rank, while
+            # the launching working directory is still in effect -- process_SOLVER broadcasts
+            # this very object to the spawned children, which do not inherit sys.path and are
+            # not guaranteed to inherit the working directory.
+            solver_spec.resolve_module_path()
         self.list_of_stages = list_of_stages
         self.surrogate_updater = surrogate_updater
         self.surrogate_evaluator = surrogate_evaluator
         self.solver_instance = solver_instance
         self.initial_snapshots = initial_snapshots
         self.surrogate_test_data = surrogate_test_data
+        self.surrogate_restart = surrogate_restart
 
         self.comm_world = MPI.COMM_WORLD
         self.rank_world = self.comm_world.Get_rank()
+
+        # WS6: an updater configured with output_normalization="likelihood" gets its
+        # per-observation statistics (observed data / noise sd) from the likelihood here,
+        # once, on every rank that holds an updater (the collector trains it; samplers only
+        # keep the reference). A likelihood that cannot supply them warns and leaves the
+        # updater at the identity normalization.
+        apply_output_normalization_from_likelihood(self.surrogate_updater, self.likelihood)
 
     def _configure_surrogate_gradients(self) -> None:
         should_warn = self.rank_world == 0
@@ -211,6 +234,16 @@ class SamplingFramework:
             stage.name = stage_name(stage, i)
 
         if self.rank_world == 0:
+            # effective settings, once, on rank 0 (WS5): everything that was silently corrected
+            # by __post_init__ or by _configure_surrogate_gradients above is visible here.
+            print(self.conf.describe(
+                use_surrogate_gradients_requested=self._use_surrogate_gradients_requested), flush=True)
+            for i, stage in enumerate(self.list_of_stages):
+                print(stage.describe(i), flush=True)
+            if self.surrogate_restart is not None:
+                print(f"  {self.surrogate_restart.describe()}", flush=True)
+
+        if self.rank_world == 0:
             # run manifest (WS4, library_notes/09_improvement_plan.md §0 principle 4): must never
             # abort a run, so any failure here is a printed warning, not an exception.
             try:
@@ -247,9 +280,18 @@ class SamplingFramework:
                     if td.log_posterior is None or td.weights is None:
                         td.compute_log_posterior_and_weights(self.prior, self.likelihood)
                     self.surrogate_test_data = td.as_surrogate_test_data()
+                # surrogate restart (WS5): the collector rank is the only one that owns an
+                # Updater, so this is where a previous run's state is restored.
+                restored_snapshots = None
+                if self.surrogate_restart is not None:
+                    restored_snapshots = self.surrogate_restart.apply(self.surrogate_updater)
                 initial_snapshots = self.initial_snapshots
-                if initial_snapshots is None and self.surrogate_updater is not None:
+                if initial_snapshots is None:
+                    # an updater that stored the restored snapshots itself reports them here
+                    # (and sets training_data_loaded, so run_COLLECTOR does not re-add them)
                     initial_snapshots = self.surrogate_updater.get_initial_snapshots()
+                if initial_snapshots is None:
+                    initial_snapshots = restored_snapshots
 
                 return surrDAMH.process_COLLECTOR.run_COLLECTOR(
                     self.conf,
@@ -298,14 +340,18 @@ class SamplingFramework:
                      observations_to_disp: np.ndarray | None = None,
                      include_expensive_sections = True,
                      grid = None, grid_interp = None, obs_grid = None,
-                     no_sensors = None, cmap = "viridis_r", chains_to_disp = None) -> surrDAMH.post_processing.Samples | None:
+                     no_sensors = None, cmap = "viridis_r", chains_to_disp = None,
+                     field_statistics_max_samples: int | None = None) -> surrDAMH.post_processing.Samples | None:
         """
         Writes a HTML report and ``post_processing_output/summary.csv`` to the output
-        directory. Reads samples from ``conf.output_dir`` on disk (today's v1 layout,
+        directory. Reads samples from ``conf.output_dir`` on disk (output format v2,
         see ``docs/outputs.md``), it does not use any in-memory state from ``run()``.
 
         Rank-0-only: every other rank only participates in the two barriers (call this
-        on every rank, like ``run()``, or the collective will hang).
+        on every rank, like ``run()``, or the collective will hang). Report generation on
+        rank 0 runs inside ``_run_role``, so a failure there prints a traceback and aborts
+        the whole job instead of leaving the other ranks blocked in the trailing barrier
+        (WS9b).
 
         Args:
             stages_to_disp: list of stage indices to include in the report, if None, all stages are included
@@ -319,13 +365,21 @@ class SamplingFramework:
             observations_to_disp: list of observation indices to include in the report, if None, all observations are included
             include_expensive_sections: whether to include sections that are expensive to compute
             grid: grid for 2D histograms, if None, a default grid is used
+            field_statistics_max_samples: the posterior field statistics (see Notes) call the
+                solver once per decompressed posterior state; with ``None`` every state is used,
+                which for a fast solver and long chains can take longer than the sampling itself
+                (measured: 6e6 states -> 37 min). An integer draws that many states at random
+                (fixed seed) instead; the statistics then carry Monte-Carlo error of order
+                ``1/sqrt(field_statistics_max_samples)`` relative to the posterior spread.
 
         Returns:
             ``surrDAMH.post_processing.Samples`` on rank 0 (already used to write the
             report/summary); ``None`` on every other rank.
 
         Raises:
-            ValueError: if ``stages_to_disp`` resolves to an empty list.
+            ValueError: if ``stages_to_disp`` resolves to an empty list. This (like every
+                other failure of report generation) is turned into
+                ``MPI.COMM_WORLD.Abort(1)`` with a printed traceback by ``_run_role``.
 
         Notes:
             If ``solver_instance`` was given to ``__init__`` and exposes
@@ -339,6 +393,26 @@ class SamplingFramework:
             self.comm_world.Barrier()
             return None
 
+        # Every other rank is already waiting in the barrier at the end of this method, so an
+        # exception here would hang the job; _run_role turns it into a job-wide abort instead.
+        samples = self._run_role(
+            lambda: self._write_report_rank0(
+                stages_to_disp=stages_to_disp, observations=observations, par_names=par_names,
+                bins1d=bins1d, bins2d=bins2d, no_best_fits=no_best_fits, ranking_mode=ranking_mode,
+                parameters_to_disp=parameters_to_disp, observations_to_disp=observations_to_disp,
+                include_expensive_sections=include_expensive_sections, grid=grid,
+                grid_interp=grid_interp, obs_grid=obs_grid, no_sensors=no_sensors, cmap=cmap,
+                chains_to_disp=chains_to_disp, field_statistics_max_samples=field_statistics_max_samples),
+            "REPORT")
+
+        self.comm_world.Barrier()
+        return samples
+
+    def _write_report_rank0(self, stages_to_disp, observations, par_names, bins1d, bins2d,
+                            no_best_fits, ranking_mode, parameters_to_disp, observations_to_disp,
+                            include_expensive_sections, grid, grid_interp, obs_grid, no_sensors,
+                            cmap, chains_to_disp, field_statistics_max_samples=None) -> surrDAMH.post_processing.Samples:
+        """Body of :meth:`write_report`, run on rank 0 only (see that method for the arguments)."""
         if par_names is None:
             par_names = getattr(self.solver_instance, "par_names", None)
         if stages_to_disp is None:
@@ -359,8 +433,10 @@ class SamplingFramework:
         output_html_file_path = os.path.join(post_processing_dir_path, "report_extended.html")
 
         if self.solver_instance and hasattr(self.solver_instance, 'field_builder') and hasattr(self.solver_instance, 'coords') and hasattr(self.solver_instance, 'measurement_points'):
-            field_mean, field_std = samples.compute_posterior_field_statistics(self.solver_instance.field_builder)
-            observation_field_mean, observation_field_std = samples.compute_posterior_field_statistics(self.solver_instance.set_parameters_and_get_observations)
+            field_mean, field_std = samples.compute_posterior_field_statistics(
+                self.solver_instance.field_builder, n_max_samples=field_statistics_max_samples)
+            observation_field_mean, observation_field_std = samples.compute_posterior_field_statistics(
+                self.solver_instance.set_parameters_and_get_observations, n_max_samples=field_statistics_max_samples)
             field_statistics = [
                 {
                     "mean": field_mean,
@@ -417,8 +493,9 @@ class SamplingFramework:
                     visualizations = []
                 for fig_idx, (fig, _) in enumerate(visualizations, start=1):
                     fig_path = os.path.join(post_processing_dir_path, f"best_fit_solver_visualization_{fig_idx}.png")
-                    fig.savefig(fig_path, bbox_inches="tight", dpi=150)
-                    plt.close(fig)
+                    try:
+                        fig.savefig(fig_path, bbox_inches="tight", dpi=150)
+                    finally:
+                        plt.close(fig)
 
-        self.comm_world.Barrier()
         return samples

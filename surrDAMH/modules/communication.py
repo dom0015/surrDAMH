@@ -373,18 +373,16 @@ class SolverMPI(Communicator):
     # communicates with SOLVERS POOL
     # sends parameters (Send, tag=1,2,...)
     # sends signal that sampler terminated (Send, tag=0)
-    # receives observations and conv_tag (recv, tag=1,2,...) or (Recv, tag=conv_tag)
+    # receives [observations, solver_tag] pickled (recv, tag=1,2,... = the request tag)
     def __init__(self, conf: Configuration) -> None:
         assert conf.rank_solvers_pool is not None, "rank_solvers_pool is None"
         self.rank_solvers_pool = conf.rank_solvers_pool
-        self.pickled_observations = conf.pickled_observations
         self.max_requests = 1
         self.tag_solver = 0
         self.observations = np.zeros(conf.no_observations)
         self.buffer_empty_signal = np.zeros((1,))
         self.terminated = False
         self.comm_world = MPI.COMM_WORLD
-        self.status = MPI.Status()
         self.tt_recv = 0
         self.tt_send = 0
 
@@ -398,13 +396,9 @@ class SolverMPI(Communicator):
 
     def get_observations(self, ):
         tmp = time.time()
-        if self.pickled_observations:
-            [self.observations, solver_tag] = self.comm_world.recv(source=self.rank_solvers_pool)
-        else:
-            # tag=MPI.ANY_TAG is intentional: the solver pool re-uses the request
-            # tag as the solver's convergence/error code, so we read it from status.
-            self.comm_world.Recv(self.observations, source=self.rank_solvers_pool, tag=MPI.ANY_TAG, status=self.status)
-            solver_tag = self.status.Get_tag()
+        # the solvers pool answers with a pickled [observations, solver_tag] payload; the MPI tag
+        # of that message is the request tag, never the solver status code (finding 2.4)
+        [self.observations, solver_tag] = self.comm_world.recv(source=self.rank_solvers_pool)
         tmp2 = time.time() - tmp
         self.tt_recv = self.tt_recv + tmp2
         return self.observations.copy(), solver_tag

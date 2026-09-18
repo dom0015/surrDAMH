@@ -1,8 +1,10 @@
 """
-Example: Using html_report_extended() with the post_processing_example.py
+Example: post-processing with ``Samples.html_report_extended()``.
 
-This script demonstrates how to use the new html_report_extended function
-with the existing post_processing example.
+Runs a short MH sweep over four proposal widths on a 3-parameter nonlinear toy solver in a
+single process, then builds both the basic plots and the extended HTML report from the
+result. Run with:
+    python3 post_processing_with_html_report.py
 """
 
 import os

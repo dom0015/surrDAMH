@@ -1,7 +1,6 @@
 
 from tunnel_with_subdomains import tsx_setup_and_computation, prepare_coefficient_functions, load_mesh_and_domain_tags
 
-import matplotlib.pyplot as plt
 import numpy as np
 
 

@@ -70,14 +70,22 @@ class GaussianMixture(Distribution):
             return np.zeros(self.d)
         return np.sum(component_grads, axis=0) / mixture_pdf
 
-    def rvs(self, n: int = 1) -> npt.NDArray:
-        """Generate random samples from the Gaussian mixture."""
+    def rvs(self, n: int = 1, generator: np.random.Generator | None = None) -> npt.NDArray:
+        """Generate random samples from the Gaussian mixture.
+
+        ``generator`` (G4): draw both the component choice and the component sample from this
+        ``np.random.Generator`` instead of the global, unseeded NumPy RNG. ``None`` keeps the
+        historical global-RNG behaviour bit-for-bit.
+        """
         samples = []
         # Choose which component to sample from based on the weights
-        components = np.random.choice(self.n_components, size=n, p=self.weights)
+        if generator is not None:
+            components = generator.choice(self.n_components, size=n, p=self.weights)
+        else:
+            components = np.random.choice(self.n_components, size=n, p=self.weights)
 
         for comp in components:
             mvn = multivariate_normal(mean=self.means[comp], cov=self.covs[comp])
-            samples.append(mvn.rvs())
+            samples.append(mvn.rvs() if generator is None else mvn.rvs(random_state=generator))
 
         return np.array(samples)

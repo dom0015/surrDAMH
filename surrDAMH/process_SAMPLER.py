@@ -8,10 +8,11 @@ Created on Wed Oct 23 15:35:47 2019
 
 from typing import Any, List, cast
 
+import numpy as np
 from mpi4py import MPI
 
 from surrDAMH.configuration import Configuration
-from surrDAMH.distributions.parent import Distribution
+from surrDAMH.distributions.parent import Distribution, rvs_with_generator
 from surrDAMH.modules.algorithm_interfaces_local import LocalEvaluatorProvider
 from surrDAMH.modules.algorithm_interfaces_mpi import (MpiEvaluatorProvider,
                                                        MpiSnapshotSink,
@@ -20,6 +21,8 @@ from surrDAMH.modules.communication import recv_initial_surrogate_availability
 from surrDAMH.modules import algorithms as alg
 from surrDAMH.modules import lhs_normal as lhs
 from surrDAMH.modules.proposal_builder import build_proposal
+from surrDAMH.modules.proposals import as_covariance_matrix
+from surrDAMH.modules.seeds import initial_sample_seed, stage_seed0
 from surrDAMH.solvers import Solver
 from surrDAMH.stages import Stage, stage_name
 from surrDAMH.surrogates.parent import Evaluator
@@ -53,22 +56,28 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
         commEvaluator = LocalEvaluatorProvider(surrogate_evaluator) if surrogate_evaluator is not None else None
         commSnapshot = None
 
+    no_stages = len(list_of_stages)
+
     # choice of initial sample:
+    initial_sample_generator = np.random.default_rng(initial_sample_seed(no_stages, rank_world))
     if conf.initial_sample_type == "lhs":
         initial_samples = lhs.lhs_normal(loc=prior.mean, scale=conf.lhs_scale, n=conf.no_samplers, seed=0)
         initial_sample = alg.Sample(parameters=initial_samples[rank_world])
     elif conf.initial_sample_type == "user_specified":
         assert conf.initial_samples_distribution is not None, "if initial_sample_type == 'user_specified', initial_samples_distribution must be specified"
-        initial_sample = alg.Sample(parameters=conf.initial_samples_distribution.rvs())
+        initial_sample = alg.Sample(parameters=rvs_with_generator(conf.initial_samples_distribution,
+                                                                  initial_sample_generator))
     elif conf.initial_sample_type == "continued":
         assert conf.continued_samples is not None, "continued_samples must be populated by Configuration when initial_sample_type == 'continued'"
         initial_sample = alg.Sample(parameters=conf.continued_samples[rank_world])
     else:
-        initial_sample = alg.Sample(parameters=prior.rvs())
+        initial_sample = alg.Sample(parameters=rvs_with_generator(prior, initial_sample_generator))
     print("Sampler at rank", rank_world, "- initial sample:", initial_sample.parameters, flush=True)
 
     proposal_cov_adaptive = None
-    no_stages = len(list_of_stages)
+    # A30: True once a previous stage has written this chain's current state to its samples
+    # file, so the next stage must not count that state again in its first row.
+    initial_sample_is_carried_over = False
 
     first_stage = list_of_stages[0]
     first_stage_needs_surrogate = (first_stage.algorithm_type == "DAMH"
@@ -88,7 +97,7 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
                 " min_snapshots_initial.")
 
     for i, stage in enumerate(list_of_stages):
-        seed0 = 10*(no_stages*rank_world + i)
+        seed0 = stage_seed0(no_stages, rank_world, i)
 
         # choice of proposal distribution for this stage:
         my_Prop = build_proposal(stage=stage, conf=conf, prior=prior, seed=seed0+1,
@@ -132,13 +141,18 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
                                  likelihood=likelihood,
                                  initial_sample=initial_sample,
                                  rank_world=rank_world,
-                                 seed=seed0+2)
+                                 seed=seed0+2,
+                                 initial_sample_is_carried_over=initial_sample_is_carried_over)
         alg_instance.run()
 
         # set mean proposal covariance for next stage:
         if stage.adaptive:
-            sendbuf = my_Prop.sd_or_cov
-            recvbuf = sendbuf.copy()
+            # G2: normalise to a 2-D covariance matrix on EVERY rank before the reduction, so
+            # ranks whose adapt() counts straddled the adaptation period cannot disagree on
+            # the buffer shape (finding 2.5). runner_local does the same normalisation so that
+            # a local run still reproduces chain 0 of an MPI run.
+            sendbuf = as_covariance_matrix(my_Prop.sd_or_cov, conf.no_parameters)
+            recvbuf = np.empty_like(sendbuf)
             comm_sampler.Allreduce(sendbuf, recvbuf)
             proposal_cov_adaptive = recvbuf/conf.no_samplers
             print('Stage', alg_instance.stage.name, 'at MPI rank', rank_world, 'prop_cov', my_Prop.sd_or_cov)
@@ -147,6 +161,10 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
         # observations are dropped so that the next stage re-evaluates it exactly, finding A11):
         if not stage.is_excluded:
             initial_sample = alg.sample_carried_to_next_stage(alg_instance.current, stage)
+        # A30: whichever sample the next stage starts from -- this stage's final state, or (with
+        # is_excluded) the state this stage started from -- was written by this stage's samples
+        # file iff it wrote one at all; runner_local sets the same flag the same way.
+        initial_sample_is_carried_over = stage.save_to_file
         # persist this stage's last sample so another experiment can continue from it
         save_last_sample(conf, stage.name, rank_world, alg_instance.current.parameters)
 

@@ -5,6 +5,12 @@ from typing import List
 
 from surrDAMH.solver_specification import SolverSpec
 
+# Every spec below passes "solver_examples/solver_examples.py", i.e. a path relative to the
+# working directory -- which is why the toy examples must be run from inside toy_examples/.
+# super().__init__ (rather than assigning the four attributes directly) makes SolverSpec's
+# __post_init__ run, so the path is stored absolute and the spawned solver children get an
+# absolute path through the broadcast spec (finding M18, WS5).
+
 
 class SolverSpecExample1(SolverSpec):
     """
@@ -14,10 +20,10 @@ class SolverSpecExample1(SolverSpec):
     """
 
     def __init__(self, sleep_time: float = 0.0) -> None:
-        self.solver_module_path = "solver_examples/solver_examples.py"
-        self.solver_module_name = "solver_examples"
-        self.solver_class_name = "Solver_illustrative_local"
-        self.solver_parameters = {"sleep_time": sleep_time}
+        super().__init__(solver_module_path="solver_examples/solver_examples.py",
+                         solver_module_name="solver_examples",
+                         solver_class_name="Solver_illustrative_local",
+                         solver_parameters={"sleep_time": sleep_time})
 
 
 class SolverSpecExample2(SolverSpec):
@@ -33,10 +39,10 @@ class SolverSpecExample2(SolverSpec):
     """
 
     def __init__(self, f: float = -0.1, length: float = 1.0, m: float = 0.5) -> None:
-        self.solver_module_path = "solver_examples/solver_examples.py"
-        self.solver_module_name = "solver_examples"
-        self.solver_class_name = "Solver_linela2exp_local"
-        self.solver_parameters = {"f": f, "length": length, "m": m}
+        super().__init__(solver_module_path="solver_examples/solver_examples.py",
+                         solver_module_name="solver_examples",
+                         solver_class_name="Solver_linela2exp_local",
+                         solver_parameters={"f": f, "length": length, "m": m})
 
 
 class SolverSpecExampleNonlinear(SolverSpec):
@@ -48,10 +54,10 @@ class SolverSpecExampleNonlinear(SolverSpec):
     """
 
     def __init__(self, coef: List[float] = [1.0, -1.0, 0.0, -1.0, 1.0, 0.0]) -> None:
-        self.solver_module_path = "solver_examples/solver_examples.py"
-        self.solver_module_name = "solver_examples"
-        self.solver_class_name = "Nonlinear"
-        self.solver_parameters = {"coef": coef}
+        super().__init__(solver_module_path="solver_examples/solver_examples.py",
+                         solver_module_name="solver_examples",
+                         solver_class_name="Nonlinear",
+                         solver_parameters={"coef": coef})
 
 
 class SolverSpecGeneric(SolverSpec):
@@ -62,10 +68,10 @@ class SolverSpecGeneric(SolverSpec):
     """
 
     def __init__(self, no_parameters: int = 3, no_observations: int = 2) -> None:
-        self.solver_module_path = "solver_examples/solver_examples.py"
-        self.solver_module_name = "solver_examples"
-        self.solver_class_name = "Generic"
-        self.solver_parameters = {"no_parameters": no_parameters, "no_observations": no_observations}
+        super().__init__(solver_module_path="solver_examples/solver_examples.py",
+                         solver_module_name="solver_examples",
+                         solver_class_name="Generic",
+                         solver_parameters={"no_parameters": no_parameters, "no_observations": no_observations})
 
 
 class SolverSpecSinProdGeneric(SolverSpec):
@@ -76,10 +82,10 @@ class SolverSpecSinProdGeneric(SolverSpec):
     """
 
     def __init__(self, no_parameters: int = 3, no_observations: int = 1, sleep: float = 0.0) -> None:
-        self.solver_module_path = "solver_examples/solver_examples.py"
-        self.solver_module_name = "solver_examples"
-        self.solver_class_name = "SinProdGeneric"
-        self.solver_parameters = {"no_parameters": no_parameters, "no_observations": no_observations, "sleep": sleep}
+        super().__init__(solver_module_path="solver_examples/solver_examples.py",
+                         solver_module_name="solver_examples",
+                         solver_class_name="SinProdGeneric",
+                         solver_parameters={"no_parameters": no_parameters, "no_observations": no_observations, "sleep": sleep})
 
 
 class SolverSpecLinearGaussian(SolverSpec):
@@ -92,10 +98,10 @@ class SolverSpecLinearGaussian(SolverSpec):
     """
 
     def __init__(self) -> None:
-        self.solver_module_path = "solver_examples/solver_examples.py"
-        self.solver_module_name = "solver_examples"
-        self.solver_class_name = "LinearGaussianSolver"
-        self.solver_parameters = {}
+        super().__init__(solver_module_path="solver_examples/solver_examples.py",
+                         solver_module_name="solver_examples",
+                         solver_class_name="LinearGaussianSolver",
+                         solver_parameters={})
 
 
 class SolverSpecNonlinearGeneric(SolverSpec):
@@ -106,7 +112,7 @@ class SolverSpecNonlinearGeneric(SolverSpec):
     """
 
     def __init__(self, no_parameters: int = 3, no_observations: int = 1, sleep: float = 0.0) -> None:
-        self.solver_module_path = "solver_examples/solver_examples.py"
-        self.solver_module_name = "solver_examples"
-        self.solver_class_name = "NonlinearGeneric"
-        self.solver_parameters = {"no_parameters": no_parameters, "no_observations": no_observations, "sleep": sleep}
+        super().__init__(solver_module_path="solver_examples/solver_examples.py",
+                         solver_module_name="solver_examples",
+                         solver_class_name="NonlinearGeneric",
+                         solver_parameters={"no_parameters": no_parameters, "no_observations": no_observations, "sleep": sleep})

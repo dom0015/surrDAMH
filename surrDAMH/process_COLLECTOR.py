@@ -78,7 +78,9 @@ def _normalize_surrogate_test_data(conf: Configuration, surrogate_test_data):
 
 def _compute_surrogate_quality_metrics(evaluator, parameters: np.ndarray, true_observations: np.ndarray,
                                        weights: np.ndarray | None = None):
-    predicted_observations = np.asarray(evaluator(parameters)).reshape(true_observations.shape)
+    # evaluator contract (WS6): (n, no_parameters) -> (n, no_observations), i.e. already the
+    # shape of true_observations -- no reshape needed to absorb a flattened torch output
+    predicted_observations = np.asarray(evaluator(parameters))
     errors = true_observations - predicted_observations
     rmse = float(np.sqrt(np.mean(errors ** 2)))
     max_abs_error = float(np.max(np.abs(errors)))
@@ -97,6 +99,15 @@ def run_COLLECTOR(conf: Configuration, surrogate_updater: Updater, surrogate_del
                   initial_snapshots: list | None = None,
                   surrogate_test_data: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None = None):
     surrogate_updater.delayed_init(surrogate_delayed_init_data)
+
+    # one start-up line stating how incoming snapshot multiplicities are used for training
+    # (WS6 decision 3) and, for updaters that normalize their targets, where the
+    # normalization statistics came from:
+    startup_line = surrogate_updater.describe_weighting()
+    provenance = getattr(surrogate_updater, "output_normalization_provenance", None)
+    if provenance is not None:
+        startup_line += f", output_normalization={provenance!r}"
+    print("Collector -", startup_line, flush=True)
 
     comm_world = MPI.COMM_WORLD
     rank_world = comm_world.Get_rank()
@@ -188,8 +199,7 @@ def run_COLLECTOR(conf: Configuration, surrogate_updater: Updater, surrogate_del
             try:
                 new_parameters = list_new_snapshots[0]
                 true_observations = list_new_snapshots[1]
-                predicted_observations = monitoring_evaluator(new_parameters)
-                predicted_observations = predicted_observations.reshape(true_observations.shape)
+                predicted_observations = monitoring_evaluator(new_parameters)  # (n, no_observations)
                 errors = true_observations - predicted_observations
                 rmse = float(np.sqrt(np.mean(errors ** 2)))
                 max_abs_error = float(np.max(np.abs(errors)))

@@ -16,6 +16,17 @@ import numpy.typing as npt
 from mpi4py import MPI
 
 from surrDAMH.distributions.parent import Distribution
+from surrDAMH.modules.describe import describe_fields
+
+#: Fields of ``Configuration`` that can change the posterior, the acceptance rate or
+#: reproducibility (the list the class docstring spells out). ``describe()`` marks them
+#: with a trailing ``*`` so the start-up log says which numbers matter for a result.
+POSTERIOR_AFFECTING_FIELDS: frozenset[str] = frozenset({
+    "no_parameters", "no_observations", "transform_before_surrogate",
+    "state_dependent_approximation", "min_snapshots_initial", "min_snapshots_to_update",
+    "max_collected_snapshots_per_loop", "use_surrogate_gradients", "initial_sample_type",
+    "initial_samples_distribution", "continued_from_dir", "lhs_scale", "use_collector",
+})
 
 
 @dataclass
@@ -36,8 +47,9 @@ class Configuration:
     sequence for runs that use a collector), ``use_surrogate_gradients`` (may be silently
     disabled by ``SamplingFramework`` for an incompatible surrogate, see
     ``run_manifest.json``'s ``use_surrogate_gradients_requested``), ``initial_sample_type``
-    (``"prior"`` draws from the unseeded global NumPy RNG and is therefore NOT
-    reproducible, finding 1.9/G4), and everything under "invalid combinations" below.
+    (every type is reproducible since G4, 2026-09-17: ``"prior"``/``"user_specified"`` draw
+    from ``np.random.default_rng(10*no_stages*rank_world + 3)``, see
+    ``surrDAMH.modules.seeds``), and everything under "invalid combinations" below.
     ``transform_before_saving`` and ``save_snapshots_to_file`` affect only what is
     written to disk, not the posterior itself.
 
@@ -48,14 +60,23 @@ class Configuration:
     construction. Do not use it unless you have checked the theory for your own
     ``subchain_max_length``.
 
-    Currently ignored: ``paths_to_append`` is appended to ``sys.path`` in this
-    process only -- it does NOT reach solver-pool children spawned by
-    ``MPI.Comm.Spawn`` (finding M18); give ``SolverSpec`` an absolute module path
-    instead (see ``docs/writing_a_solver.md``). ``pickled_observations=False`` selects
-    a raw (non-pickled) MPI transport path that is scheduled for removal (decision 5,
-    no replacement needed by user code -- just leave this at its default ``True``);
-    it also has a known crash with ``solver_returns_tag=True`` and a negative tag
-    (``library_notes/10_manual_review_notes.md`` §3).
+    Ineffective for spawned children: ``paths_to_append`` is appended to ``sys.path``
+    in the process that constructs this ``Configuration`` only -- it does NOT reach
+    solver-pool children spawned by ``MPI.Comm.Spawn``, which unpickle ``conf`` without
+    running ``__post_init__`` (finding M18). It is kept for the ranks that do run in this
+    process, but a solver module must be reachable without it: since WS5,
+    ``SolverSpec`` resolves ``solver_module_path`` to an absolute path on the launching
+    rank, so the spawned children receive an absolute path (see
+    ``docs/writing_a_solver.md``). A solver module whose own *imports* need
+    ``paths_to_append`` still fails in the child -- put those on ``PYTHONPATH`` instead.
+
+    Removed field (2026-09-17, decision 5 / WS8): ``pickled_observations``. Passing it now
+    raises ``TypeError: Configuration.__init__() got an unexpected keyword argument
+    'pickled_observations'`` -- just delete the argument, there is no replacement. Observations
+    always travel from the spawned solver child to the solvers pool and on to the sampler as a
+    pickled ``[observations, solver_tag]`` payload, so the solver's status code never becomes an
+    MPI tag (this removes finding 2.4/M6: a negative ``solver_tag`` used to be an invalid MPI
+    tag, and the raw path's fixed-size/dtype buffer hazards of finding 2.3).
 
     Invalid combinations that raise (at ``Stage``/proposal construction, i.e. at
     ``SamplingFramework.run()`` time, not eagerly at ``Configuration()`` time):
@@ -80,7 +101,7 @@ class Configuration:
     save_snapshots_to_file: bool = False  # save all obtained snapshots to file
     transform_before_saving: bool = True  # if False, save samples based on internal distribution
     transform_before_surrogate: bool = False  # if False, construct surrogate on internal distribution; posterior-affecting: changes what the surrogate is trained/evaluated on
-    initial_sample_type: Literal["lhs", "prior", "user_specified", "continued"] = "prior"  # specifies how to generate initial samples; "prior" draws from the unseeded global NumPy RNG (not reproducible, finding 1.9/G4)
+    initial_sample_type: Literal["lhs", "prior", "user_specified", "continued"] = "prior"  # specifies how to generate initial samples; all four are reproducible - "prior"/"user_specified" draw from a per-rank np.random.default_rng seeded from modules.seeds.initial_sample_seed (G4)
     initial_samples_distribution: Distribution | None = None  # only if initial_sample_type == "user_specified"
     continued_from_dir: str | None = None  # experiment directory to continue from (only if initial_sample_type == "continued")
     lhs_scale: float | npt.NDArray = 1.0  # only if initial_sample_type == "lhs"
@@ -90,8 +111,7 @@ class Configuration:
     max_collected_snapshots_per_loop: int = 1000  # maximal number of snapshots to be collected in one loop (collector-side batching/performance knob)
     max_sampler_isend_requests: int = 100  # size of the buffer for isend requests (sending snapshots from samplers to collector; performance/buffering knob)
     use_surrogate_gradients: bool = True  # whether to allow autograd in pytorch surrogate; may be silently forced to False by SamplingFramework if the surrogate/settings are incompatible (see run_manifest.json)
-    paths_to_append: list[str] | None = None  # appended to sys.path in this process only; does NOT reach spawned solver-pool children (M18) -- currently ignored for that purpose, prefer an absolute path in SolverSpec
-    pickled_observations: bool = True  # if False, uses the raw (non-pickled) MPI transport path, scheduled for removal (decision 5); leave at the default
+    paths_to_append: list[str] | None = None  # appended to sys.path in this process only; does NOT reach spawned solver-pool children (M18) -- ineffective for them, and no longer needed to find the solver module itself (SolverSpec stores an absolute path since WS5)
     max_buffer_size: int = 1 << 30  # size (bytes) of the pre-allocated irecv buffer used to receive a pickled Evaluator from the collector; performance/buffering knob, not posterior-affecting
     debug: bool = False  # collector-side: print extra diagnostics; not posterior-affecting
 
@@ -146,3 +166,35 @@ class Configuration:
         assert self.paths_to_append is not None
         for path in self.paths_to_append:
             sys.path.append(path)
+
+    def describe(self, use_surrogate_gradients_requested: bool | None = None) -> str:
+        """
+        Multi-line summary of the **effective** configuration, printed once on rank 0 by
+        ``SamplingFramework.run()`` and by ``run_local()``.
+
+        Every field of the dataclass appears as ``name=value``; a trailing ``*`` marks the
+        posterior-/acceptance-rate-/reproducibility-affecting ones listed in the class
+        docstring. The MPI role layout derived in ``__post_init__`` is appended, and so is
+        the requested-versus-effective value of ``use_surrogate_gradients`` when they differ
+        (``SamplingFramework`` may disable it for an incompatible surrogate).
+
+        Args:
+            use_surrogate_gradients_requested: the value the user passed in, before
+                ``SamplingFramework._configure_surrogate_gradients`` possibly turned it off.
+                Omit it (``None``) to show only the effective value.
+
+        Returns:
+            A string of about six lines, ready to ``print``.
+        """
+        extra = [f"[MPI layout] no_samplers={self.no_samplers}, rank_collector={self.rank_collector}, "
+                 f"rank_solvers_pool={self.rank_solvers_pool}, size_world={MPI.COMM_WORLD.Get_size()}"]
+        if use_surrogate_gradients_requested is not None and \
+                bool(use_surrogate_gradients_requested) != bool(self.use_surrogate_gradients):
+            extra.append(f"[effective] use_surrogate_gradients: requested="
+                         f"{bool(use_surrogate_gradients_requested)}, in effect={bool(self.use_surrogate_gradients)}"
+                         " (disabled by SamplingFramework, see the warning above)")
+        if self.continued_samples is not None:
+            extra.append(f"[continuation] loaded initial samples: shape={tuple(self.continued_samples.shape)}")
+        return describe_fields(self, POSTERIOR_AFFECTING_FIELDS,
+                               "Configuration (* = posterior-/acceptance-rate-/reproducibility-affecting):",
+                               extra)

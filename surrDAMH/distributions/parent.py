@@ -1,7 +1,24 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+import numpy as np
 import numpy.typing as npt
+
+
+def rvs_with_generator(distribution, generator: "np.random.Generator | None"):
+    """
+    Draw one sample from ``distribution``, using ``generator`` if the object supports it.
+
+    Every ``Distribution`` subclass in this package accepts ``rvs(generator=...)`` since G4
+    (2026-09-17). User-supplied or test duck-typed "distributions" may still define
+    ``rvs(self)`` with no arguments (e.g. the ``FixedSample`` doubles in ``tests/``); those
+    are called without the generator.
+    """
+    try:
+        return distribution.rvs(generator=generator)
+    except TypeError:
+        # legacy duck-typed object whose rvs() takes no arguments (deterministic in practice)
+        return distribution.rvs()
 
 
 class Distribution:
@@ -57,9 +74,16 @@ class Distribution:
         """
         raise NotImplementedError("get_covariance() not implemented for " + type(self).__name__)
 
-    def rvs(self) -> npt.NDArray:
+    def rvs(self, generator: np.random.Generator | None = None) -> npt.NDArray:
         """
         Returns a random sample from the distribution.
+
+        Args:
+            generator: if given, all randomness is drawn from this ``np.random.Generator``
+                instead of the global NumPy RNG, which is what makes
+                ``initial_sample_type="prior"`` reproducible (G4, 2026-09-17). ``None``
+                keeps the historical behaviour (global, unseeded RNG), so external callers
+                that do not pass it are unaffected.
         """
         raise NotImplementedError
 
@@ -67,10 +91,12 @@ class Distribution:
 class FromScipy(Distribution):
     """
     Wraps a frozen scipy.stats distribution (e.g. ``scipy.stats.norm(...)`` or
-    ``scipy.stats.multivariate_normal(...)``) as a ``Distribution``: ``logpdf``/``rvs``
-    are simply the scipy object's own methods (scipy's ``logpdf`` is normalized, unlike
-    the "up to a constant" convention of the other ``Distribution`` subclasses here —
-    harmless for MCMC since only differences matter, but do not rely on the constant).
+    ``scipy.stats.multivariate_normal(...)``) as a ``Distribution``: ``logpdf`` is simply
+    the scipy object's own method (scipy's ``logpdf`` is normalized, unlike the "up to a
+    constant" convention of the other ``Distribution`` subclasses here — harmless for MCMC
+    since only differences matter, but do not rely on the constant). ``rvs`` forwards to the
+    scipy object, passing an optional ``generator`` through as scipy's ``random_state``
+    (G4); any other argument (``size=...``) is forwarded unchanged.
 
     Notes:
         No ``transform`` override (identity, i.e. internal space == physical space);
@@ -87,5 +113,13 @@ class FromScipy(Distribution):
         """
         self.scipy_rv = scipy_rv
         self.logpdf = scipy_rv.logpdf
-        self.rvs = scipy_rv.rvs
-        
+
+    def rvs(self, generator: np.random.Generator | None = None, **kwargs) -> npt.NDArray:
+        """Forward to the wrapped scipy object; ``generator`` becomes scipy's ``random_state``.
+
+        Before G4 this was the bound ``scipy_rv.rvs`` itself; a call with no arguments is
+        unchanged (scipy still uses the global RNG), so existing callers are unaffected.
+        """
+        if generator is not None:
+            return self.scipy_rv.rvs(random_state=generator, **kwargs)
+        return self.scipy_rv.rvs(**kwargs)

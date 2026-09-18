@@ -106,6 +106,15 @@ def build_proposal(stage: Stage, conf: "Configuration", prior: Distribution, see
             sd_or_cov=hamiltonian_sd_or_cov,
         )
     elif stage.proposal_type == "block":
+        if stage.adaptive:
+            # G2 (2026-09-17): a BlockProposal has no 'sd_or_cov', so the per-stage adaptive
+            # covariance reduction used to die with AttributeError on every sampler at the end
+            # of the stage (finding 2.5). Fail fast at construction instead.
+            raise ValueError(
+                f"stage {stage_index}: adaptive covariance reduction is not defined for block "
+                "proposals; adapt the sub-proposals instead (pass GaussRandomWalk_adaptive "
+                "instances in block_proposal_list and leave Stage.adaptive=False)"
+            )
         my_Prop = proposals.BlockProposal(
             no_parameters=conf.no_parameters,
             list_of_groups=stage.block_proposal_groups,
@@ -114,7 +123,20 @@ def build_proposal(stage: Stage, conf: "Configuration", prior: Distribution, see
         )
     else:
         if stage.adaptive:
-            my_Prop = proposals.GaussRandomWalk_adaptive(no_parameters=conf.no_parameters, seed=seed)
+            # G1 (2026-09-17): the three Stage.adaptive_* fields are now honoured. Each is
+            # only forwarded when the stage sets it, so a stage that leaves them None gets
+            # GaussRandomWalk_adaptive's own defaults -- the values that were hard-coded
+            # before G1 (target_rate=0.25, corr_limit=0.3, unbounded sample history) -- and
+            # is therefore bit-identical to the pre-G1 behaviour.
+            adaptive_kwargs: dict = {}
+            if stage.adaptive_target_rate is not None:
+                adaptive_kwargs["target_rate"] = stage.adaptive_target_rate
+            if stage.adaptive_corr_limit is not None:
+                adaptive_kwargs["corr_limit"] = stage.adaptive_corr_limit
+            if stage.adaptive_sample_limit is not None:
+                adaptive_kwargs["sample_limit"] = stage.adaptive_sample_limit
+            my_Prop = proposals.GaussRandomWalk_adaptive(no_parameters=conf.no_parameters, seed=seed,
+                                                         **adaptive_kwargs)
         else:
             my_Prop = proposals.GaussRandomWalk(no_parameters=conf.no_parameters, seed=seed)
         if stage.proposal_sd_or_cov is None:

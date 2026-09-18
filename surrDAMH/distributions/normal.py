@@ -75,10 +75,18 @@ class Normal(Distribution):
         else:
             return self.sd
 
-    def calculate_rvs_uncorrelated(self):
-        """Returns a random sample from N(mean,sd)."""
+    def calculate_rvs_uncorrelated(self, generator: np.random.Generator | None = None):
+        """Returns a random sample from N(mean,sd).
+
+        ``generator`` (G4): draw from this ``np.random.Generator`` instead of the global,
+        unseeded NumPy RNG. ``None`` keeps the historical global-RNG behaviour bit-for-bit.
+        """
+        if generator is not None:
+            return generator.standard_normal(self.n) * self.sd + self.mean
         return np.random.randn(self.n) * self.sd + self.mean
 
-    def calculate_rvs_multivariate(self):
-        """Returns a random sample from N(mean,cov)."""
+    def calculate_rvs_multivariate(self, generator: np.random.Generator | None = None):
+        """Returns a random sample from N(mean,cov) (see ``calculate_rvs_uncorrelated``)."""
+        if generator is not None:
+            return generator.multivariate_normal(self.mean, self.cov)
         return np.random.multivariate_normal(self.mean, self.cov)

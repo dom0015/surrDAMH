@@ -10,18 +10,19 @@ import numpy as np
 import numpy.typing as npt
 from scipy.spatial import cKDTree
 
-from surrDAMH.surrogates.parent import Evaluator, Updater
+from surrDAMH.surrogates.parent import Evaluator, Updater, WeightingPolicy
+from surrDAMH.surrogates.reuse import register_updater
 
 
 class KDTreeEvaluator(Evaluator):
-    def __init__(self, no_parameters, kdtree, obs, no_nearest_neighbors) -> None:
-        self.no_parameters = no_parameters
+    def __init__(self, no_parameters, no_observations, kdtree, obs, no_nearest_neighbors) -> None:
+        super().__init__(no_parameters, no_observations)
         self.kdtree = kdtree
         self.obs = obs
         self.no_nearest_neighbors = no_nearest_neighbors
 
     def __call__(self, datapoints: npt.NDArray):
-        # evaluates the surrogate model in datapoints
+        """Evaluates the surrogate model: ``(n, no_parameters) -> (n, no_observations)``."""
         datapoints = datapoints.reshape(-1, self.no_parameters)
         no_datapoints = datapoints.shape[0]
         distances, indices = self.kdtree.query(datapoints, k=self.no_nearest_neighbors)
@@ -42,14 +43,24 @@ class KDTreeEvaluator(Evaluator):
         return interpolated_values
 
 
+@register_updater
 class KDTreeUpdater(Updater):  # initiated by COLLECTOR
     """
     Nearest-neighbor interpolator.
     Using scipy.spatial.cKDTree.
+
+    Weighting: ``supports_sample_weights = False`` -- this is an interpolant, the stored
+    observations are returned/averaged by distance, so there is no per-row weight to apply.
+    With ``weighting="multiplicity"`` the zero-multiplicity snapshots (rejected proposals)
+    are dropped and every remaining snapshot counts once; the default
+    ``weighting="uniform"`` keeps every snapshot.
     """
 
+    supports_sample_weights = False
+
     def __init__(self, no_parameters: int, no_observations: int,
-                 no_nearest_neighbors: int):
+                 no_nearest_neighbors: int,
+                 weighting: WeightingPolicy = "uniform"):
         """
         Args:
             no_parameters: dimension of the parameter space.
@@ -57,25 +68,28 @@ class KDTreeUpdater(Updater):  # initiated by COLLECTOR
             no_nearest_neighbors: number of neighbors averaged per query (inverse-distance
                 weights); clamped to the number of stored snapshots in ``get_evaluator()``
                 if fewer are available. ``1`` = nearest-neighbor lookup, no averaging.
+            weighting: snapshot-weighting policy, see ``Updater``.
         """
-        self.no_parameters = no_parameters
-        self.no_observations = no_observations
+        super().__init__(no_parameters, no_observations, weighting=weighting)
         self.no_nearest_neighbors = no_nearest_neighbors
 
         # snapshots used for surrogate model construction:
         self.par = np.empty((0, self.no_parameters))
         self.obs = np.empty((0, self.no_observations))
 
-    def add_data(self, parameters: npt.NDArray, observations: npt.NDArray, weights: npt.NDArray | None = None):
-        # add new data. ``weights`` is accepted but ignored: every snapshot is treated
-        # as equally informative regardless of its (multiplicity) weight.
+    def add_data(self, parameters: npt.NDArray, observations: npt.NDArray,
+                 multiplicity: npt.NDArray | None = None):
+        """Stores new snapshots; ``weighting="multiplicity"`` drops the zero-multiplicity rows."""
         parameters = parameters.reshape(-1, self.no_parameters)
         observations = observations.reshape(-1, self.no_observations)
-        self.par = np.vstack((self.par, parameters))
-        self.obs = np.vstack((self.obs, observations))
+        mask = self._rows_to_use(multiplicity, parameters.shape[0])
+        self.par = np.vstack((self.par, parameters[mask]))
+        self.obs = np.vstack((self.obs, observations[mask]))
+        self.no_snapshots = int(self.par.shape[0])
 
     def get_evaluator(self):
         # Build a KDTree from the original points
         kdtree = cKDTree(self.par)
         no_nearest_neighbors = min(self.no_nearest_neighbors, self.par.shape[0])
-        return KDTreeEvaluator(self.no_parameters, kdtree, self.obs, no_nearest_neighbors)
+        return KDTreeEvaluator(self.no_parameters, self.no_observations, kdtree, self.obs,
+                               no_nearest_neighbors)

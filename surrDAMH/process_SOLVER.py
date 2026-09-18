@@ -21,14 +21,12 @@ from surrDAMH.solver_specification import SolverSpec
 
 class CommunicationWithChild:
     def __init__(self, conf: Configuration, solver_spec: SolverSpec, solver_output_dir: str, solver_id: int) -> None:
-        self.pickled_observations = conf.pickled_observations
         child_process_path = os.path.dirname(os.path.abspath(__file__))
         self.comm = MPI.COMM_SELF.Spawn(sys.executable,
                                         args=[child_process_path+'/process_CHILD.py', str(solver_id), solver_output_dir],
                                         maxprocs=conf.solver_maxprocs)
         self.tag = 0
         self.received_data = np.zeros((conf.no_observations,))
-        self.status = MPI.Status()
         self.comm.bcast([conf, solver_spec], root=MPI.ROOT)
 
     def send_parameters(self, data_par):
@@ -37,23 +35,14 @@ class CommunicationWithChild:
         self.comm.Bcast([np.ascontiguousarray(data_par, dtype=np.float64), MPI.DOUBLE], root=MPI.ROOT)
 
     def recv_observations(self):
-        if self.pickled_observations:
-            self.received_data, solver_tag = self.comm.recv(source=0, tag=self.tag)
-        else:
-            self.comm.Recv(self.received_data, source=0, tag=MPI.ANY_TAG, status=self.status)
-            solver_tag = self.status.Get_tag()
+        # the child answers with a pickled [observations, solver_tag] payload tagged with the
+        # request counter; the solver status code travels inside the payload, never as an MPI tag
+        self.received_data, solver_tag = self.comm.recv(source=0, tag=self.tag)
         return self.received_data.flatten().copy(), solver_tag
 
     def is_solved(self):
         # check the parent-child communicator if there is an incoming message
-        if self.pickled_observations:
-            tmp = self.comm.Iprobe(source=0, tag=self.tag)
-        else:
-            tmp = self.comm.Iprobe(source=0, tag=MPI.ANY_TAG)
-        if tmp:
-            return True
-        else:
-            return False
+        return bool(self.comm.Iprobe(source=0, tag=self.tag))
 
     def terminate(self):
         self.comm.Bcast([np.array(0, 'i'), MPI.INT], root=MPI.ROOT)
@@ -86,10 +75,10 @@ def run_SOLVER(conf: Configuration, solver_spec: SolverSpec):
         sent_data, solver_tag = comm_with_child[i].recv_observations()
         child_can_solve[i] = True  # mark the solver as free
         rank_dest = occupied_by_source[i]
-        if conf.pickled_observations:
-            comm_world.send([sent_data.copy(), solver_tag], dest=rank_dest, tag=occupied_by_tag[i])
-        else:
-            comm_world.Send(sent_data.copy(), dest=rank_dest, tag=solver_tag)  # occupied_by_tag[i])
+        # answer the sampler with a pickled [observations, solver_tag] payload, tagged with the
+        # sampler's own request tag; solver_tag may be negative (solver error) and must never be
+        # used as an MPI tag (finding 2.4)
+        comm_world.send([sent_data.copy(), solver_tag], dest=rank_dest, tag=occupied_by_tag[i])
         sampler_can_send[samplers_rank == rank_dest] = True
 
     def receive_parameters_from_sampler():

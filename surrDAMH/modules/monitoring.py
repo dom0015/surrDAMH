@@ -20,13 +20,22 @@ from typing import Any
 
 
 class CsvWriter:
-    """Simple CSV writer wrapper used by sampling output monitors."""
+    """Simple CSV writer wrapper used by sampling output monitors.
 
-    def __init__(self, dirname: str, basename: str) -> None:
+    ``header``, when given, is written as the first row of the freshly opened file
+    (output format v2: every CSV carries a header row).
+    """
+
+    def __init__(self, dirname: str, basename: str, header: list[str] | None = None) -> None:
         path = os.path.join(dirname, basename)
         os.makedirs(dirname, exist_ok=True)
-        self._file = open(path, "w")
+        # buffering=1 == line-buffered (G6): every completed row reaches the file system as
+        # soon as it is written, so a run that is still going (or was killed) can be inspected
+        # and post-processed. Content is unchanged; the cost is one write() syscall per row.
+        self._file = open(path, "w", buffering=1)
         self._writer = csv.writer(self._file)
+        if header is not None:
+            self._writer.writerow(header)
 
     def writerow(self, row: list[Any]) -> None:
         self._writer.writerow(row)
@@ -41,6 +50,11 @@ class SamplingOutputMonitor:
 
     Each ``data_name`` gets its own file in:
     ``<output_dir>/sampling_output/<data_name>/<stage.name>/<basename>``.
+
+    A header registered with :meth:`set_header` is written as the first row of that file
+    when it is created. Files are still created LAZILY, on the first row that is actually
+    written, so registering a header does not create an output file for a stage (or a
+    ``data_name``) that never writes anything.
     """
 
     def __init__(self, output_dir: str, stage: Any, basename: str) -> None:
@@ -48,10 +62,15 @@ class SamplingOutputMonitor:
         self.stage = stage
         self.basename = basename
         self.writers: dict[str, CsvWriter] = {}
+        self.headers: dict[str, list[str]] = {}
+
+    def set_header(self, data_name: str, header: list[str]) -> None:
+        """Register the header row written when the file for ``data_name`` is created."""
+        self.headers[data_name] = list(header)
 
     def add_writer(self, data_name: str) -> None:
         dirname = os.path.join(self.output_dir, "sampling_output", data_name, self.stage.name)
-        writer = CsvWriter(dirname=dirname, basename=self.basename)
+        writer = CsvWriter(dirname=dirname, basename=self.basename, header=self.headers.get(data_name))
         self.writers[data_name] = writer
 
     def __call__(self, data_name: str, row: list[Any], condition: bool = True) -> None:

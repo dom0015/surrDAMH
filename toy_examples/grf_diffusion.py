@@ -22,8 +22,6 @@ from dolfinx.fem import Function
 from dolfinx.fem import Constant, dirichletbc, locate_dofs_geometrical
 from dolfinx.fem.petsc import LinearProblem
 from ufl import TestFunction, TrialFunction, dx, grad, inner
-import numpy as np
-import matplotlib.pyplot as plt
 from scipy.special import kv, gamma
 
 

@@ -1,4 +1,3 @@
-import os
 from math import sin, cos
 
 import numpy as np

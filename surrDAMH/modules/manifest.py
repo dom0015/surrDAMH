@@ -9,10 +9,10 @@ in as a plain dict (``mpi_layout``) by the caller (``SamplingFramework.run()`` o
 or ``runner_local.run_local()``), so the module can be unit-tested without MPI and reused
 by both runners.
 
-This records the *seed architecture the code uses today* (``seed0 = 10*(no_stages*rank+i)``,
-see ``process_SAMPLER.py`` / ``runner_local.py``). It does NOT implement the seed
-architecture described in WS4 (``np.random.SeedSequence`` per (chain, stage, stream)); that
-depends on open author decisions (G4/G5, ``library_notes/08_safe_changes_plan.md`` §G).
+This records the *seed architecture the code uses today* (``surrDAMH.modules.seeds``:
+``seed0 = 10*(no_stages*rank+i)`` plus the ``+1``/``+2``/``+3`` stream offsets). It does NOT
+implement the seed architecture described in WS4 (``np.random.SeedSequence`` per (chain,
+stage, stream)).
 """
 
 from __future__ import annotations
@@ -30,10 +30,46 @@ from typing import Any
 
 import numpy as np
 
+from surrDAMH.modules.seeds import (ALGORITHM_SEED_OFFSET, PROPOSAL_SEED_OFFSET,
+                                    SEED_FORMULA, initial_sample_seed, stage_seed0)
+
 from surrDAMH.modules.tools import ensure_dir
 
 MANIFEST_VERSION = 1
-FORMAT_VERSION = 1  # current on-disk sampling_output layout; WS9 will bump this to 2
+FORMAT_VERSION = 2  # on-disk sampling_output layout (v2, WS9a: headers + rectangular raw_data)
+
+
+class RunFormatError(RuntimeError):
+    """
+    Raised when a sampling-output directory cannot be read as format
+    :data:`FORMAT_VERSION` -- no ``run_manifest.json``, a different ``format_version``,
+    or a CSV whose header does not match the v2 column layout.
+
+    There is deliberately no converter and no escape hatch (decision 6, 2026-09-17):
+    pre-v2 directories are refused rather than guessed at.
+    """
+
+
+def samples_columns(no_parameters: int) -> list[str]:
+    """Header of ``sampling_output/samples/<stage>/rank%04d.csv`` (format v2)."""
+    return ["multiplicity"] + [f"par_{i}" for i in range(no_parameters)] + ["log_posterior"]
+
+
+def raw_data_columns(no_parameters: int, no_observations: int) -> list[str]:
+    """
+    Header of ``sampling_output/raw_data/<stage>/rank%04d.csv`` (format v2).
+
+    Rectangular and identical for every stage type: ``obs_*`` is the EXACT model block
+    (all-NaN for ``prerejected`` rows, whose exact model was never called) and
+    ``obs_approx_*`` the surrogate block (all-NaN where no surrogate value exists, e.g.
+    in a plain MH stage).
+    """
+    return (["state_type"]
+            + [f"par_{i}" for i in range(no_parameters)]
+            + ["solver_tag"]
+            + [f"obs_{i}" for i in range(no_observations)]
+            + [f"obs_approx_{i}" for i in range(no_observations)]
+            + ["log_likelihood", "log_prior"])
 
 _PACKAGE_DISTRIBUTION_NAMES = {
     "numpy": "numpy",
@@ -161,6 +197,16 @@ def _surrogate_dict(updater: Any, evaluator: Any) -> dict[str, Any] | None:
         "evaluator_class": type(evaluator).__name__ if evaluator is not None else None,
         "updater_parameters": _summarize_public_attrs(updater, include_values=False) if updater is not None else {},
     }
+    if updater is not None:
+        # WS6: the two settings that change what the surrogate is actually fitted to
+        result["weighting"] = getattr(updater, "weighting", None)
+        result["supports_sample_weights"] = getattr(updater, "supports_sample_weights", None)
+        result["output_normalization"] = getattr(updater, "output_normalization", None)
+        # what the statistics in effect really are ("identity" when a requested
+        # "likelihood" normalization could not be resolved), None for updaters that
+        # do not normalize their targets:
+        result["output_normalization_provenance"] = getattr(
+            updater, "output_normalization_provenance", None)
     return result
 
 
@@ -178,27 +224,30 @@ def _seeds_dict(conf: Any, stages: list) -> dict[str, Any]:
     no_stages = len(stages)
     for rank in range(conf.no_samplers):
         for i in range(no_stages):
-            seed0 = 10 * (no_stages * rank + i)
+            seed0 = stage_seed0(no_stages, rank, i)
             per_rank.append({
                 "rank": rank,
                 "stage_index": i,
                 "seed0": seed0,
-                "proposal_seed": seed0 + 1,
-                "algorithm_seed": seed0 + 2,
+                "proposal_seed": seed0 + PROPOSAL_SEED_OFFSET,
+                "algorithm_seed": seed0 + ALGORITHM_SEED_OFFSET,
+                # per-CHAIN, not per-stage (the initial sample is drawn once, before the
+                # stage loop), hence the same value in every stage entry of a rank:
+                "initial_sample_seed": initial_sample_seed(no_stages, rank),
             })
-    reproducible = initial_sample_type != "prior"
+    # G4 (2026-09-17): "prior" and "user_specified" draw their initial sample from
+    # np.random.default_rng(initial_sample_seed(no_stages, rank)), so every
+    # initial_sample_type is now reproducible -- as long as a user-supplied
+    # initial_samples_distribution.rvs() honours the 'generator' argument (the
+    # Distribution subclasses shipped here do).
+    reproducible = True
     seeds: dict[str, Any] = {
-        "formula": "seed0 = 10*(no_stages*rank_world + i); proposal_seed = seed0+1; algorithm_seed = seed0+2",
+        "formula": SEED_FORMULA,
         "lhs_seed": 0 if initial_sample_type == "lhs" else None,
         "initial_sample_type": initial_sample_type,
         "initial_sample_reproducible": reproducible,
         "per_rank": per_rank,
     }
-    if not reproducible:
-        seeds["unreproducible_reason"] = (
-            "initial_sample_type='prior' draws from the global, unseeded numpy RNG "
-            "(finding 1.9 / G4 in library_notes)"
-        )
     return seeds
 
 
@@ -298,4 +347,5 @@ def finalize_run_manifest(output_dir: str, extra: dict | None = None) -> None:
 
 
 __all__ = ["build_run_manifest", "write_run_manifest", "finalize_run_manifest",
-          "MANIFEST_VERSION", "FORMAT_VERSION"]
+          "MANIFEST_VERSION", "FORMAT_VERSION", "RunFormatError",
+          "samples_columns", "raw_data_columns"]

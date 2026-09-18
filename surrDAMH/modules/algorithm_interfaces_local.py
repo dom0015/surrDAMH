@@ -54,7 +54,7 @@ class LocalSnapshot:
     Normalized local representation of one sampler snapshot.
 
     Current algorithms send snapshots as loose lists of the form:
-    ``[parameters, observations, weight]``.
+    ``[parameters, observations, multiplicity]``.
 
     This dataclass does not change that external contract; it only makes the
     local implementations easier to read and maintain.
@@ -66,7 +66,7 @@ class LocalSnapshot:
 
     parameters: npt.NDArray
     observations: npt.NDArray
-    weight: float
+    multiplicity: float
 
 
 def _to_1d_array(values: npt.ArrayLike) -> npt.NDArray:
@@ -79,18 +79,18 @@ def _normalize_snapshot(data: list[Any]) -> LocalSnapshot:
     """
     Normalize the current loose snapshot payload into ``LocalSnapshot``.
 
-    Expected payload shape: ``[parameters, observations, weight]``.
+    Expected payload shape: ``[parameters, observations, multiplicity]``.
     """
     if len(data) != 3:
         raise ValueError(
             "Snapshot payload must have exactly 3 items: "
-            "[parameters, observations, weight]"
+            "[parameters, observations, multiplicity]"
         )
-    parameters, observations, weight = data
+    parameters, observations, multiplicity = data
     return LocalSnapshot(
         parameters=_to_1d_array(parameters),
         observations=_to_1d_array(observations),
-        weight=float(weight),
+        multiplicity=float(multiplicity),
     )
 
 
@@ -158,7 +158,7 @@ class InMemorySnapshotSink(SnapshotCollector):
         Returns:
             parameters: shape ``(n_snapshots, no_parameters)``
             observations: shape ``(n_snapshots, no_observations)``
-            weights: shape ``(n_snapshots, 1)``
+            multiplicity: shape ``(n_snapshots, 1)``
         """
         if not self.snapshots:
             return (
@@ -169,8 +169,8 @@ class InMemorySnapshotSink(SnapshotCollector):
 
         parameters = np.vstack([snapshot.parameters for snapshot in self.snapshots])
         observations = np.vstack([snapshot.observations for snapshot in self.snapshots])
-        weights = np.array([[snapshot.weight] for snapshot in self.snapshots], dtype=float)
-        return parameters, observations, weights
+        multiplicity = np.array([[snapshot.multiplicity] for snapshot in self.snapshots], dtype=float)
+        return parameters, observations, multiplicity
 
 
 class LocalEvaluatorProvider(EvaluatorProvider):
@@ -279,9 +279,9 @@ class LocalSurrogateManager(SnapshotCollector, EvaluatorProvider):
         self.updater.delayed_init(delayed_init_data)
 
         if initial_snapshots is not None:
-            parameters, observations, weights = initial_snapshots
+            parameters, observations, multiplicity = initial_snapshots
             if len(parameters) > 0:
-                self.updater.add_data(parameters, observations, weights)
+                self.updater.add_data(parameters, observations, multiplicity)
                 self.no_snapshots_total = int(len(parameters))
                 self._maybe_update_evaluator()
 
@@ -315,9 +315,9 @@ class LocalSurrogateManager(SnapshotCollector, EvaluatorProvider):
         snapshot = _normalize_snapshot(data)
         parameters = snapshot.parameters.reshape((1, -1))
         observations = snapshot.observations.reshape((1, -1))
-        weights = np.array([[snapshot.weight]], dtype=float)
+        multiplicity = np.array([[snapshot.multiplicity]], dtype=float)
 
-        self.updater.add_data(parameters, observations, weights)
+        self.updater.add_data(parameters, observations, multiplicity)
         self.no_snapshots_total += 1
         self.snapshot_count_since_last_update += 1
         self._maybe_update_evaluator()

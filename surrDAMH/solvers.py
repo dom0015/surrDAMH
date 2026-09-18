@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import importlib.util as iu
+import os
 from typing import Any
 
 import numpy as np
@@ -80,7 +81,17 @@ class Solver:
 
 
 def get_solver_from_spec(solver_spec: SolverSpec, solver_id: int = 0, solver_output_dir: str | None = None) -> Solver:
-    spec = iu.spec_from_file_location(solver_spec.solver_module_name, solver_spec.solver_module_path)
+    """
+    Import ``solver_spec.solver_module_path`` and instantiate ``solver_class_name`` from it.
+
+    The module path is made absolute here as well as in ``SolverSpec.__post_init__``, which
+    covers a spec built without running ``__post_init__``. Note that this last resort
+    resolves against the *importing* process's working directory: in a spawned solver child
+    that is not guaranteed to be the launching one (finding M18), which is why the
+    authoritative resolution happens on the launching rank.
+    """
+    module_path = os.path.abspath(solver_spec.solver_module_path)
+    spec = iu.spec_from_file_location(solver_spec.solver_module_name, module_path)
     assert spec is not None
     module = iu.module_from_spec(spec=spec)
     assert spec.loader is not None

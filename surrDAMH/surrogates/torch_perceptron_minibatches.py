@@ -8,8 +8,11 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-from surrDAMH.surrogates.parent import Evaluator, Updater
+from surrDAMH.surrogates.parent import Evaluator, Updater, WeightingPolicy
 from surrDAMH.surrogates.reuse import register_updater
+
+OutputNormalization = Literal["identity", "likelihood", "manual"]
+OUTPUT_NORMALIZATIONS: tuple[str, ...] = ("identity", "likelihood", "manual")
 
 
 class PyTorchMLP(nn.Module):
@@ -68,8 +71,7 @@ class PyTorchNNEvaluator(Evaluator):
     def __init__(self, no_parameters, no_observations, model,
                  output_mean: npt.NDArray, output_scale: npt.NDArray,
                  use_gradients: bool = True):
-        self.no_parameters = no_parameters
-        self.no_observations = no_observations
+        super().__init__(no_parameters, no_observations)
         self.model = self.clone_model_to_cpu(model)
         self.output_mean = np.asarray(output_mean, dtype=np.float32).reshape(self.no_observations)
         self.output_scale = np.asarray(output_scale, dtype=np.float32).reshape(self.no_observations)
@@ -87,12 +89,13 @@ class PyTorchNNEvaluator(Evaluator):
         return model_clone.to("cpu").eval()
 
     def __call__(self, datapoints: npt.NDArray):
+        """Evaluates the surrogate model: ``(n, no_parameters) -> (n, no_observations)``."""
         with torch.no_grad():
             datapoints_tensor = torch.tensor(datapoints, dtype=torch.float32, device="cpu").reshape(-1, self.no_parameters)
             outputs = self.model(datapoints_tensor)
             outputs = outputs.detach().cpu().numpy().reshape(-1, self.no_observations)
             outputs = outputs * self.output_scale.reshape(1, -1) + self.output_mean.reshape(1, -1) # overflow encountered
-            return outputs.flatten()
+            return outputs
 
     def jacobian(self, datapoints: npt.NDArray) -> tuple[npt.NDArray, npt.NDArray]:
         if not self.use_gradients:
@@ -175,14 +178,29 @@ class NeuralNetworkUpdaterMinibatches(Updater):
     forgotten as new snapshots arrive (see ``_get_replay_indices``/``_iter_minibatches``).
     Registered with ``surrogates.reuse.register_updater`` (``surrogate_type =
     "NeuralNetworkUpdaterMinibatches"``), so checkpoints round-trip through
-    ``SurrogateReused``. Currently the only supported evaluator/updater implementation
-    with input/output normalization hooks (``output_mean``/``output_scale``) and a
-    documented ``snapshot_weighting``-style knob (``_weighted_loss``, see the
-    conformance table in ``library_notes/12_evaluator_contract_spec.md`` §1 — today's
-    weighting is unconditionally "multiplicity", i.e. rejected proposals at weight 0 are
-    not used for training; the planned ``snapshot_weighting`` parameter is not
-    implemented yet).
+    ``SurrogateReused``.
+
+    Weighting: ``supports_sample_weights = True`` -- with ``weighting="multiplicity"``,
+    zero-multiplicity snapshots (rejected proposals) are dropped on arrival and the
+    remaining rows enter ``_weighted_loss`` weighted by their multiplicity. The default
+    ``weighting="uniform"`` trains on **every** snapshot with weight 1, rejected proposals
+    included (WS6 decision 3; before WS6 this updater always behaved like
+    ``"multiplicity"``).
+
+    Output normalization: ``output_normalization="likelihood"`` (the default) centres the
+    training targets on the observed data and scales them by the per-observation noise
+    standard deviation, both taken from the likelihood via
+    ``Updater.set_output_normalization`` (called once by ``SamplingFramework``/
+    ``run_local``). ``"manual"`` uses the explicit ``output_mean``/``output_scale``
+    arguments, ``"identity"`` does not normalize at all (the pre-WS6 default).
+
+    Full-batch L-BFGS preset (replaces the deleted ``NeuralNetworkUpdaterBasic``)::
+
+        NeuralNetworkUpdaterMinibatches(..., solver="lbfgs", batch_size=None,
+                                        replay_ratio=0.0, train_on_added_data=False)
     """
+
+    supports_sample_weights = True
 
     def __init__(
         self,
@@ -197,6 +215,8 @@ class NeuralNetworkUpdaterMinibatches(Updater):
         device: Literal["cpu", "cuda"] = "cpu",
         verbose: bool = False,
         seed: int | None = None,
+        weighting: WeightingPolicy = "uniform",
+        output_normalization: OutputNormalization = "likelihood",
         output_mean: np.ndarray | None = None,
         output_scale: np.ndarray | None = None,
         batch_size: int | None = None,
@@ -224,10 +244,18 @@ class NeuralNetworkUpdaterMinibatches(Updater):
             verbose: print extra fit diagnostics.
             seed: seeds both the torch model init and this updater's own
                 ``numpy.random.default_rng`` (minibatch/replay sampling).
-            output_mean, output_scale: fixed per-observation normalization statistics
-                applied before the loss and undone in ``denormalize_outputs``; default
-                (``None``) is the identity (mean 0, scale 1, i.e. no normalization) --
-                there is no "auto-estimate from data" option today (planned, see spec 12 §2).
+            weighting: snapshot-weighting policy, see ``Updater`` (default ``"uniform"``).
+            output_normalization: where the per-observation normalization statistics come
+                from. ``"likelihood"`` (default): observed data / noise sd, supplied by
+                ``set_output_normalization``. ``"manual"``: the ``output_mean``/
+                ``output_scale`` arguments. ``"identity"``: no normalization (mean 0,
+                scale 1); ``output_mean``/``output_scale`` must then be ``None``.
+            output_mean, output_scale: explicit per-observation normalization statistics,
+                applied before the loss and undone in ``denormalize_outputs``. Required
+                shape ``(no_observations,)``. Only meaningful for
+                ``output_normalization="manual"`` (and accepted for ``"likelihood"``, where
+                they act as already-resolved statistics -- this is how a checkpoint is
+                restored).
             batch_size: fixed minibatch size; ``None`` picks a size from the current
                 subset size (``_infer_batch_size``: whole subset if `<100`, else 64 or
                 256), ignored when ``solver="lbfgs"``.
@@ -244,12 +272,13 @@ class NeuralNetworkUpdaterMinibatches(Updater):
             weight_decay: AdamW/Adam weight decay.
 
         Raises:
-            ValueError: if ``output_mean``/``output_scale`` are non-finite, if
+            ValueError: for an unknown ``weighting``/``output_normalization``, if
+                ``output_mean``/``output_scale`` are given with
+                ``output_normalization="identity"``, if they are non-finite or
                 ``output_scale`` contains zeros, if ``replay_ratio < 0``, or if
                 ``batch_size <= 0`` when given.
         """
-        self.no_parameters = no_parameters
-        self.no_observations = no_observations
+        super().__init__(no_parameters, no_observations, weighting=weighting)
         self.hidden_layer_sizes = tuple(hidden_layer_sizes)
         self.solver_name = solver.lower()
         self.activation_name = activation
@@ -267,18 +296,23 @@ class NeuralNetworkUpdaterMinibatches(Updater):
         self.gradient_clip_norm = gradient_clip_norm
         self.weight_decay = weight_decay
 
-        if output_mean is None:
-            self.output_mean = np.zeros((self.no_observations,), dtype=np.float32)
+        if output_normalization not in OUTPUT_NORMALIZATIONS:
+            raise ValueError(f"output_normalization must be one of {OUTPUT_NORMALIZATIONS}, "
+                             f"got {output_normalization!r}")
+        self.output_normalization = output_normalization
+        if output_normalization == "identity" and (output_mean is not None or output_scale is not None):
+            raise ValueError("output_normalization='identity' does not accept output_mean/output_scale; "
+                             "use output_normalization='manual' to supply explicit statistics")
+        statistics_given = output_mean is not None or output_scale is not None
+        # provenance of the statistics actually in effect (what a checkpoint/manifest reports):
+        if output_normalization == "manual":
+            self.output_normalization_provenance = "manual"
+        elif output_normalization == "likelihood" and statistics_given:
+            self.output_normalization_provenance = "likelihood"
         else:
-            self.output_mean = np.asarray(output_mean, dtype=np.float32).reshape(self.no_observations)
-        if output_scale is None:
-            self.output_scale = np.ones((self.no_observations,), dtype=np.float32)
-        else:
-            self.output_scale = np.asarray(output_scale, dtype=np.float32).reshape(self.no_observations)
-        if np.any(~np.isfinite(self.output_mean)):
-            raise ValueError("output_mean must contain only finite values")
-        if np.any(~np.isfinite(self.output_scale)) or np.any(self.output_scale == 0.0):
-            raise ValueError("output_scale must contain only finite non-zero values")
+            # "identity", or "likelihood" before set_output_normalization() has been called
+            self.output_normalization_provenance = "identity"
+        self._set_output_statistics(output_mean, output_scale)
         if self.replay_ratio < 0.0:
             raise ValueError("replay_ratio must be non-negative")
         if self.batch_size is not None and self.batch_size <= 0:
@@ -299,9 +333,44 @@ class NeuralNetworkUpdaterMinibatches(Updater):
 
         self.par = torch.empty((0, self.no_parameters), dtype=torch.float32, device=self.device)
         self.obs = torch.empty((0, self.no_observations), dtype=torch.float32, device=self.device)
-        self.weights = torch.empty((0, 1), dtype=torch.float32, device=self.device)
+        self.multiplicity = torch.empty((0, 1), dtype=torch.float32, device=self.device)
         self.no_snapshots = 0
         self.last_loss = 1.0
+
+    def _set_output_statistics(self, output_mean, output_scale) -> None:
+        """Validates and stores ``output_mean``/``output_scale`` (``None`` = identity)."""
+        if output_mean is None:
+            self.output_mean = np.zeros((self.no_observations,), dtype=np.float32)
+        else:
+            self.output_mean = np.asarray(output_mean, dtype=np.float32).reshape(self.no_observations)
+        if output_scale is None:
+            self.output_scale = np.ones((self.no_observations,), dtype=np.float32)
+        else:
+            self.output_scale = np.asarray(output_scale, dtype=np.float32).reshape(self.no_observations)
+        if np.any(~np.isfinite(self.output_mean)):
+            raise ValueError("output_mean must contain only finite values")
+        if np.any(~np.isfinite(self.output_scale)) or np.any(self.output_scale == 0.0):
+            raise ValueError("output_scale must contain only finite non-zero values")
+
+    def set_output_normalization(self, mean: npt.NDArray, scale: npt.NDArray) -> None:
+        """
+        Adopts likelihood-derived normalization statistics (no-op unless this updater was
+        configured with ``output_normalization="likelihood"``).
+
+        Any snapshots already stored are re-normalized with the new statistics, so
+        ``self.obs`` (which holds *normalized* observations) stays consistent.
+        """
+        if self.output_normalization != "likelihood":
+            return
+        previous_mean, previous_scale = self.output_mean, self.output_scale
+        self._set_output_statistics(mean, scale)
+        self.output_normalization_provenance = "likelihood"
+        if self.obs.numel() > 0 and not (np.array_equal(previous_mean, self.output_mean)
+                                         and np.array_equal(previous_scale, self.output_scale)):
+            stored = self.obs.detach().cpu().numpy().reshape(-1, self.no_observations)
+            original = stored * previous_scale + previous_mean
+            renormalized = self.normalize_outputs(original).reshape(-1, self.no_observations)
+            self.obs = torch.tensor(renormalized, dtype=torch.float32, device=self.device)
 
     def normalize_outputs(self, outputs: npt.NDArray) -> npt.NDArray:
         outputs_array = np.asarray(outputs, dtype=np.float32)
@@ -321,6 +390,15 @@ class NeuralNetworkUpdaterMinibatches(Updater):
         raise ValueError("Unsupported solver. Use one of: adam, adamw, lbfgs")
 
     def _checkpoint_hparams(self) -> dict:
+        """
+        Constructor keyword arguments describing this updater, stored in the checkpoint and
+        fed back to ``__init__`` by ``surrogates.reuse.SurrogateReused``.
+
+        ``output_normalization`` records the *provenance* of the statistics that are in
+        effect (``"identity"``/``"likelihood"``/``"manual"``), not the configured option, so
+        that restoring a checkpoint restores exactly the normalization it was trained with.
+        """
+        identity_normalization = self.output_normalization_provenance == "identity"
         return {
             "no_parameters": self.no_parameters,
             "no_observations": self.no_observations,
@@ -332,8 +410,10 @@ class NeuralNetworkUpdaterMinibatches(Updater):
             "loss_target": self.loss_target,
             "device": self.device,
             "seed": self.seed,
-            "output_mean": self.output_mean.tolist(),
-            "output_scale": self.output_scale.tolist(),
+            "weighting": self.weighting,
+            "output_normalization": self.output_normalization_provenance,
+            "output_mean": None if identity_normalization else self.output_mean.tolist(),
+            "output_scale": None if identity_normalization else self.output_scale.tolist(),
             "batch_size": self.batch_size,
             "replay_ratio": self.replay_ratio,
             "replay_max_old_samples": self.replay_max_old_samples,
@@ -356,8 +436,13 @@ class NeuralNetworkUpdaterMinibatches(Updater):
         ):
             if checkpoint_hparams.get(key) != current[key]:
                 mismatches.append(f"{key}: checkpoint={checkpoint_hparams.get(key)!r}, current={current[key]!r}")
-        checkpoint_mean = np.asarray(checkpoint_hparams.get("output_mean", current["output_mean"]), dtype=np.float32)
-        checkpoint_scale = np.asarray(checkpoint_hparams.get("output_scale", current["output_scale"]), dtype=np.float32)
+        checkpoint_mean_raw = checkpoint_hparams.get("output_mean", current["output_mean"])
+        checkpoint_scale_raw = checkpoint_hparams.get("output_scale", current["output_scale"])
+        # None means "identity normalization" in the checkpoint (see _checkpoint_hparams)
+        checkpoint_mean = (np.zeros((self.no_observations,), dtype=np.float32) if checkpoint_mean_raw is None
+                           else np.asarray(checkpoint_mean_raw, dtype=np.float32))
+        checkpoint_scale = (np.ones((self.no_observations,), dtype=np.float32) if checkpoint_scale_raw is None
+                            else np.asarray(checkpoint_scale_raw, dtype=np.float32))
         if checkpoint_mean.shape != (self.no_observations,) or checkpoint_scale.shape != (self.no_observations,):
             mismatches.append("output normalization vectors have incompatible shapes")
         else:
@@ -371,45 +456,58 @@ class NeuralNetworkUpdaterMinibatches(Updater):
     def get_initial_snapshots(self) -> list[npt.NDArray] | None:
         if not self.training_data_loaded:
             return None
-        parameters, observations, weights = self.get_training_data_arrays()
-        return [parameters, observations, weights]
+        parameters, observations, multiplicity = self.get_training_data_arrays()
+        return [parameters, observations, multiplicity]
 
     def get_training_data_arrays(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Returns the stored ``(parameters, observations, multiplicity)`` (observations denormalized)."""
         parameters = self.par.detach().cpu().numpy().reshape(-1, self.no_parameters)
         observations_normalized = self.obs.detach().cpu().numpy().reshape(-1, self.no_observations)
         observations = self.denormalize_outputs(observations_normalized)
-        if self.weights.numel() == 0:
-            weights = np.empty((0, 1), dtype=np.float32)
+        if self.multiplicity.numel() == 0:
+            multiplicity = np.empty((0, 1), dtype=np.float32)
         else:
-            weights = self.weights.detach().cpu().numpy().reshape(-1, 1)
-        return parameters, observations, weights
+            multiplicity = self.multiplicity.detach().cpu().numpy().reshape(-1, 1)
+        return parameters, observations, multiplicity
 
     def load_training_arrays(
         self,
         parameters: npt.NDArray,
         observations: npt.NDArray,
-        weights: npt.NDArray | None = None,
+        multiplicity: npt.NDArray | None = None,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         parameters = np.asarray(parameters, dtype=np.float32).reshape(-1, self.no_parameters)
         observations_original = np.asarray(observations, dtype=np.float32).reshape(-1, self.no_observations)
         if parameters.shape[0] != observations_original.shape[0]:
             raise ValueError("Training parameters and observations must contain the same number of rows")
-        if weights is None:
-            weights_array = np.ones((parameters.shape[0], 1), dtype=np.float32)
+        if multiplicity is None:
+            multiplicity_array = np.ones((parameters.shape[0], 1), dtype=np.float32)
         else:
-            weights_array = np.asarray(weights, dtype=np.float32).reshape(-1, 1)
-            if weights_array.shape[0] != parameters.shape[0]:
-                raise ValueError("Training weights must contain the same number of rows as parameters")
+            multiplicity_array = np.asarray(multiplicity, dtype=np.float32).reshape(-1, 1)
+            if multiplicity_array.shape[0] != parameters.shape[0]:
+                raise ValueError("Training multiplicity must contain the same number of rows as parameters")
 
         observations_normalized = self.normalize_outputs(observations_original).reshape(-1, self.no_observations)
         self.par = torch.tensor(parameters, dtype=torch.float32, device=self.device)
         self.obs = torch.tensor(observations_normalized, dtype=torch.float32, device=self.device)
-        self.weights = torch.tensor(weights_array, dtype=torch.float32, device=self.device)
+        self.multiplicity = torch.tensor(multiplicity_array, dtype=torch.float32, device=self.device)
         self.no_snapshots = parameters.shape[0]
         self.loaded_snapshot_count = self.no_snapshots
         self.training_data_loaded = self.no_snapshots > 0
         self._last_added_indices = np.arange(self.no_snapshots, dtype=np.int64)
-        return parameters, observations_original, weights_array
+        return parameters, observations_original, multiplicity_array
+
+    def _batch_weights(self, index_tensor: torch.Tensor) -> torch.Tensor | None:
+        """
+        Per-sample loss weights for the selected rows, or ``None`` for an unweighted mean.
+
+        ``weighting="uniform"`` (default) returns ``None``: every snapshot contributes
+        equally, rejected proposals included. ``weighting="multiplicity"`` returns the
+        stored multiplicities (zero-multiplicity rows were already dropped in ``add_data``).
+        """
+        if self.weighting != "multiplicity":
+            return None
+        return self.multiplicity.index_select(0, index_tensor)
 
     def _weighted_loss(self, predictions: torch.Tensor, targets: torch.Tensor, weights: torch.Tensor | None) -> torch.Tensor:
         per_output = self.criterion(predictions, targets)
@@ -487,7 +585,7 @@ class NeuralNetworkUpdaterMinibatches(Updater):
                 batch_idx_tensor = torch.tensor(batch_indices, dtype=torch.long, device=self.device)
                 batch_par = self.par.index_select(0, batch_idx_tensor)
                 batch_obs = self.obs.index_select(0, batch_idx_tensor)
-                batch_weights = self.weights.index_select(0, batch_idx_tensor)
+                batch_weights = self._batch_weights(batch_idx_tensor)
 
                 self.optimizer.zero_grad()
                 batch_pred = self.model(batch_par)
@@ -510,7 +608,7 @@ class NeuralNetworkUpdaterMinibatches(Updater):
         index_tensor = torch.tensor(indices, dtype=torch.long, device=self.device)
         par = self.par.index_select(0, index_tensor)
         obs = self.obs.index_select(0, index_tensor)
-        weights = self.weights.index_select(0, index_tensor)
+        weights = self._batch_weights(index_tensor)
 
         def closure():
             self.optimizer.zero_grad()
@@ -532,14 +630,27 @@ class NeuralNetworkUpdaterMinibatches(Updater):
         return last_loss_value
 
     def initial_training(self, constant_observations: npt.NDArray, n: int = 1000, loss_target=1e-4):
+        """
+        Pre-trains the network to a constant output on ``n`` synthetic ``randn`` parameters.
+
+        The synthetic rows are **not** persisted (finding 3.4, fixed in WS6): the real
+        snapshot arrays are restored before returning, so ``get_training_data_arrays()``,
+        ``get_initial_snapshots()`` and the checkpoint never report fabricated data.
+        """
         parameters = np.random.randn(n, self.no_parameters).astype(np.float32)
         observations = np.tile(self.normalize_outputs(constant_observations), (n, 1)).astype(np.float32)
-        self.par = torch.tensor(parameters, dtype=torch.float32, device=self.device)
-        self.obs = torch.tensor(observations, dtype=torch.float32, device=self.device)
-        self.weights = torch.ones((n, 1), dtype=torch.float32, device=self.device)
-        self.no_snapshots = n
-        self._last_added_indices = np.arange(n, dtype=np.int64)
-        self.last_loss = self._train_minibatches(np.arange(n, dtype=np.int64), self.iterations_batch)
+        saved = (self.par, self.obs, self.multiplicity, self.no_snapshots,
+                 self._last_added_indices, self.training_data_loaded)
+        try:
+            self.par = torch.tensor(parameters, dtype=torch.float32, device=self.device)
+            self.obs = torch.tensor(observations, dtype=torch.float32, device=self.device)
+            self.multiplicity = torch.ones((n, 1), dtype=torch.float32, device=self.device)
+            self.no_snapshots = n
+            self._last_added_indices = np.arange(n, dtype=np.int64)
+            self.last_loss = self._train_minibatches(np.arange(n, dtype=np.int64), self.iterations_batch)
+        finally:
+            (self.par, self.obs, self.multiplicity, self.no_snapshots,
+             self._last_added_indices, self.training_data_loaded) = saved
         if self.verbose:
             print(f"Initial training, MSE loss: {self.last_loss:.4e}", flush=True)
 
@@ -547,29 +658,34 @@ class NeuralNetworkUpdaterMinibatches(Updater):
         self,
         parameters: npt.NDArray,
         observations: npt.NDArray,
-        weights: npt.NDArray | None = None,
+        multiplicity: npt.NDArray | None = None,
         train_on_added_data: bool | None = None,
     ):
+        """Stores new snapshots; ``weighting="multiplicity"`` drops the zero-multiplicity rows."""
         loc_par_np = np.asarray(parameters, dtype=np.float32).reshape(-1, self.no_parameters)
         loc_obs_np = self.normalize_outputs(observations).reshape(-1, self.no_observations)
-        if weights is None:
-            loc_weights_np = np.ones((loc_par_np.shape[0], 1), dtype=np.float32)
+        if multiplicity is None:
+            loc_mul_np = np.ones((loc_par_np.shape[0], 1), dtype=np.float32)
         else:
-            loc_weights_np = np.asarray(weights, dtype=np.float32).reshape(-1, 1)
+            loc_mul_np = np.asarray(multiplicity, dtype=np.float32).reshape(-1, 1)
+
+        mask = self._rows_to_use(loc_mul_np, loc_par_np.shape[0])
+        loc_par_np, loc_obs_np, loc_mul_np = loc_par_np[mask], loc_obs_np[mask], loc_mul_np[mask]
+
         loc_par = torch.tensor(loc_par_np, dtype=torch.float32, device=self.device)
         loc_obs = torch.tensor(loc_obs_np, dtype=torch.float32, device=self.device)
-        loc_weights = torch.tensor(loc_weights_np, dtype=torch.float32, device=self.device)
+        loc_mul = torch.tensor(loc_mul_np, dtype=torch.float32, device=self.device)
 
         if loc_par.shape[0] != 0:
             start_idx = int(self.par.shape[0])
             if self.par.shape[0] == 0:
                 self.par = loc_par
                 self.obs = loc_obs
-                self.weights = loc_weights
+                self.multiplicity = loc_mul
             else:
                 self.par = torch.concatenate([self.par, loc_par], dim=0)
                 self.obs = torch.concatenate([self.obs, loc_obs], dim=0)
-                self.weights = torch.concatenate([self.weights, loc_weights], dim=0)
+                self.multiplicity = torch.concatenate([self.multiplicity, loc_mul], dim=0)
             self.no_snapshots = int(self.par.shape[0])
             self.training_data_loaded = self.no_snapshots > 0
             self._last_added_indices = np.arange(start_idx, self.no_snapshots, dtype=np.int64)
@@ -646,12 +762,20 @@ class NeuralNetworkUpdaterMinibatches(Updater):
     def load_checkpoint(self, path: str, map_location: str | None = None, load_optimizer: bool = True) -> None:
         if map_location is None:
             map_location = self.device
-        checkpoint = torch.load(path, map_location=map_location)
+        # weights_only=True (S22): the checkpoint holds only tensors, scalars, strings and
+        # plain containers, so nothing has to be unpickled as arbitrary Python objects.
+        checkpoint = torch.load(path, map_location=map_location, weights_only=True)
         if checkpoint.get("surrogate_type") != type(self).__name__:
             raise ValueError(
                 f"Checkpoint surrogate type {checkpoint.get('surrogate_type')!r} is incompatible with {type(self).__name__}"
             )
-        self._validate_checkpoint_hparams(checkpoint.get("updater_hparams", {}))
+        checkpoint_hparams = checkpoint.get("updater_hparams", {})
+        self._validate_checkpoint_hparams(checkpoint_hparams)
+        # the checkpoint records the provenance of the statistics it was trained with
+        # (see _checkpoint_hparams); _validate_checkpoint_hparams already made sure the
+        # numbers agree with this updater's
+        self.output_normalization_provenance = checkpoint_hparams.get(
+            "output_normalization", self.output_normalization_provenance)
         self.model.load_state_dict(checkpoint["model_state_dict"])
         self.model.to(self.device)
         self.optimizer = self._build_optimizer()
@@ -666,13 +790,13 @@ class NeuralNetworkUpdaterMinibatches(Updater):
         )
 
     def save_training_data(self, path: str) -> None:
-        parameters, observations, weights = self.get_training_data_arrays()
+        parameters, observations, multiplicity = self.get_training_data_arrays()
         os.makedirs(os.path.dirname(path), exist_ok=True)
         np.savez(
             path,
             parameters=parameters,
             observations=observations,
-            weights=weights,
+            multiplicity=multiplicity,
             no_parameters=self.no_parameters,
             no_observations=self.no_observations,
             num_snapshots=parameters.shape[0],
@@ -682,8 +806,8 @@ class NeuralNetworkUpdaterMinibatches(Updater):
         with np.load(path) as loaded:
             parameters = loaded["parameters"]
             observations = loaded["observations"]
-            weights = loaded["weights"] if "weights" in loaded else None
-        return self.load_training_arrays(parameters, observations, weights)
+            multiplicity = loaded["multiplicity"] if "multiplicity" in loaded else None
+        return self.load_training_arrays(parameters, observations, multiplicity)
 
     def save_state(self, checkpoint_path: str, data_path: str) -> None:
         self.save_checkpoint(checkpoint_path)

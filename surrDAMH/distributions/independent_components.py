@@ -74,10 +74,15 @@ class PriorIndependentComponents(Distribution):
         """Returns vector of standard deviations (ones for N(0,I))."""
         return np.ones(self.no_parameters)
 
-    def rvs(self):
+    def rvs(self, generator: np.random.Generator | None = None):
         """
         Returns a random sample from N(zeros,ones).
+
+        ``generator`` (G4): draw from this ``np.random.Generator`` instead of the global,
+        unseeded NumPy RNG. ``None`` keeps the historical global-RNG behaviour bit-for-bit.
         """
+        if generator is not None:
+            return generator.standard_normal(self.no_parameters)
         return np.random.randn(self.no_parameters)
 
 

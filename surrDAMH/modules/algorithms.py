@@ -18,6 +18,7 @@ from surrDAMH.modules.algorithm_interfaces import (AlgorithmConfiguration,
                                                    EvaluatorProvider,
                                                    ObservationProvider,
                                                    SnapshotCollector)
+from surrDAMH.modules.manifest import raw_data_columns, samples_columns
 from surrDAMH.modules.monitoring import SamplingOutputMonitor
 from surrDAMH.modules.proposals import Proposal
 from surrDAMH.stages import Stage
@@ -99,10 +100,29 @@ def sample_carried_to_next_stage(sample: Sample, finished_stage: Stage) -> Sampl
 
 
 class AlgorithmBase:
+    """
+    One sampling stage of one chain: proposal + acceptance test + output writing.
+
+    ``multiplicity`` column of ``samples/<stage>/rank%04d.csv`` (A30, decided 2026-09-17):
+    a state's row
+    carries ``1 + counter_rejected_current`` -- the state itself plus the proposals rejected
+    from it -- EXCEPT for the first row of a stage whose initial state was already written by
+    the preceding stage (``initial_sample_is_carried_over=True``, set by both runners for every
+    stage after the first whose predecessor had ``save_to_file=True``, including after an
+    ``is_excluded`` stage), where the leading ``+1`` is dropped so that the state is counted
+    exactly once across the concatenated stages; such a row may have multiplicity 0.
+
+    The same word is used for the snapshot payload sent to the collector
+    (``[parameters, observations, multiplicity]``, WS6): ``1 + rejections`` for a state that
+    was left, ``0`` for a rejected proposal. What the surrogate updater does with it is
+    decided by its ``weighting`` option, see ``surrDAMH.surrogates.parent.Updater``.
+    """
+
     def __init__(self, stage: Stage, proposal: Proposal, initial_sample: Sample, rank_world: int,
                  conf: AlgorithmConfiguration, prior: Distribution, likelihood: Distribution,
                  observation_provider: ObservationProvider, snapshot_collector: SnapshotCollector | None = None,
-                 evaluator_provider: EvaluatorProvider | None = None, seed: int = 0) -> None:
+                 evaluator_provider: EvaluatorProvider | None = None, seed: int = 0,
+                 initial_sample_is_carried_over: bool = False) -> None:
         self.stage = stage
         self.proposal = proposal
         self.current = initial_sample
@@ -122,6 +142,10 @@ class AlgorithmBase:
         self.counter_prerejected = 0
         self.counter_rejected = 0
         self.counter_rejected_current = 0
+        # A30: was the initial state of this stage already written (and counted) by the
+        # previous stage? If so, its row here must not add the state itself again.
+        self.initial_sample_is_carried_over = initial_sample_is_carried_over
+        self._first_state_row_pending = True
         self.proposed: Sample
         self._generator = np.random.RandomState(seed)
         self.monitor = SamplingOutputMonitor(
@@ -129,6 +153,11 @@ class AlgorithmBase:
             stage=stage,
             basename="rank" + str(self.rank_world).zfill(4) + ".csv",
         )
+        # output format v2: the header is written when (and only when) the file is created.
+        self.no_parameters = int(self.conf.no_parameters)
+        self.no_observations = int(self.conf.no_observations)
+        self.monitor.set_header("samples", samples_columns(self.no_parameters))
+        self.monitor.set_header("raw_data", raw_data_columns(self.no_parameters, self.no_observations))
         self._prepare_run()
         self._initialize_current_approximation()
 
@@ -179,23 +208,51 @@ class AlgorithmBase:
     def _propose_new_sample(self, current_parameters: npt.NDArray) -> Sample:
         return Sample(parameters=self.proposal.propose_sample(current_parameters))
 
-    def _emit_current_state(self, weight: float) -> None:
-        """Write/forward the current chain state before leaving it."""
-        self._record_current_sample()
-        self.send_to_collector(sample=self.current, weight=weight)
+    def _emit_current_state(self, multiplicity: float) -> None:
+        """Write/forward the current chain state before leaving it.
 
-    def _record_proposed_snapshot(self, state_type: str, tag: int, observations: npt.NDArray | None) -> None:
-        """Record information about the currently proposed state (with observations or approximate observations)."""
+        ``multiplicity`` is the SURROGATE-TRAINING multiplicity handed to the collector and is
+        deliberately left at ``1 + counter_rejected_current`` even at a stage boundary: unlike
+        the ``samples`` CSV, the collector never receives a stage's final state (``_finalize_run``
+        does not forward it), so there is nothing to double-count there (A30 touches the
+        output multiplicity column only, see ``_current_state_row_multiplicity``).
+        """
+        self._record_current_sample()
+        self.send_to_collector(sample=self.current, multiplicity=multiplicity)
+
+    def _observation_block(self, observations: npt.NDArray | None) -> List[Any]:
+        """One fixed-width ``conf.no_observations`` block of a ``raw_data`` row, NaN if absent."""
+        if observations is None:
+            return [np.nan] * self.no_observations
+        return list(np.asarray(observations, dtype=float).flatten())
+
+    def _record_proposed_snapshot(self, state_type: str, tag: int,
+                                  observations: npt.NDArray | None,
+                                  observations_approx: npt.NDArray | None,
+                                  log_likelihood: float | None,
+                                  log_prior: float | None) -> None:
+        """
+        Record one proposed state in ``raw_data`` (format v2, rectangular).
+
+        ``observations`` is the EXACT model block and ``observations_approx`` the surrogate
+        block; both are always present as ``conf.no_observations`` columns and NaN-filled
+        where the corresponding evaluation never happened (a ``prerejected`` proposal has no
+        exact observations, an MH stage has no surrogate ones).
+
+        ``log_likelihood``/``log_prior`` are the values the acceptance decision for this row
+        actually used, i.e. the EXACT log-likelihood for ``accepted``/``rejected`` rows and
+        the SURROGATE one for ``prerejected`` rows (documented in ``docs/outputs.md``).
+        """
         if self.conf.save_snapshots_to_file:
             if self.conf.transform_before_saving:
-                row = [state_type] + list(self.prior.transform(self.proposed.parameters))
+                row: List[Any] = [state_type] + list(self.prior.transform(self.proposed.parameters))
             else:
                 row = [state_type] + list(self.proposed.parameters)
             row += [tag]
-            if observations is not None:
-                row += list(observations.flatten())
-            row += [self.proposed.log_likelihood if self.proposed.log_likelihood is not None else np.nan]
-            row += [self.proposed.log_prior if self.proposed.log_prior is not None else np.nan]
+            row += self._observation_block(observations)
+            row += self._observation_block(observations_approx)
+            row += [log_likelihood if log_likelihood is not None else np.nan]
+            row += [log_prior if log_prior is not None else np.nan]
             self.monitor(data_name="raw_data", row=row)
 
     def _transition_to_accepted(self) -> None:
@@ -215,15 +272,23 @@ class AlgorithmBase:
         self.counter_rejected_current += 1
 
     def _handle_acceptance(self) -> None:
-        self._emit_current_state(weight=self.counter_rejected_current + 1)
+        self._emit_current_state(multiplicity=self.counter_rejected_current + 1)
         self._transition_to_accepted()
-        self._record_proposed_snapshot(state_type="accepted", tag=self.proposed.solver_tag, observations=self.proposed.observations)
+        self._record_proposed_snapshot(state_type="accepted", tag=self.proposed.solver_tag,
+                                       observations=self.proposed.observations,
+                                       observations_approx=self.proposed.observations_approx,
+                                       log_likelihood=self.proposed.log_likelihood,
+                                       log_prior=self.proposed.log_prior)
 
     def _handle_rejection(self) -> None:
         self._transition_to_rejected()
         if not self.proposed.solver_tag < 0:  # do not train the surrogate on a failed solver run (zero-filled observations)
-            self.send_to_collector(sample=self.proposed, weight=0)
-        self._record_proposed_snapshot(state_type="rejected", tag=self.proposed.solver_tag, observations=self.proposed.observations)
+            self.send_to_collector(sample=self.proposed, multiplicity=0)
+        self._record_proposed_snapshot(state_type="rejected", tag=self.proposed.solver_tag,
+                                       observations=self.proposed.observations,
+                                       observations_approx=self.proposed.observations_approx,
+                                       log_likelihood=self.proposed.log_likelihood,
+                                       log_prior=self.proposed.log_prior)
 
     def _compute_log_posterior_terms(self, parameters: npt.NDArray, observation: npt.NDArray,
                                      solver_tag: int = 0) -> tuple[float, float]:
@@ -243,22 +308,43 @@ class AlgorithmBase:
         else:
             return False  # rejected
 
+    def _current_state_row_multiplicity(self) -> int:
+        """
+        Multiplicity written in the first column of the current state's ``samples`` row,
+        consuming the "first row of this stage" flag (A30).
+
+        ``1 + counter_rejected_current`` (the state plus the proposals rejected from it),
+        minus the leading 1 for the first row of a stage whose initial state was carried over
+        from the previous stage and therefore already counted there. Such a row can have
+        multiplicity 0 (the very first proposal of the stage was accepted);
+        ``post_processing.decompress`` drops such a row and ``Samples.no_unique_samples``
+        does not count it (``np.count_nonzero``). Rule and consequences documented in
+        ``docs/outputs.md``.
+        """
+        multiplicity = 1 + self.counter_rejected_current
+        if self._first_state_row_pending and self.initial_sample_is_carried_over:
+            multiplicity -= 1
+        self._first_state_row_pending = False
+        return multiplicity
+
     def _record_current_sample(self) -> None:
+        multiplicity = self._current_state_row_multiplicity()
         if self.conf.transform_before_saving:
-            row: List[Any] = [1+self.counter_rejected_current] + list(self.prior.transform(self.current.parameters))
+            row: List[Any] = [multiplicity] + list(self.prior.transform(self.current.parameters))
         else:
-            row: List[Any] = [1+self.counter_rejected_current] + list(self.current.parameters)
+            row: List[Any] = [multiplicity] + list(self.current.parameters)
         row.append(self.current.log_posterior)
         self.monitor(data_name="samples", row=row, condition=self.stage.save_to_file)
 
-    def _send_to_collector(self, sample: Sample, weight: float) -> None:
+    def _send_to_collector(self, sample: Sample, multiplicity: float) -> None:
+        """Forwards one snapshot ``[parameters, observations, multiplicity]`` to the collector."""
         parameters = sample.parameters.copy()
         assert sample.observations is not None
         observations = sample.observations.copy()
         if self.conf.transform_before_surrogate:
             parameters = self.prior.transform(parameters)
         assert self.snapshot_collector is not None
-        self.snapshot_collector.send_to_collector([parameters, observations, weight])
+        self.snapshot_collector.send_to_collector([parameters, observations, multiplicity])
 
     def _empty_function(self, **kw) -> None:
         return
@@ -283,13 +369,15 @@ class AlgorithmBase:
             if parameters1 is not None:
                 argument1 = [parameters1.copy()]
         assert self.surrogate_evaluator is not None
+        # the evaluator contract is (n, no_observations) for every n (WS6), so a one-point
+        # batch is indexed with [0] to get the (no_observations,) vector the likelihood and
+        # Sample.observations_approx expect -- no defensive flattening needed any more
         if parameters1 is None:
-            res = self.surrogate_evaluator(np.array(argument0))
-            return res.ravel()
+            return self.surrogate_evaluator(np.array(argument0))[0]
         else:
             res0 = self.surrogate_evaluator(np.array(argument0))
             res1 = self.surrogate_evaluator(np.array(argument1))
-            return res0.ravel(), res1.ravel()
+            return res0[0], res1[0]
 
     def _initialize_current_approximation(self) -> None:
         if self.evaluator_provider is None:
@@ -318,7 +406,7 @@ class AlgorithmBase:
         else:
             argument = parameters.copy()
         assert self.surrogate_evaluator is not None
-        evaluation = self.surrogate_evaluator(np.array([argument])).reshape(-1)
+        evaluation = self.surrogate_evaluator(np.array([argument]))[0]
         vector = -self.likelihood.grad_logpdf(evaluation)
         try:
             gradient, _ = self.surrogate_evaluator.vjp(np.array(argument), vector)
@@ -531,7 +619,14 @@ class Algorithm_DAMH(AlgorithmBase):  # initiated by SAMPLERs
                     self._handle_rejection()
             else:  # proposed sample is the same as current sample, sample is automatically accepted, the chain remains here
                 self._transition_to_prerejected()
-                self._record_proposed_snapshot(state_type="prerejected", tag=0, observations=self.proposed.observations_approx)
+                # v2: the exact model was never called for a prerejected proposal, so its
+                # exact observation block is NaN and the logged log-likelihood is the
+                # SURROGATE one the sub-chain acceptance test used (docs/outputs.md).
+                self._record_proposed_snapshot(state_type="prerejected", tag=0,
+                                               observations=None,
+                                               observations_approx=self.proposed.observations_approx,
+                                               log_likelihood=self.proposed.log_likelihood_approx,
+                                               log_prior=self.proposed.log_prior)
             self.monitor(
                 data_name="subchain_stats",
                 row=[

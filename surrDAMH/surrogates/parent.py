@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+import warnings
+from typing import Literal
+
 import numpy as np
 import numpy.typing as npt
 
 from surrDAMH.solvers import Solver
+
+WeightingPolicy = Literal["uniform", "multiplicity"]
+WEIGHTING_POLICIES: tuple[str, ...] = ("uniform", "multiplicity")
 
 
 class SurrogateAsSolver(Solver):
@@ -20,11 +26,12 @@ class SurrogateAsSolver(Solver):
         """
         Returns observations of shape ``(no_observations,)``, i.e. the ``Solver`` contract.
 
-        The evaluator is called on a ``(1, no_parameters)`` batch; its result is flattened,
-        because implementations differ (batched evaluators return ``(1, no_observations)``,
-        the torch ones return a flattened ``(no_observations,)``, see finding 3.5). Without
-        this, a ``(1, no_observations)`` array reached ``Normal.logpdf`` and broke for
-        ``no_observations > 1`` (finding A20).
+        The evaluator is called on a ``(1, no_parameters)`` batch and returns
+        ``(1, no_observations)`` for every evaluator (WS6 contract, see ``Evaluator``), so
+        the ``reshape(-1)`` below is an exact, information-preserving conversion to the
+        ``Solver`` shape (before WS6 it also had to absorb the torch evaluators' flattened
+        output, finding 3.5). Without it, a ``(1, no_observations)`` array reaches
+        ``Normal.logpdf`` and breaks for ``no_observations > 1`` (finding A20).
         """
         result = self.call_method(np.atleast_2d(self.parameters))
         return np.asarray(result).reshape(-1)
@@ -35,19 +42,25 @@ class Evaluator:
     Parent class for surrogate evaluators, produced by ``Updater.get_evaluator()`` and
     picklable so they can be shipped from the collector to sampler ranks over MPI.
 
-    Today's contract (this base class only documents the interface; it does not enforce
-    shapes, and concrete evaluators do not all agree — see the file:line-referenced
-    conformance table in ``library_notes/12_evaluator_contract_spec.md`` §1, e.g. the two
-    torch evaluators flatten ``__call__``'s output to ``(n*no_observations,)`` instead of
-    ``(n, no_observations)``; ``SurrogateAsSolver.get_observations`` compensates for this
-    so ``use_only_surrogate`` stages see a uniform ``(no_observations,)`` regardless).
-    That table also lists the standardized contract WS6 will migrate to (batch shapes
-    always 2-D, ``no_parameters``/``no_observations`` set on this base class) — not
-    implemented yet, so code against today's per-class shapes, not the proposed ones.
+    Contract (WS6, ``library_notes/12_evaluator_contract_spec.md`` §2 — now implemented by
+    every evaluator shipped here):
+
+    - ``__call__(X: (n, no_parameters)) -> (n, no_observations)``, **always 2-D, also for
+      ``n == 1``**. There is no single-point convenience overload: callers pass
+      ``x.reshape(1, -1)`` explicitly (as ``SurrogateAsSolver`` does).
+    - ``jacobian(x: (no_parameters,)) -> (J: (no_observations, no_parameters),
+      y: (no_observations,))``, single point only (batched input raises ``ValueError``).
+    - ``vjp(x, v) -> (J(x).T @ v, y)``; the base-class default derives it from ``jacobian``.
+    - ``no_parameters``/``no_observations`` are real attributes, set here; every subclass
+      must call ``super().__init__(no_parameters, no_observations)``.
+
+    Evaluators that cannot differentiate keep raising ``NotImplementedError`` from
+    ``jacobian``/``vjp``; ``set_use_gradients`` silently no-ops for them.
     """
 
-    def __init__(self) -> None:
-        self.no_parameters: int
+    def __init__(self, no_parameters: int, no_observations: int) -> None:
+        self.no_parameters = int(no_parameters)
+        self.no_observations = int(no_observations)
 
     def __call__(self, datapoints: npt.NDArray) -> npt.NDArray:
         """
@@ -55,10 +68,8 @@ class Evaluator:
 
         datapoints shape: (number of datapoints, no_parameters)
 
-        output NDArray shape: (number of datapoints, no_observations) for the classical
-        (polynomial/RBF/kd-tree) evaluators; the two torch evaluators instead return a
-        flattened ``(number of datapoints * no_observations,)`` array (see class
-        docstring). Not implemented by the base class.
+        output NDArray shape: (number of datapoints, no_observations), for every number of
+        datapoints including 1. Not implemented by the base class.
         """
         raise NotImplementedError
 
@@ -108,16 +119,88 @@ class Updater:
     ``train``/``get_evaluator`` (governed by ``Configuration.min_snapshots_initial``/
     ``min_snapshots_to_update``); the updater itself is passive.
 
-    Which methods each of the five concrete updaters (polynomial/RBF/kd-tree, two torch
-    variants) actually implement, including weight handling and persistence, is
-    tabulated in ``library_notes/12_evaluator_contract_spec.md`` §1 — several
-    ``supports_*`` methods below report ``False`` for functionality that is in fact
-    implemented (documented mismatch, not fixed here).
+    Snapshot weighting (WS6 decision 3)
+    -----------------------------------
+    Every snapshot arrives with a ``multiplicity``: ``1 + rejections`` for a chain state
+    that was just left, and ``0`` for a rejected proposal (``algorithms.py``). The
+    ``weighting`` constructor option decides what the fit does with it:
+
+    - ``"uniform"`` (**default for every updater, including the neural networks**): every
+      snapshot counts exactly once, rejected proposals (multiplicity 0) included.
+    - ``"multiplicity"``: rows with multiplicity ``0`` are excluded everywhere (they never
+      enter the stored training data), and rows with multiplicity ``m > 0`` are weighted by
+      ``m`` where the fit supports per-sample weights (``supports_sample_weights = True``)
+      or included once where it does not (interpolants).
+
+    The policy is implemented once here (``_rows_to_use`` / ``_training_weights``); a
+    concrete updater only has to apply the mask and pass the weights on to its fit.
+
+    Which methods each concrete updater implements, including persistence, is tabulated in
+    ``library_notes/12_evaluator_contract_spec.md`` §1.
     """
 
-    def __init__(self, no_parameters: int, no_observations: int) -> None:
-        self.no_snapshots: int
-        pass
+    #: Whether this updater's fit can honour per-row weights. ``False`` means
+    #: ``weighting="multiplicity"`` only *filters* zero-multiplicity rows for it.
+    supports_sample_weights: bool = False
+
+    #: Output-normalization mode; only updaters that normalize their targets override this
+    #: (see ``set_output_normalization``).
+    output_normalization: str = "identity"
+
+    def __init__(self, no_parameters: int, no_observations: int,
+                 weighting: WeightingPolicy = "uniform") -> None:
+        self.no_parameters = int(no_parameters)
+        self.no_observations = int(no_observations)
+        self.weighting = validate_weighting(weighting)
+        self.no_snapshots = 0
+
+    def describe_weighting(self) -> str:
+        """One-line description of the snapshot-weighting policy, logged at start-up.
+
+        Tolerates a third-party updater that never called ``super().__init__`` (it is then
+        reported as the default ``"uniform"``).
+        """
+        if getattr(self, "weighting", "uniform") == "multiplicity":
+            detail = ("snapshots with multiplicity 0 (rejected proposals) are NOT used; "
+                      + ("remaining rows are weighted by their multiplicity"
+                         if self.supports_sample_weights
+                         else f"{type(self).__name__} cannot weight rows, so the rest count once each"))
+        else:
+            detail = "every snapshot counts once, rejected proposals (multiplicity 0) included"
+        return f"{type(self).__name__}: weighting={getattr(self, 'weighting', 'uniform')!r} ({detail})"
+
+    def _rows_to_use(self, multiplicity: npt.NDArray | None, no_rows: int) -> npt.NDArray:
+        """
+        Boolean mask ``(no_rows,)`` of the snapshots that take part in the fit.
+
+        ``"uniform"`` keeps everything; ``"multiplicity"`` drops rows with multiplicity 0.
+        """
+        if self.weighting == "multiplicity" and multiplicity is not None:
+            values = np.asarray(multiplicity, dtype=float).reshape(-1)
+            if values.shape[0] != no_rows:
+                raise ValueError(f"multiplicity has {values.shape[0]} rows, expected {no_rows}")
+            return values > 0.0
+        return np.ones((no_rows,), dtype=bool)
+
+    def _training_weights(self, multiplicity: npt.NDArray | None) -> npt.NDArray | None:
+        """
+        Per-row sample weights for rows that already passed ``_rows_to_use``, or ``None``
+        when the fit should be unweighted (``"uniform"``, or an updater that cannot weight).
+        """
+        if self.weighting != "multiplicity" or multiplicity is None or not self.supports_sample_weights:
+            return None
+        return np.asarray(multiplicity, dtype=float).reshape(-1)
+
+    def set_output_normalization(self, mean: npt.NDArray, scale: npt.NDArray) -> None:
+        """
+        Hook: supply per-observation normalization statistics derived from the likelihood.
+
+        Called once by ``SamplingFramework``/``run_local`` (via
+        ``apply_output_normalization_from_likelihood``) for updaters configured with
+        ``output_normalization="likelihood"``. No-op in the base class and in every updater
+        that does not normalize its targets.
+        """
+        return None
 
     def delayed_init(self, data):
         """
@@ -125,15 +208,15 @@ class Updater:
         """
         pass
 
-    def add_data(self, parameters: npt.NDArray, observations: npt.NDArray, weights: npt.NDArray) -> None:
+    def add_data(self, parameters: npt.NDArray, observations: npt.NDArray,
+                 multiplicity: npt.NDArray | None = None) -> None:
         """
         Adds more snapshots to the surrogate model.
         parameters shape: (number of snapshots, no_parameters)
         observations shape: (number of snapshots, no_observations)
-        weights shape: (number of snapshots, 1); a rejected proposal is sent with
-        weight 0 (multiplicity weighting, ``algorithms.py``). Whether/how a concrete
-        updater actually uses ``weights`` (some ignore them outright) is documented per
-        class and in ``library_notes/12_evaluator_contract_spec.md`` §1 ("weight handling" row).
+        multiplicity shape: (number of snapshots, 1); ``1 + rejections`` for a chain state
+        that was left, ``0`` for a rejected proposal. How it is used is decided by the
+        ``weighting`` option (see the class docstring), not by the concrete updater.
         """
         pass
 
@@ -183,7 +266,7 @@ class Updater:
     def load_training_data(self, path: str):
         """
         Loads the surrogate model training data from files.
-        Returns a list of numpy arrays containing the loaded snapshots and weights.
+        Returns ``(parameters, observations, multiplicity)`` numpy arrays.
         """
         raise NotImplementedError(f"Training data persistence is not implemented for {type(self).__name__}")
 
@@ -200,9 +283,79 @@ class Updater:
                    load_optimizer: bool = True) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
         """
         Loads the surrogate model state from files.
-        Returns a list of numpy arrays containing the loaded snapshots and weights.
+        Returns ``(parameters, observations, multiplicity)`` numpy arrays.
         """
         raise NotImplementedError(f"State persistence is not implemented for {type(self).__name__}")
+
+
+def validate_weighting(weighting: str) -> str:
+    """Validates the ``weighting`` option of an ``Updater`` (WS6 decision 3)."""
+    if weighting not in WEIGHTING_POLICIES:
+        raise ValueError(f"weighting must be one of {WEIGHTING_POLICIES}, got {weighting!r}")
+    return weighting
+
+
+def likelihood_output_statistics(likelihood, no_observations: int) -> tuple[npt.NDArray, npt.NDArray] | None:
+    """
+    Per-observation ``(mean, scale)`` derived from the likelihood, or ``None`` if it cannot
+    provide them (WS6 decision: ``output_normalization="likelihood"``).
+
+    ``mean`` is the observed data (``likelihood.mean``) and ``scale`` the per-observation
+    noise standard deviation: ``likelihood.sd`` broadcast to ``no_observations`` for an
+    uncorrelated ``Normal``, ``sqrt(diag(likelihood.cov))`` for a covariance one. Returns
+    ``None`` for anything else, for a shape that does not match ``no_observations``, and
+    for non-finite or non-positive scales - the caller then falls back to the identity.
+    """
+    mean = getattr(likelihood, "mean", None)
+    if mean is None:
+        return None
+    mean_array = np.asarray(mean, dtype=float).reshape(-1)
+
+    if getattr(likelihood, "cov", None) is not None:
+        scale_array = np.sqrt(np.diag(np.asarray(likelihood.cov, dtype=float)))
+    elif getattr(likelihood, "sd", None) is not None:
+        scale_array = np.asarray(likelihood.sd, dtype=float).reshape(-1)
+    else:
+        return None
+
+    if mean_array.shape[0] != no_observations:
+        return None
+    if scale_array.shape[0] == 1 and no_observations > 1:
+        scale_array = np.full((no_observations,), scale_array[0], dtype=float)
+    if scale_array.shape[0] != no_observations:
+        return None
+    if not np.all(np.isfinite(mean_array)) or not np.all(np.isfinite(scale_array)):
+        return None
+    if np.any(scale_array <= 0.0):
+        return None
+    return mean_array, scale_array
+
+
+def apply_output_normalization_from_likelihood(updater, likelihood) -> None:
+    """
+    Feeds likelihood-derived normalization statistics into ``updater``, if it asked for them.
+
+    Called once by ``SamplingFramework`` and ``run_local``. Does nothing unless the updater
+    is configured with ``output_normalization="likelihood"``. If the likelihood cannot
+    supply usable per-observation statistics, warns (``RuntimeWarning``, naming the
+    likelihood class) and leaves the updater at the identity normalization.
+    """
+    if updater is None or likelihood is None:
+        return
+    if getattr(updater, "output_normalization", "identity") != "likelihood":
+        return
+    statistics = likelihood_output_statistics(likelihood, int(getattr(updater, "no_observations", 0)))
+    if statistics is None:
+        warnings.warn(
+            f"output_normalization='likelihood' requested for {type(updater).__name__}, but "
+            f"{type(likelihood).__name__} does not provide usable per-observation statistics "
+            "(mean plus sd or cov matching no_observations); falling back to identity "
+            "normalization.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return
+    updater.set_output_normalization(*statistics)
 
 
 def closest_point_distance(par, point):

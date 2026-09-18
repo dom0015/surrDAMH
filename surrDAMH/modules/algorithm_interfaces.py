@@ -60,6 +60,10 @@ class AlgorithmConfiguration(Protocol):
       if a cleaner runtime architecture is introduced later.
     """
 
+    # no_parameters/no_observations fix the width of the output format v2 CSV blocks
+    # (``manifest.samples_columns``/``raw_data_columns``).
+    no_parameters: int
+    no_observations: int
     output_dir: str
     transform_before_saving: bool
     save_snapshots_to_file: bool

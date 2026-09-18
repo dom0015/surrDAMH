@@ -37,10 +37,12 @@ prior = surrDAMH.distributions.PriorIndependentComponents([
 observations = surrDAMH.solvers.calculate_artificial_observations(solver_spec=solver_spec, parameters=[-2, 2])
 likelihood = surrDAMH.distributions.Normal(mean=observations, sd=1.0)
 
-# neural network surrogate model:
-updater = surrDAMH.surrogates.NeuralNetworkUpdaterBasic(no_parameters=conf.no_parameters, no_observations=conf.no_observations,
-                                                      hidden_layer_sizes=(4, ), solver="adam", activation="tanh", learning_rate=1e-3,
-                                                      iterations_batch=100, loss_target=1e-6, device="cpu", verbose=False)
+# neural network surrogate model (full-batch L-BFGS preset: one batch = all accumulated
+# snapshots, no replay, fitted only by the collector's periodic train() calls):
+updater = surrDAMH.surrogates.NeuralNetworkUpdaterMinibatches(no_parameters=conf.no_parameters, no_observations=conf.no_observations,
+                                                              hidden_layer_sizes=(4, ), solver="lbfgs", activation="tanh", learning_rate=1e-3,
+                                                              iterations_batch=100, loss_target=1e-6, device="cpu", verbose=False,
+                                                              batch_size=None, replay_ratio=0.0, train_on_added_data=False)
 
 # sampling process stages:
 list_of_stages = []

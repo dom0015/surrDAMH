@@ -11,13 +11,10 @@ and the remaining processes will be used as samplers.)
 
 import os
 
-import numpy as np
-import numpy.typing as npt
 from mpi4py import MPI
 
 import surrDAMH
 from surrDAMH.modules.tools import ensure_dir
-from surrDAMH.solvers import Solver
 from surrDAMH.stages import Stage
 from wrapper import SolverTSX, observations
 
@@ -36,10 +33,12 @@ conf = surrDAMH.Configuration(output_dir="out_tsx", no_parameters=no_parameters,
                               min_snapshots_to_update=0, min_snapshots_initial=0,
                               state_dependent_approximation=False)
 
-# NN updater:
-updater = surrDAMH.surrogates.NeuralNetworkUpdaterBasic(no_parameters=conf.no_parameters, no_observations=conf.no_observations,
-                                                      hidden_layer_sizes=(48, 60), solver="adam", activation="tanh", learning_rate=1e-3,
-                                                      iterations_batch=100, loss_target=1e-6, device="cpu", verbose=False, seed=15)
+# NN updater (full-batch L-BFGS preset: one batch = all accumulated snapshots, no replay,
+# fitted only by the collector's periodic train() calls):
+updater = surrDAMH.surrogates.NeuralNetworkUpdaterMinibatches(no_parameters=conf.no_parameters, no_observations=conf.no_observations,
+                                                              hidden_layer_sizes=(48, 60), solver="lbfgs", activation="tanh", learning_rate=1e-3,
+                                                              iterations_batch=100, loss_target=1e-6, device="cpu", verbose=False, seed=15,
+                                                              batch_size=None, replay_ratio=0.0, train_on_added_data=False)
 
 # Gaussian prior distribution:
 list_of_components = []

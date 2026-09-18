@@ -7,7 +7,6 @@ Created on Tue Jul 24 13:55:07 2018
 """
 
 import numpy as np
-import numpy.matlib as matlib
 import numpy.typing as npt
 from scipy.stats import norm
 
@@ -40,11 +39,17 @@ def lhs_normal(loc:  npt.ArrayLike, scale:  npt.NDArray | float = 1.0,
 
         distances = np.zeros([n, n])
         for j in range(no_parameters):
-            temp = matlib.repmat(np.reshape(LHS_uni[:, j], (1, n)), n, 1)-matlib.repmat(np.reshape(LHS_uni[:, j], (n, 1)), 1, n)
+            # np.tile is exactly numpy.matlib.repmat for a 2-D ndarray input (repmat only adds
+            # the np.matrix-friendly reshaping of 0-D/1-D input, which is not used here); the
+            # matlib import only existed for this line and emitted a PendingDeprecationWarning.
+            temp = np.tile(np.reshape(LHS_uni[:, j], (1, n)), (n, 1))-np.tile(np.reshape(LHS_uni[:, j], (n, 1)), (1, n))
             distances = distances + np.multiply(temp, temp)
 
         quality = np.min(distances+np.eye(n)*1000)
         if quality > maxmin:
+            # G3 (finding 3.8): ``maxmin`` used to be left at 0 here, so every candidate
+            # passed the test and the LAST of the 5 was returned instead of the maximin-best.
+            maxmin = quality
             LHS_final = LHS_uni
 
     LHS_norm = norm.ppf(LHS_final, loc=loc, scale=scale)

@@ -9,10 +9,17 @@ def register_updater(cls: type[Updater]) -> type[Updater]:
     _UPDATER_REGISTRY[cls.__name__] = cls
     return cls
 
+#: File names of the two files a surrogate restart consists of, inside the state directory
+#: (``<experiment_folder>/sampling_output/``). Shared with
+#: ``surrDAMH.modules.surrogate_restart.SurrogateRestart``.
+SURROGATE_CHECKPOINT_NAME = "surrogate_checkpoint.pt"
+SURROGATE_TRAINING_DATA_NAME = "surrogate_training_data.npz"
+
+
 def surrogate_state_paths(experiment_folder: str) -> tuple[str, str]:
     sampling_output = os.path.join(experiment_folder, "sampling_output")
-    checkpoint_path = os.path.join(sampling_output, "surrogate_checkpoint.pt")
-    data_path = os.path.join(sampling_output, "surrogate_training_data.npz")
+    checkpoint_path = os.path.join(sampling_output, SURROGATE_CHECKPOINT_NAME)
+    data_path = os.path.join(sampling_output, SURROGATE_TRAINING_DATA_NAME)
     return checkpoint_path, data_path
 
 
@@ -23,7 +30,10 @@ def SurrogateReused(experiment_folder: str, load_optimizer: bool = True, **overr
     if not os.path.exists(data_path):
         raise FileNotFoundError(f"No surrogate training data found in {experiment_folder!r}")
 
-    checkpoint = torch.load(checkpoint_path, map_location="cpu")
+    # weights_only=True (S22): a checkpoint is data, not code -- refuse to unpickle
+    # arbitrary objects out of it. Everything stored by the updaters here is tensors,
+    # scalars, strings and plain containers, so nothing is lost.
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
     surrogate_type = checkpoint.get("surrogate_type")
     updater_cls = _UPDATER_REGISTRY.get(surrogate_type)
     if updater_cls is None:

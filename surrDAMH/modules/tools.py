@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+from __future__ import annotations  # keeps the surrDAMH.Configuration annotations below unevaluated at import time (no circular import via surrDAMH/__init__)
+
 import os
 import numpy as np
 import surrDAMH
@@ -37,9 +39,9 @@ def evaluate_on_a_grid(Solver, par0_grid, par1_grid, filename):
     plt.close()
     return obs_grid.reshape(len(par0_grid), len(par1_grid))
 
-# obsolete, replaced by surrDAMH.modules.test_data.TestData.generate 
 def generate_surrogate_test_data(prior_distribution, solver, n_test: int, seed: int,
                                  transform_before_surrogate: bool, conf: surrDAMH.Configuration) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Superseded by ``surrDAMH.modules.test_data.TestData.generate`` (WS5); no caller left in the tree."""
     rng_state = np.random.get_state()
     np.random.seed(seed)
     test_parameters = np.vstack([prior_distribution.rvs() for _ in range(n_test)])
@@ -59,16 +61,16 @@ def generate_surrogate_test_data(prior_distribution, solver, n_test: int, seed: 
         test_observations[i, :] = np.asarray(solver.get_observations()).reshape(-1)
     return test_parameters, surrogate_test_parameters, test_observations
 
-# obsolete, replaced by surrDAMH.modules.test_data.TestData.compute_log_posterior_and_weights
 def compute_test_log_posterior(prior_distribution, likelihood_distribution,
                                internal_parameters: np.ndarray, observations: np.ndarray):
+    """Superseded by ``TestData.compute_log_posterior_and_weights`` (WS5); no caller left in the tree."""
     log_posterior = np.zeros((internal_parameters.shape[0], 1), dtype=float)
     for i, (parameters, obs) in enumerate(zip(internal_parameters, observations)):
         log_posterior[i, 0] = prior_distribution.logpdf(parameters) + likelihood_distribution.logpdf(obs)
     return log_posterior
 
-# obsolete, replaced by surrDAMH.modules.test_data.TestData.compute_log_posterior_and_weights
 def normalized_weights_from_log_posterior(log_posterior: np.ndarray):
+    """Superseded by ``TestData.compute_log_posterior_and_weights`` (WS5); no caller left in the tree."""
     shifted = log_posterior - np.max(log_posterior)
     weights = np.exp(shifted)
     weight_sum = np.sum(weights)
@@ -78,13 +80,14 @@ def normalized_weights_from_log_posterior(log_posterior: np.ndarray):
 
 
 def surrogate_restart_state_has_snapshots(
-        load_surrogate_state: bool, 
-        load_surrogate_data_only: bool, 
+        load_surrogate_state: bool,
+        load_surrogate_data_only: bool,
         surrogate_state_dir: str,
-        surrogate_checkpoint_path: str, 
+        surrogate_checkpoint_path: str,
         surrogate_training_data_path: str,
         rank_world: int,
         ) -> bool:
+    """Superseded by ``surrDAMH.modules.surrogate_restart.SurrogateRestart`` (WS5); no caller left in the tree."""
     if not (load_surrogate_state or load_surrogate_data_only):
         return False
     if load_surrogate_state:
@@ -127,6 +130,7 @@ def load_surrogate_restart_state_if_available(
         surrogate_checkpoint_path: str,
         surrogate_training_data_path: str,
         ) -> list[np.ndarray] | None:
+    """Superseded by ``surrDAMH.modules.surrogate_restart.SurrogateRestart`` (WS5); no caller left in the tree."""
     assert updater is not None
     if not use_surrogate_restart or rank_world != conf.rank_collector:
         return None

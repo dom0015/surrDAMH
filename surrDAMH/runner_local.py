@@ -35,7 +35,7 @@ from typing import Any, List, cast
 import numpy as np
 
 from surrDAMH.configuration import Configuration
-from surrDAMH.distributions.parent import Distribution
+from surrDAMH.distributions.parent import Distribution, rvs_with_generator
 from surrDAMH.modules import algorithms as alg
 from surrDAMH.modules import lhs_normal as lhs
 from surrDAMH.modules.algorithm_interfaces_local import (LocalEvaluatorProvider,
@@ -45,9 +45,12 @@ from surrDAMH.modules.continuation import save_last_sample
 from surrDAMH.modules.manifest import (build_run_manifest, finalize_run_manifest,
                                        write_run_manifest)
 from surrDAMH.modules.proposal_builder import build_proposal
+from surrDAMH.modules.proposals import as_covariance_matrix
+from surrDAMH.modules.seeds import initial_sample_seed, stage_seed0
 from surrDAMH.solvers import Solver
 from surrDAMH.stages import Stage, stage_name
-from surrDAMH.surrogates.parent import Evaluator, Updater
+from surrDAMH.surrogates.parent import (Evaluator, Updater,
+                                        apply_output_normalization_from_likelihood)
 
 LOCAL_RANK_WORLD = 0  # a local run behaves like chain 0 of an MPI run
 
@@ -89,18 +92,24 @@ class SamplingResult:
         return self.stage_results[index]
 
 
-def _get_initial_sample(conf: Configuration, prior: Distribution) -> alg.Sample:
-    """Initial sample of the local chain; mirrors ``run_SAMPLER`` for rank 0."""
+def _get_initial_sample(conf: Configuration, prior: Distribution, no_stages: int) -> alg.Sample:
+    """Initial sample of the local chain; mirrors ``run_SAMPLER`` for rank 0.
+
+    The ``rvs``-based branches draw from the same per-rank generator as ``run_SAMPLER``
+    (``initial_sample_seed(no_stages, 0)``, G4), so chain-0 reproduction also holds for
+    ``initial_sample_type="prior"``/``"user_specified"``.
+    """
+    generator = np.random.default_rng(initial_sample_seed(no_stages, LOCAL_RANK_WORLD))
     if conf.initial_sample_type == "lhs":
         initial_samples = lhs.lhs_normal(loc=prior.mean, scale=conf.lhs_scale, n=conf.no_samplers, seed=0)
         return alg.Sample(parameters=initial_samples[LOCAL_RANK_WORLD])
     if conf.initial_sample_type == "user_specified":
         assert conf.initial_samples_distribution is not None, "if initial_sample_type == 'user_specified', initial_samples_distribution must be specified"
-        return alg.Sample(parameters=conf.initial_samples_distribution.rvs())
+        return alg.Sample(parameters=rvs_with_generator(conf.initial_samples_distribution, generator))
     if conf.initial_sample_type == "continued":
         assert conf.continued_samples is not None, "continued_samples must be populated by Configuration when initial_sample_type == 'continued'"
         return alg.Sample(parameters=conf.continued_samples[LOCAL_RANK_WORLD])
-    return alg.Sample(parameters=prior.rvs())
+    return alg.Sample(parameters=rvs_with_generator(prior, generator))
 
 
 def run_local(conf: Configuration, prior: Distribution, likelihood: Distribution, stages: List[Stage],
@@ -132,12 +141,21 @@ def run_local(conf: Configuration, prior: Distribution, likelihood: Distribution
         raise ValueError("run_local() accepts either 'updater' (surrogate is trained in process) or 'evaluator' "
                          "(fixed surrogate), not both")
 
+    # effective settings, once (WS5); same block as SamplingFramework.run() prints on rank 0
+    print(conf.describe(), flush=True)
+    for i, stage in enumerate(stages):
+        print(stage.describe(i), flush=True)
+
     observation_provider = LocalSolverAdapter(solver)
 
     surrogate_manager: LocalSurrogateManager | None = None
     evaluator_provider: LocalSurrogateManager | LocalEvaluatorProvider | None = None
     if updater is not None:
         updater.set_use_gradients(conf.use_surrogate_gradients)
+        # WS6: same hook as SamplingFramework -- an updater configured with
+        # output_normalization="likelihood" takes its statistics from the likelihood here,
+        # before any snapshot is added.
+        apply_output_normalization_from_likelihood(updater, likelihood)
         surrogate_manager = LocalSurrogateManager(
             updater=updater,
             min_snapshots_initial=conf.min_snapshots_initial,
@@ -148,15 +166,17 @@ def run_local(conf: Configuration, prior: Distribution, likelihood: Distribution
     elif evaluator is not None:
         evaluator_provider = LocalEvaluatorProvider(evaluator)
 
-    initial_sample = _get_initial_sample(conf, prior)
+    no_stages = len(stages)
+    initial_sample = _get_initial_sample(conf, prior, no_stages)
     print("Local sampler - initial sample:", initial_sample.parameters, flush=True)
 
     result = SamplingResult()
     proposal_cov_adaptive = None
-    no_stages = len(stages)
+    # A30 (see AlgorithmBase's docstring); set exactly as in process_SAMPLER
+    initial_sample_is_carried_over = False
 
     for i, stage in enumerate(stages):
-        seed0 = 10*(no_stages*LOCAL_RANK_WORLD + i)
+        seed0 = stage_seed0(no_stages, LOCAL_RANK_WORLD, i)
 
         proposal = build_proposal(stage=stage, conf=conf, prior=prior, seed=seed0+1,
                                   prev_cov=proposal_cov_adaptive, stage_index=i)
@@ -188,17 +208,23 @@ def run_local(conf: Configuration, prior: Distribution, likelihood: Distribution
                                  likelihood=likelihood,
                                  initial_sample=initial_sample,
                                  rank_world=LOCAL_RANK_WORLD,
-                                 seed=seed0+2)
+                                 seed=seed0+2,
+                                 initial_sample_is_carried_over=initial_sample_is_carried_over)
         alg_instance.run()
 
-        # proposal covariance for the next stage (single chain, no reduction needed):
+        # proposal covariance for the next stage (single chain, no reduction needed, but the
+        # same G2 normalisation as process_SAMPLER so that the carried covariance has the same
+        # shape -- and hence the same RNG stream in the next stage -- as MPI chain 0):
         if stage.adaptive:
-            proposal_cov_adaptive = np.array(proposal.sd_or_cov, copy=True)
+            proposal_cov_adaptive = as_covariance_matrix(proposal.sd_or_cov, conf.no_parameters)
 
         # initial sample for the next stage (after a use_only_surrogate stage its surrogate
         # observations are dropped so that the next stage re-evaluates it exactly, finding A11):
         if not stage.is_excluded:
             initial_sample = alg.sample_carried_to_next_stage(alg_instance.current, stage)
+        # A30: the sample handed to the next stage was written by this stage's samples file iff
+        # this stage wrote one (same rule as process_SAMPLER, including the is_excluded case)
+        initial_sample_is_carried_over = stage.save_to_file
         # persist this stage's last sample so another run (local or MPI) can continue from it,
         # exactly as run_SAMPLER does for every rank:
         save_last_sample(conf, stage.name, LOCAL_RANK_WORLD, alg_instance.current.parameters)
