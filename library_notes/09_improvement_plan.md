@@ -33,7 +33,9 @@ parallel. Finding IDs refer to `06_findings_consolidated.md` (tier numbers) and 
    surrogate policy, output format version, git commit.
 5. **Fail loudly.** No silent hangs, no silently ignored settings, no swallowed exceptions.
 6. **Unverified options are labelled as such** in code, warnings and docs, and excluded from
-   tests until their theory has been checked (currently: `state_dependent_approximation=True`).
+   tests until their theory has been checked — or removed once the theory says they cannot be
+   made correct (as `state_dependent_approximation` was, 2026-09-18; no unverified option is
+   currently labelled).
 
 ## 1. Workstreams
 
@@ -43,14 +45,14 @@ parallel. Finding IDs refer to `06_findings_consolidated.md` (tier numbers) and 
 | WS | Status | Remaining (if PARTIAL) |
 |---|---|---|
 | WS0 Stabilise | **DONE** | — |
-| WS1 Test infrastructure | **DONE** (CI stub explicitly declined, §7b) | — |
-| WS2 Standalone non-MPI runner | **DONE** | — |
+| WS1 Test infrastructure | **DONE** (CI stub explicitly declined, §7b); ⚠ correction 2026-09-18: only V1–V3d exist, not "V1–V3, V5–V8" as this table previously said — V4/V5/V6/V8 were never written, see `07_testing_plan.md` | — |
+| WS2 Standalone non-MPI runner | **PARTIAL** — ⚠ downgraded 2026-09-18, was marked DONE | `Configuration` is still not an MPI-free dataclass: `configuration.py` imports `mpi4py.MPI` and calls it in `__post_init__`, so `import surrDAMH.modules.algorithms` still loads `mpi4py` transitively (verified with `python -X importtime`). Only the "runs without `mpiexec`" half of the acceptance criterion holds; the "no `mpi4py` import" half does not. Not fixed because nothing in the plan depended on the literal import being absent — `run_local()` and the local adapters all work regardless. |
 | WS3 DAMH kernel correctness | **DONE** (decisions 1 and 2 deliberately deferred to §4, not omissions) | — |
 | WS4 Reproducibility | **PARTIAL** | eliminate the remaining global-RNG touches (`torch.manual_seed` in `torch_perceptron_minibatches.py:26`; the save/restore-global-state pattern in `modules/tools.py`/`modules/test_data.py`) |
 | WS5 Sampling-script structure | **DONE** (2026-09-17, stated in-file below) | — |
-| WS6 Surrogates | **PARTIAL** | RBF de-duplication/`neighbors` cap/shift-fallback removal (3.3); polynomial `StandardScaler`+`Ridge`+minimum-snapshot rule (3.10); surrogate-quality ESS metric (S10) |
-| WS7 Proposals and gradients | **PARTIAL** | block-group gradients at the full current state (efficiency, not correctness); surrogate refresh for Hamiltonian proposals inside MH stages (efficiency); adaptive-covariance shrinkage/regularisation for `no_parameters > period` |
-| WS8 MPI robustness | **PARTIAL** | `MPI.TAG_UB` start-up check (2.11); cross-rank `Configuration` consistency broadcast+assert (2.9); two-step evaluator transfer replacing the 1 GiB `irecv` buffer (4.1); batched snapshot `vstack` (4.3); collector busy-wait sleep (4.2) |
+| WS6 Surrogates | **PARTIAL** | Classical hardening done 2026-09-18 (RBF de-duplication/`neighbors` cap/shift-fallback removal, 3.3; polynomial `StandardScaler`+`Ridge`+minimum-snapshot rule, 3.10); ESS metric (S10) done 2026-09-18. Left: NN input normalisation (`normalize_inputs`) and the float64 module round-trip per gradient call (S11) |
+| WS7 Proposals and gradients | **PARTIAL** | adaptive-covariance shrinkage/regularisation for `no_parameters > period` (3.7) — the only item left; block-group gradients at the full current state and the surrogate refresh for Hamiltonian proposals inside MH stages are **done 2026-09-18** |
+| WS8 MPI robustness | **PARTIAL** | two-step evaluator transfer replacing the 1 GiB `irecv` buffer (4.1); batched snapshot `vstack` (4.3). Done 2026-09-18: `MPI.TAG_UB` start-up check (2.11), cross-rank `Configuration` consistency broadcast+assert (2.9), collector busy-wait sleep (4.2) |
 | WS9 Output format and post-processing | **DONE** (bullets 1–6 all complete — see the corrected status note in WS9 below) | — |
 | WS10 Dead code and duplication removal | **DONE** (author decided "do not delete dead code", §7b; everything deletable was archived) | — |
 | WS11 Documentation | **DONE** | — |
@@ -64,6 +66,7 @@ fields (G1) ✔, normalise the `Allreduce` shape (G2) ✔, fix LHS selection (G3
 block sub-proposals (G5) ✔, line-buffer CSVs (G6) ✔. G7 is decided: default
 `state_dependent_approximation=False`; setting it to `True` emits a warning that the option is
 not verified and must not be used unless the user knows what they are doing (08 §B8) ✔.
+(G7 superseded 2026-09-18, decision 26: the field and its warning were removed.)
 
 Deliverable: `import surrDAMH` works ✔ (re-verified 2026-09-17); `minimal_example.py` runs ✔; no known start-up crash or
 silent-hang configuration remains without a diagnostic ✔ (fail-loud abort, WS8).
@@ -98,7 +101,7 @@ K=1/5/20).
 
 ### WS2 — Standalone non-MPI runner (3–5 days)
 
-**Status: DONE.**
+**Status: PARTIAL** (⚠ corrected 2026-09-18, was DONE — see the status-table note above).
 
 The adapters already exist (`algorithm_interfaces_local.py`); what is missing is a runner and an
 MPI-free configuration.
@@ -115,9 +118,14 @@ MPI-free configuration.
 - Single-chain semantics documented: seeds identical to rank 0 of an MPI run, so a local run
   reproduces chain 0 of an MPI run with the same configuration (test this).
 
-All four bullets ✔ — `surrDAMH/runner_local.py::run_local`, shared `build_proposal()`
+Three of four bullets ✔ — `surrDAMH/runner_local.py::run_local`, shared `build_proposal()`
 (`modules/proposal_builder.py`), `evaluator_is_available()` fixed (`10_manual_review_notes.md`
-§2.1), MPI I2 test asserts bit-identity with `run_local()`.
+§2.1), MPI I2 test asserts bit-identity with `run_local()`. ✘ The "`Configuration` split into
+an MPI-free dataclass ... never imports `mpi4py`" bullet was **not done**: `Configuration`
+still imports and calls `mpi4py.MPI` in `__post_init__`. It happens not to matter in practice
+(`mpi4py` auto-inits a size-1 `COMM_WORLD` under plain `python`, so `Configuration` already
+works standalone with `use_collector=False, use_solvers_pool=False` — this is why the runner
+and every local-mode test still work), which is presumably why nobody noticed it wasn't done.
 
 Acceptance: `toy_examples/one_process_only.py` runs with `python` (no `mpiexec`, no mpi4py
 import) ✔; validations run in pytest in well under a minute each ✔ (73.0 s total for 10 tests).
@@ -131,7 +139,8 @@ import) ✔; validations run in pytest in well under a minute each ✔ (73.0 s t
   the correction recomputed at the end as `log L̃_final(y) − log L̃_final(x)`. ✔ refresh moved
   before the loop; ✘ no `refresh_within_subchain` flag added (CLAUDE.md: no feature flags by
   default; author did not ask for one, `10_manual_review_notes.md` §2.5 — tracked as §4 future work item 5).
-- `state_dependent_approximation`: **no algorithmic change in this plan** (decision 1). Keep the
+- `state_dependent_approximation`: **no algorithmic change in this plan** (decision 1; superseded
+  2026-09-18 by decision 26 — the field was removed outright). Keep the
   current code, default `False`, warn on `True`, document in `Configuration` and `docs/concepts.md`
   that the `True` path is unverified for `subchain_max_length > 1` (finding 1.1). Theory check and
   fix go to §4 Future work. ✔ (deferred as planned)
@@ -171,10 +180,13 @@ which is known to affect any tested configuration's reproducibility today.
   sample G4, block sub-proposals G5, `Distribution.rvs(generator=...)`) is seeded from it,
   recorded in the manifest; the mechanism is `np.random.RandomState(seed)` per object, not a
   `SeedSequence.spawn()` tree, but is equally deterministic and tested. ✘ `torch.manual_seed(seed)`
-  (`torch_perceptron_minibatches.py:26`) still touches torch's *global* RNG (seeded from the
-  tree, but not scoped to the updater); ✘ `modules/tools.py` and `modules/test_data.py` still
-  save/restore the global `np.random` state (`np.random.get_state/seed/set_state`) around a
-  synthetic draw instead of using an owned generator. Neither is known to be exercised
+  (`torch_perceptron_minibatches.py:27`, ⚠ corrected 2026-09-18, was cited as `:26`) still
+  touches torch's *global* RNG (seeded from the tree, but not scoped to the updater); ✘
+  `modules/tools.py` and `modules/test_data.py` still save/restore the global `np.random` state
+  (`np.random.get_state/seed/set_state`) around a synthetic draw instead of using an owned
+  generator; ✘ **not previously listed** (added 2026-09-18): `initial_training`
+  (`torch_perceptron_minibatches.py:661`) also draws its synthetic rows via bare
+  `np.random.randn(...)`, the global RNG. None of these three is known to be exercised
   concurrently with anything that would make this non-reproducible in practice.
 - Record a machine-readable run manifest `sampling_output/run_manifest.json`: full `Configuration`
   and `Stage` list, seeds, surrogate class and hyper-parameters, `output_format_version`, git
@@ -240,9 +252,12 @@ runs end-to-end on the Gaussian toy.
 
 ### WS6 — Surrogates (5–6 days, ∥ with WS5)
 
-**Status: PARTIAL.** The evaluator contract, torch merge/deletion and weighting/normalisation
-policy are done and tested (`10_manual_review_notes.md` §2.16); the classical-surrogate
-hardening and the surrogate-quality ESS metric are not.
+**Status: PARTIAL.** The evaluator contract, torch merge/deletion, weighting/normalisation
+policy, the surrogate-quality ESS metric and (both 2026-09-18) the classical-surrogate
+hardening are done and tested (`10_manual_review_notes.md` §2.16). **Remaining**: the two
+torch-side items only — input-side normalisation (`normalize_inputs`, never added) and the
+float64 round-trip of the shared module on every gradient call (S11). Nothing classical is
+left open.
 
 - **Torch**: merge `torch_perceptron.py` into `torch_perceptron_minibatches.py`
   (single module; `PyTorchMLP`, `PyTorchNNEvaluator`, checkpoint mix-in). **Delete
@@ -265,25 +280,39 @@ hardening and the surrogate-quality ESS metric are not.
   `"multiplicity"` as the second option, whose docstring and start-up log state clearly that
   rejected proposals (weight 0) are then **not used** for training. The collector keeps sending
   multiplicity weights; the updater applies the policy. ✔ shipped as `weighting=` (renamed from
-  the drafted `snapshot_weighting`) on the base `Updater` class, applied to all five surrogates.
+  the drafted `snapshot_weighting`) on the base `Updater` class, applied to all four surrogates
+  (⚠ corrected 2026-09-18: "five" was stale — `NeuralNetworkUpdaterBasic` was deleted by this
+  same workstream, leaving polynomial/RBF/kd-tree/minibatches-NN).
 - `initial_training` (3.4): train on synthetic rows without storing them, or drop the feature;
   never persist synthetic rows as snapshots. ✔
 - **Classical**: kd-tree zero-distance guard ✔; RBF de-duplication + `neighbors` cap + drop the
-  shift-fallback ✘ **not done** (finding 3.3, open, deferred H4); polynomial
-  `StandardScaler → PolynomialFeatures → Ridge` and a minimum-snapshot rule ✘ **not done**
-  (finding 3.10 — only the weighting half landed: `PolynomialSklearnUpdater` now supports
-  `sample_weight=`, but the pipeline is still unscaled `PolynomialFeatures → LinearRegression`);
+  shift-fallback ✔ **done 2026-09-18** (finding 3.3: `deduplicate_snapshots()` before every fit,
+  `max_neighbors=50` → local fit above 50 snapshots, shifted-copy fallback deleted in favour of a
+  smoothing ladder); polynomial `StandardScaler → PolynomialFeatures → Ridge` and a
+  minimum-snapshot rule ✔ **done 2026-09-18** (finding 3.10: `alpha=1e-6`, degree `d` only once
+  `num_terms(d) < num_snapshots`, so a single snapshot gives a constant fit; the weighting half
+  had landed earlier and is preserved, now as `ridge__sample_weight`);
   all three honour or explicitly ignore `weights` (document) ✔ (RBF/kd-tree declare
   `supports_sample_weights = False` and document it; polynomial documents + implements it).
+  Both changes alter the exact numbers of every RBF/polynomial run (CHANGELOG "Behaviour
+  changes"); DAMH's correction is exact whatever the surrogate returns, so they change
+  efficiency and the sample stream, not the sampled posterior.
 - **Gradients for HMC**: avoid mutating the shared module on every call (S11) — hold a float64
-  copy or compute in float32 with a documented accuracy note ✘ **not verified changed**; remove
+  copy or compute in float32 with a documented accuracy note ✘ **confirmed still open**
+  (⚠ corrected 2026-09-18, was "not verified changed"): `torch_perceptron_minibatches.py`'s
+  `jacobian`/`vjp` still call `self.model.double()`/`.float()` on every gradient evaluation
+  (lines 128, 142, 162, 178); remove
   the dead `NotImplementedError` fallback in `algorithms.py:287-290` ✘ **still present**
   (`algorithms.py:404-405`, tracked in `13_dead_code_report.md` (d), kept under the no-delete
   rule).
 - Surrogate quality monitoring: report ESS of the posterior weights in `surrogate_quality_test.csv`
-  (S10). ✘ **not done** — `grep -n "ESS\|effective_sample_size" surrDAMH/process_COLLECTOR.py`
-  finds nothing; the columns are unchanged (`snapshots_total, batch_size, rmse, max_abs_error`
-  / the `_test` variant's 8 columns per `11_output_format_v2_spec.md` §1).
+  (S10). ✔ **done 2026-09-18**: `_compute_surrogate_quality_metrics` now also returns
+  `weighted_ess` (Kish's formula, `1/sum(w_i^2)` on the normalized weights; equals `n_test`
+  when no weights are supplied), written as a 9th CSV column. Additive-only: existing columns
+  and their values are unchanged; readers select columns by name
+  (`plots.py::plot_surrogate_quality_test*`), so nothing else needed updating except one
+  hardcoded header list in `tests/mpi/test_mpi_surrogate.py` and `docs/outputs.md`.
+  `./run_tests.sh unit` unchanged (317 passed, 1 skipped).
 - `modules/Gaussian_process.py`: keep as a low-priority optional component (decision 7); fix the
   vector-`std` bug (08 §C5), add a docstring and a symmetry unit test, no further investment.
   ✔ all sub-items done (finding 1.6).
@@ -299,34 +328,50 @@ a test documents the difference between `uniform` and `multiplicity` ✔
 
 ### WS7 — Proposals and gradients (3 days, ∥)
 
-**Status: PARTIAL.** The fail-fast guards, `BlockProposal` seeding/adaptive-rejection and the
-pCN/`HamiltonianInfinite` decisions are done; two efficiency items and the covariance
-regularisation are explicitly left, see the ✘ rows.
+**Status: PARTIAL.** The fail-fast guards, `BlockProposal` seeding/adaptive-rejection, the two
+gradient-efficiency items (done 2026-09-18) and the pCN/`HamiltonianInfinite` decisions are
+done; only the adaptive-covariance regularisation is left, see the ✘ row.
 
 - Enforce `proposal.needs_gradients ⇒ conf.use_surrogate_gradients` ✔ (WS7, for every proposal
   type including inside a `BlockProposal`), and refresh the surrogate
-  for Hamiltonian proposals inside **MH** stages the same way DAMH does. ✘ **explicitly not
-  done** — an efficiency item, not correctness (`10_manual_review_notes.md` §2.9 "Explicitly not done").
+  for Hamiltonian proposals inside **MH** stages the same way DAMH does ✔ **done 2026-09-18**
+  (author-approved): `Stage.surrogate_model_updates` is tri-state (`None` = the stage type's
+  historical default) and may be set `True` on an MH stage whose proposal needs gradients;
+  `Algorithm_MH.run` then polls once per iteration via the now-shared
+  `AlgorithmBase._refresh_surrogate_evaluator_if_needed` and re-installs the gradient functions.
+  Opt-in only — MH stages that do not set it keep one evaluator for the whole stage. Tests:
+  `tests/unit/test_config_stages.py` (field semantics), `tests/unit/test_algorithms_local.py`
+  (refresh / no refresh), `tests/mpi/test_mpi_posterior.py::test_b10_…` (both stages within 4 SE
+  of the closed form, ≥ 2 refreshes vs exactly 0 in the same run).
 - `BlockProposal`: per-rank seeding (WS4) ✔ (delivered as G5, `Proposal.reseed()`), and evaluate
-  group gradients at the **full current state** instead of zeros for the other groups (the TODO
-  at `proposals.py:402` admits this is wrong for nonlinear models) ✘ **explicitly not done**
-  (efficiency, not correctness — "any gradient field gives a valid reversible HMC proposal", same
-  §2.9 note); `sd_or_cov` for adaptive averaging or forbid `adaptive=True` ✔ **forbidden**
+  group gradients at the **full current state** instead of zeros for the other groups ✔ **done
+  2026-09-18** (author-approved): the block tracks `current_sample` in `propose_sample` and the
+  wrapped gradient functions fill the inactive groups from it; bit-identical for a separable
+  model, different (and better) for a coupled one, both pinned in `tests/unit/test_proposals.py`;
+  `sd_or_cov` for adaptive averaging or forbid `adaptive=True` ✔ **forbidden**
   instead — `build_proposal` raises `ValueError` for `proposal_type="block"` + `adaptive=True` (G2).
 - Adaptive RW: bounded history (`adaptive_sample_limit`) ✔ (G1, default `None` = unbounded, i.e.
   unchanged unless the stage opts in), covariance shrinkage/regularisation so
   `no_parameters > period` is not singular (3.7) ✘ **explicitly not done**, NaN-safe weights ✔
   (WS7, degenerate periods skip adaptation + warn instead of crashing), `period` configurable —
   already was (`GaussRandomWalk_adaptive.__init__`'s `period` argument; not newly added).
-- `HamiltonianInfinite`: **decision deferred** (decision 8). Document the current semantics
-  (`sd_or_cov` is the mass matrix; the rotation is prior-preserving only for internal prior
-  covariance `I`, and remains a valid reversible volume-preserving proposal otherwise) in the class
-  docstring and `docs/concepts.md`; no code change. ✔ (documented, no code change, as decided)
+- `HamiltonianInfinite`: **decided 2026-09-18, keep the mass-matrix contract permanently, no
+  behaviour change** (an analysis re-derived the rotation math and confirmed it is exactly what
+  was documented, and found a stronger true statement than either the docstring or the test
+  previously claimed: energy is preserved exactly for ANY positive-definite mass, not only
+  `sd_or_cov==1`). Applied: the class docstring (`proposals.py`) now states the general
+  positive-definite-mass result and the permanent mass-vs-prior-covariance contract; the
+  `Hamiltonian` class's dangling `docs/concepts.md` pointer is fixed to `docs/stages.md`;
+  `tests/unit/test_proposals.py`'s energy-preservation test is parametrized over a scalar,
+  diagonal-vector and full-SPD mass instead of only `1.0` (all three pass).
+  ✔ (documented, no code change, as decided)
 - pCN: assert Gaussian internal prior and `0 < β ≤ 1`. ✔ both (WS7 `build_proposal` guard; WS0
   §B7 `PCN.__init__` assertion).
 
-Acceptance: proposal unit tests 4–10 in `07` pass ✔; V5/V6 validations pass ✔ (part of the 10
-`tests/validation` passes, re-run 2026-09-17).
+Acceptance: proposal unit tests 4–10 in `07` pass ✔; ⚠ corrected 2026-09-18: "V5/V6 validations
+pass" was **false** — `tests/validation/` has only V1–V3d, no V5 or V6 test exists (see
+`07_testing_plan.md`). The 10-test `tests/validation` count this line cited is V1/V2/V3/V3b/V3c/V3d
+plus a few from other files, not V5/V6.
 
 ### WS8 — MPI robustness (4–5 days, ∥ with WS6)
 
@@ -344,8 +389,14 @@ broadcast) are open.
   the raw branches in `communication.py`, `process_SOLVER.py`, `process_CHILD.py` are deleted.
   One protocol; `solver_tag` always in the payload (fixes M6 and the dtype hazards by
   construction). `max_buffer_size` stays — it is only the evaluator `irecv` buffer.
-- Configuration consistency: rank 0 broadcasts the posterior-relevant fields; every rank asserts
-  equality (2.9). ✘ **not done** — `grep -n Bcast surrDAMH/core.py` finds no such check.
+- ~~Configuration consistency: rank 0 broadcasts the posterior-relevant fields; every rank asserts
+  equality (2.9)~~ — **DONE 2026-09-18**: `communication.check_configuration_consistency()`, first
+  call in `SamplingFramework.run()` (inside `_run_role`, so a mismatch aborts the job with a
+  traceback). Compares the **requested** values of `POSTERIOR_AFFECTING_FIELDS`
+  (snapshotted in `Configuration.__post_init__`), which sidesteps the legitimately per-rank
+  *effective* `use_surrogate_gradients`; MPI-layout fields excluded (identical by construction).
+  Tests: `tests/mpi/test_mpi_config_consistency.py`, `tests/unit/test_communication.py`.
+  No-op for `run_local()` (single process, no MPI call added).
 - Evaluator transfer: two-step (size message, then exact-size receive) instead of a 1 GiB
   `irecv` buffer (4.1) ✘ **not done**, `max_buffer_size` (1 GiB default) is unchanged by explicit
   choice (see the WS8 raw-path note above); consider sending `state_dict` + hyper-parameters
@@ -358,8 +409,11 @@ broadcast) are open.
   (the request counter is the tag, not a status code, since the raw-path removal); check
   `MPI.TAG_UB` at start-up ✘ **not done** (`grep -rn TAG_UB surrDAMH/` → no hits).
 - Fix `initial_snapshots` double count (2.8) ✔ (`10_manual_review_notes.md` §2.12); complete the
-  last `Isend`/`Cancel` handling (2.10) — **likely fixed**, `communication.py` now `.Wait()`s
-  before `.Cancel()` on the shutdown path, but no dedicated protocol test pins it.
+  last `Isend`/`Cancel` handling (2.10) — **partial, ⚠ corrected 2026-09-18** (was "likely
+  fixed"): the collector-side `TAG_EVALUATOR_OBJECT` send (`send_evaluator`/`terminate`) is now
+  waited-on before shutdown, but the sampler-side `TAG_UPDATE` `Isend`
+  (`get_evaluator_and_terminate`) is still abandoned without `.Wait()`
+  (`communication.py:109-111`). No dedicated protocol test pins either half (I12).
 
 Acceptance: deadlock regression tests I3–I11 pass under `timeout` ✔ (`./run_tests.sh mpi` → 32
 passed, re-run 2026-09-17); a deliberately raised exception on any rank terminates the job within
@@ -372,14 +426,27 @@ acceptance criterion is listed as "not done" in `10_manual_review_notes.md` §6.
 **Status: DONE**, with one narrow item left inside bullet 5 (re-checked 2026-09-17 against the
 current tree, correcting the note below written earlier the same day). Bullets 1–5 **done**
 (WS9a = output format v2, WS9b = the split and P1/P3/P5/P6/P7/P8/P10; see
-`10_manual_review_notes.md` §2.14 and §2.15). Still open in bullet 5: `write_report` stage
-selection **by name** (it still takes indices) and listing the *warnings raised during the run*
-(the manifest records `unverified_options`, which the report now shows, but no warning log is
-collected yet) — genuinely open, tracked in the WS9 status table above and in §8. **Bullet 6 is
+`10_manual_review_notes.md` §2.14 and §2.15). Bullet 5's `write_report` stage selection **by
+name** is now **done** (2026-09-18): `Samples._resolve_stages` (and therefore every method
+built on it, incl. `write_report`/`html_report_extended`) accepts stage names as produced by
+`stages.stage_name()` mixed in with the existing positional indices; unit tests
+`TestStagesToDispByName` in `tests/unit/test_post_processing.py`. Still open in bullet 5:
+listing the *warnings raised during the run* (the manifest records `unverified_options`, which
+the report now shows, but no warning log is collected yet) — genuinely open, tracked in the WS9
+status table above and in §8. **Bullet 6 is
 also done**, contrary to the "needs author go-ahead" note this paragraph carried earlier the
 same day: `summarize_tsx2_results.py` and the three `analyze_tsx2_*.py` scripts are confirmed
 **not** at the repo root any more (`ls` 2026-09-17) — they now live under
 `TSX_experiments_archived/`, alongside the rest of the WS10 archiving.
+
+**Two follow-on additions after this workstream closed (2026-09-18, not separate workstreams):**
+`write_report(field_statistics_max_samples=...)` (default `None` = old behaviour; caps the
+report's field-statistics section to a Monte-Carlo estimate over a sample instead of every
+decompressed state — fixed a 37-minute report on a 6.5-minute GRF run, see
+`14_grf_validation_2026-09-17.md` finding F1); and the `post_processing/` package's four
+`Samples*` classes were turned from independent mixins into the linear chain
+`SamplesStatistics(SamplesBase) → SamplesPlots → SamplesReports → Samples` (purely structural,
+fixed spurious `reportAttributeAccessIssue` pyright warnings, no behaviour change).
 
 - **Output format v2** (decision 6, approved, **no converter**): header row in every CSV;
   rectangular `raw_data` (fixed observation block, NaN-filled) with an explicit `state_type`
@@ -394,8 +461,9 @@ same day: `summarize_tsx2_results.py` and the three `analyze_tsx2_*.py` scripts 
   `finally`.
 - `find_best_fits`: use `rank_best_fit_candidates` (the tested function) or delete it; tests with
   synthetic CSVs for all ranking modes.
-- `write_report`: stage selection by name; a report section listing the effective configuration
-  (from the manifest) and warnings raised during the run.
+- `write_report`: stage selection by name (**done** 2026-09-18); a report section listing the
+  effective configuration (from the manifest, done) and warnings raised during the run (still
+  open).
 - `summary.csv` column names: keep the new short names; delete `summarize_tsx2_results.py` and the
   `analyze_tsx2_*.py` scripts at the root (they belong to the archived experiments) or move them
   into `TSX_experiments_archived/`.
@@ -430,7 +498,13 @@ Done on 2026-09-13: `TSX_complete_experiment_1..4`, `sampling_test_Hamilton`, an
 | `modules/Gaussian_process.py` | keep, low priority (decision 7) |
 | `algorithm_interfaces*.py` TODO banners | shorten once WS2 makes the design real |
 
-**Row-by-row resolution (2026-09-17)**: row 1 (`temptemptemp` etc.) — deleted, WS0. Row 2
+**Row-by-row resolution (2026-09-17, corrected 2026-09-18)**: row 1 (`temptemptemp`, commented
+debug blocks, `evaluate_on_a_grid` import, `Algorithm_PARENT`, `if False and …`) — deleted, WS0.
+⚠ **`TAG_READY_TO_RECEIVE`/`TAG_DATA` were NOT deleted** as this row originally claimed —
+`grep -n "TAG_READY_TO_RECEIVE\|TAG_DATA" surrDAMH/modules/communication.py:16-17` still finds
+both constants, unreferenced. `CHANGELOG.md` correctly lists them under "kept and documented as
+unused" (the no-delete decision, 19), so this row contradicted the project's own changelog;
+corrected here. Row 2
 (`Stage.proposal` etc.) — **kept**, documented as unused/not-read (decided, no-delete rule); the
 `run_COLLECTOR(surrogate_delayed_init_data=…)` param in that row is also still present, same
 decision. Row 3 (`tools.*` test-data/restart helpers) — **kept**, marked "Superseded by …"
@@ -485,24 +559,11 @@ recording the posterior-affecting changes of this refactor (default of
 `state_dependent_approximation`, sub-chain surrogate freeze, seeds, weighting default, format v2,
 removed raw path and Basic updater).
 
-## 2. Sequencing
-
-| Week | Workstreams | Milestone |
-|---|---|---|
-| 1 | WS0, WS1 (skeleton), WS2 | importable, local runner, unit tests + DAMH-equals-MH validation in place |
-| 2 | WS3, WS4, WS7 | kernel correct for `subchain_max_length > 1` (state-dependent off); reproducible seeds; proposals hardened |
-| 3 | WS8, WS6 (start), WS9 (format v2 spec) | no known hang; one MPI protocol; output format v2 specified |
-| 4 | WS6 (finish), WS9 | surrogates unified and tested; post-processing split and tested |
-| 5 | WS5, WS10 | template script; `sampling_diffusion_grf.py` re-expressed; dead code gone |
-| 6 | WS11, buffer | docs; changelog; the toy examples re-run on the new code |
-
-Total ≈ 30 working days if serial; ≈ 4 weeks with the ∥ items overlapped.
-
 ## 3. Decisions recorded (2026-09-13)
 
 | # | Topic | Decision | Where applied |
 |---|---|---|---|
-| 1 | `state_dependent_approximation` | Default `False`. `True` is marked **non-verified**: warning at start-up ("do not use unless you know what you are doing"), documented as unverified, excluded from tests. Theory check → §4. | WS0 (08 §B8/G7), WS3, WS11 |
+| 1 | `state_dependent_approximation` | ~~Default `False`, `True` marked non-verified, theory check → §4.~~ **Superseded 2026-09-18: the field is removed** (see §3 round 4 decision 26). | WS0 (08 §B8/G7), WS3, WS11 |
 | 2 | Adaptive target in DAMH | **Deferred.** Keep current behaviour, document it as "second-stage acceptance rate". | WS3, WS11, §4 |
 | 3 | Snapshot weighting for surrogate training | `"uniform"` default; `"multiplicity"` as option with an explicit note that rejected samples are then not utilised. | WS6 |
 | 4 | `NeuralNetworkUpdaterBasic` | Delete. | WS6, WS10 |
@@ -530,12 +591,26 @@ Total ≈ 30 working days if serial; ≈ 4 weeks with the ∥ items overlapped.
 | 21 | 2026-09-17 | `pytest` default scope | `addopts = -m "not mpi"` added to `pytest.ini`: bare `pytest` runs unit+validation; `./run_tests.sh mpi` / `pytest -m mpi` for the MPI suite. | WS1 |
 | 22 | 2026-09-17 | `torch.set_num_threads` | Add nothing — measured under this container's launcher (MPICH/Hydra) every rank already runs with 1 torch thread; re-measure if the production launcher differs. | WS4 §2.9 |
 
+### Decisions recorded 2026-09-18 (round 3)
+
+| # | Topic | Decision | Where applied |
+|---|---|---|---|
+| 23 | `transformations.*_to_normal`, `beta_to_uniform` (dead-code item, `13_dead_code_report.md` §c) | **Keep**, as documented public helpers. No code change. | — |
+| 24 | Legacy (non-extended) report path — `Samples.pdf_report` | **Delete.** Zero callers (confirmed: the toy example that used to call the sibling `html_report` was archived in WS10, and nothing ever called `pdf_report`). Removed from `surrDAMH/post_processing/html_report.py`; `./run_tests.sh unit` unchanged (315 passed, 1 skipped). `html_report`, `load_snapshots` and `_load_snapshot_parameters_and_observations` are **not** part of this decision — asked separately, see `10_manual_review_notes.md` §8. | `surrDAMH/post_processing/html_report.py` |
+| 25 | Write-only flags (`Updater.supports_*_persistence`, `_request_pending`, `snapshot_count_since_last_update`, `communication.PendingRequest.active`/`max_requests`) | **Track as a low-priority backlog item, not a decision to make now.** No investigation of original intent, no code change. | tracked in `10_manual_review_notes.md` §8 |
+
+### Decisions recorded 2026-09-18 (round 4)
+
+| # | Topic | Decision | Where applied |
+|---|---|---|---|
+| 26 | `state_dependent_approximation` (finding 1.1, supersedes decision 1) | **Remove the feature**, do not fix or keep deferred. The theory check asked for in §4 item 1 was done and came out negative twice over: (a) for `subchain_max_length > 1` the code also has a plain arithmetic bug (the sub-chain's "current" likelihood keeps using `G(x₀)` instead of being re-derived at the new position, so the correction does not telescope); (b) more fundamentally, delayed acceptance needs the cheap density to be **fixed and state-independent**, so re-centring the surrogate on the current outer state breaks `Q(y→x)/Q(x→y) = pi~(y)/pi~(x)` at *every* `subchain_max_length`, `1` included — the earlier "K=1 is fine" claim in the docs was itself wrong. No sound repair within this design (re-shifting per intermediate step, or shifting only the first/last step, either collapse to the same bug or need quantities the algorithm never computes). Breaking removal, no shim (no-compat rule). Behaviour-neutral: default was `False`, no maintained example/test/validation run used `True`. | `configuration.py`, `modules/algorithms.py`, `modules/algorithm_interfaces.py`, `modules/manifest.py`, `stages.py`, `docs/`, `CHANGELOG.md`, `tests/unit/`, `toy_examples/{template_experiment,sampling_TSX}.py` |
+
 ## 4. Future work (after this plan; each needs a careful theory check or a decision)
 
-1. **`state_dependent_approximation=True` with `subchain_max_length > 1`**: derive the correct
-   shifted sub-chain kernel (finding 1.1), decide whether the shift should use `G(x₀) − G̃(x₀)` for
-   all sub-chain states, implement, and validate with V4 before removing the "non-verified" label.
-   **Untouched** — still the recommended default (`False`) with the start-up warning on `True`.
+1. ~~**`state_dependent_approximation=True` with `subchain_max_length > 1`**: derive the correct
+   shifted sub-chain kernel.~~ **Closed 2026-09-18 by removal** (decision 26): the theory check was
+   done, the shifted kernel is unsound at every `subchain_max_length`, and the field, its warning
+   and the shift branch are gone. V4 is dropped — there is nothing left to validate.
 2. **Adaptive proposal target in DAMH** (decision 2): second-stage rate vs overall rate; pick one,
    implement, document, and re-tune `adaptive_target_rate` defaults accordingly. **Untouched** —
    `Stage.adaptive_target_rate`'s docstring documents today's "second-stage rate" meaning.
@@ -553,39 +628,27 @@ Total ≈ 30 working days if serial; ≈ 4 weeks with the ∥ items overlapped.
    every rank already runs with 1 torch thread. Re-measure under Slurm `srun`, OpenMPI, or a
    launcher-less `python -m mpi4py` before assuming the same holds there; `torch_num_threads` is
    already recorded per run in the manifest to make this checkable.
-7. **Classical-surrogate hardening left out of WS6's mechanical scope** (new, from the WS6 status
-   above): RBF de-duplication/`neighbors` cap/shift-fallback removal (finding 3.3); polynomial
-   `StandardScaler → PolynomialFeatures → Ridge` + a minimum-snapshot rule (finding 3.10, only the
-   weighting half shipped). Both are optional accuracy/robustness work, not correctness bugs.
-8. **Surrogate-quality ESS metric** (finding S10, WS6 bullet not done): report the effective
-   sample size of the posterior weights in `surrogate_quality_test.csv`.
+7. ~~**Classical-surrogate hardening left out of WS6's mechanical scope**~~ — **done 2026-09-18**:
+   RBF de-duplication/`neighbors` cap/shift-fallback removal (finding 3.3) and polynomial
+   `StandardScaler → PolynomialFeatures → Ridge` + minimum-snapshot rule (finding 3.10) both
+   implemented and tested; see the WS6 section and the CHANGELOG behaviour-change entries.
+8. ~~**Surrogate-quality ESS metric**~~ (finding S10) — **done 2026-09-18**: `weighted_ess`
+   column added to `surrogate_quality_test.csv`.
 9. **MPI performance items left open by WS8** (new): two-step evaluator transfer instead of the
    1 GiB `irecv` buffer (finding 4.1); batched snapshot `vstack` (4.3); collector/solver busy-wait
    sleep or blocking `Waitany` (4.2); `MPI.TAG_UB` start-up check (2.11); cross-rank
    `Configuration` consistency broadcast+assert (2.9); a 2-rank protocol unit test suite for
    `communication.py` (I12, `09`'s own WS8 acceptance criterion, never written).
-10. **`write_report` stage selection by name** and a report section listing warnings raised
-    during the run (WS9 bullet 5's one remaining item — the manifest's `unverified_options` is
-    shown, but no general warning log is collected yet).
+10. ~~**`write_report` stage selection by name**~~ — **done 2026-09-18** (`Samples._resolve_stages`
+    accepts stage names, see WS9 above). Still open: a report section listing warnings raised
+    during the run (WS9 bullet 5's remaining item — the manifest's `unverified_options` is shown,
+    but no general warning log is collected yet).
 11. **WS4's "one seed architecture" ideal** (new): replace the remaining global-RNG touches
     (`torch.manual_seed` in `torch_perceptron_minibatches.py`; the save/restore-global-state
     pattern in `modules/tools.py`/`modules/test_data.py`) with owned generators, and consider
     migrating the per-object `np.random.RandomState(seed)` instances to a
     `np.random.SeedSequence(...).spawn(...)` tree as originally drafted. Not known to affect any
     tested configuration's reproducibility today.
-
-## 5. Risks and mitigations
-
-- **Changing the kernel while re-running experiments**: land WS3 only with V2/V3 green, and keep
-  a `legacy_subchain_refresh=True` switch for one release to compare against old runs.
-- **Scope creep in WS6/WS9**: define format v2 and the Evaluator contract in writing (one page
-  each) before coding; everything else in those workstreams is mechanical.
-- **MPI tests flaky in CI**: run them nightly with generous timeouts; unit + validation tests via
-  the local runner are the fast gate.
-- **Losing behaviour users relied on** (e.g. `use_only_surrogate`, `is_excluded`, block proposals):
-  each gets a test in WS1 before it is touched.
-- **Unverified option used by accident**: the start-up warning is also written to the run manifest
-  and shown in the HTML report header (WS4/WS9).
 
 ## 6. Definition of done for the refactor
 

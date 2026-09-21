@@ -30,8 +30,7 @@ solver_instance = SolverTSX()
 # the solver will be evaluated directly on Samplers:
 conf = surrDAMH.Configuration(output_dir="out_tsx", no_parameters=no_parameters, no_observations=no_observations,
                               use_solvers_pool=False, use_collector=True,
-                              min_snapshots_to_update=0, min_snapshots_initial=0,
-                              state_dependent_approximation=False)
+                              min_snapshots_to_update=0, min_snapshots_initial=0)
 
 # NN updater (full-batch L-BFGS preset: one batch = all accumulated snapshots, no replay,
 # fitted only by the collector's periodic train() calls):

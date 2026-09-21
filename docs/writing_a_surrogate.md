@@ -62,7 +62,7 @@ hands the weights to its fit. The collector logs the chosen policy at start-up.
 
 | Updater | `supports_sample_weights` | How `"multiplicity"` reaches the fit |
 |---|---|---|
-| `PolynomialSklearnUpdater` | `True` | `LinearRegression.fit(..., sample_weight=...)` |
+| `PolynomialSklearnUpdater` | `True` | `pipeline.fit(..., ridge__sample_weight=...)` |
 | `NeuralNetworkUpdaterMinibatches` | `True` | per-sample weighted loss (`_weighted_loss`) |
 | `RBFInterpolationUpdater` | `False` | interpolant — zero-multiplicity rows are dropped, the rest count once |
 | `KDTreeUpdater` | `False` | interpolant — same |
@@ -118,8 +118,8 @@ Every updater additionally accepts `weighting="uniform" | "multiplicity"`.
 
 | Updater | Key constructor arguments |
 |---|---|
-| `PolynomialSklearnUpdater(no_parameters, no_observations, max_degree=5)` | Degree grows automatically as snapshots accumulate; supports sample weights. |
-| `RBFInterpolationUpdater(no_parameters, no_observations, neighbors=None, smoothing=0.0, kernel="thin_plate_spline", epsilon=None, degree=None, verbose=False)` | Forwarded to `scipy.interpolate.RBFInterpolator`; refits from scratch every call (O(N³)); duplicated snapshot locations trigger a shifted-copy fallback that changes the fit, not just its cost. |
+| `PolynomialSklearnUpdater(no_parameters, no_observations, max_degree=5, alpha=1e-6)` | `StandardScaler → PolynomialFeatures → Ridge(alpha)`; the degree grows automatically as snapshots accumulate but never past the point where the polynomial has as many terms as there are snapshots (one snapshot ⇒ constant fit); supports sample weights. |
+| `RBFInterpolationUpdater(no_parameters, no_observations, neighbors=None, max_neighbors=50, dedup_tolerance=0.0, smoothing=0.0, kernel="thin_plate_spline", epsilon=None, degree=None, verbose=False)` | Forwarded to `scipy.interpolate.RBFInterpolator`; refits from scratch every call. Duplicated snapshot locations (which DAMH produces routinely) are collapsed before the fit, with their observations averaged; above `max_neighbors` snapshots the global O(N³) solve is replaced by a local fit over the nearest `max_neighbors` centres (`max_neighbors=None` keeps the global one at every size, `neighbors=` overrides both). |
 | `KDTreeUpdater(no_parameters, no_observations, no_nearest_neighbors)` | Inverse-distance-weighted average of `no_nearest_neighbors` (`1` = plain nearest-neighbor). |
 | `NeuralNetworkUpdaterMinibatches(no_parameters, no_observations, hidden_layer_sizes=(100,), solver="adamw", activation="silu", learning_rate=1e-3, iterations_batch=100, batch_size=None, replay_ratio=1.0, train_on_added_data=False, output_normalization="likelihood", output_mean=None, output_scale=None, seed=None, ...)` | Minibatch training with a replay buffer (`replay_ratio` mixes in old snapshots); registered for checkpoint reuse (`surrogates.reuse.SurrogateReused`); the only updater that normalizes its targets. |
 

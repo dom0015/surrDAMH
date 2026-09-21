@@ -18,7 +18,9 @@ import surrDAMH.process_SAMPLER
 import surrDAMH.process_SOLVER
 from surrDAMH.configuration import Configuration
 from surrDAMH.distributions.parent import Distribution
-from surrDAMH.modules.communication import ABORT_GRACE_SECONDS
+from surrDAMH.modules.communication import (ABORT_GRACE_SECONDS,
+                                            check_configuration_consistency,
+                                            check_tag_upper_bound)
 from surrDAMH.modules.surrogate_restart import SurrogateRestart
 from surrDAMH.modules.tools import ensure_dir
 from surrDAMH.modules.torch_threads import apply_torch_threads
@@ -34,6 +36,42 @@ def identity(sample):
     return sample
 
 
+def _insert_best_fit_visualization_note(html_file_path: str, pool_mode_note: str | None,
+                                        image_filenames: list[str]) -> None:
+    """
+    Finding 2.7: ``html_report_extended`` has no section for the best-fit solver
+    visualization (its PNG files are only ever saved to disk by the caller, never
+    embedded), so pool mode silently dropped it with no mention anywhere. Adds a small
+    "Best-fit Solver Visualization" block right before ``</body>`` of the already-written
+    report: ``pool_mode_note`` when the run had no live Solver on the reporting rank,
+    embedded images (same directory, plain relative ``src``) when some were produced,
+    or a neutral "none generated" note otherwise. Purely additive: every other section of
+    the file, written by ``html_report_extended`` itself, is left untouched.
+    """
+    from html import escape
+    if pool_mode_note:
+        body = f'        <p class="description" style="color: orange;">{escape(pool_mode_note)}</p>'
+    elif image_filenames:
+        body = "\n".join(f'        <img src="{escape(name)}" alt="Best-fit solver visualization">'
+                         for name in image_filenames)
+    else:
+        body = '        <p class="description">No best-fit solver visualization was generated for this report.</p>'
+    section = (
+        '    <div class="section" id="best_fit_visualization">\n'
+        '        <h3>Best-fit Solver Visualization</h3>\n'
+        '        <p class="description">Solver-produced visualization(s) of the best-fit sample '
+        '(see Best-fit Analysis above), from Solver.visualize_solution().</p>\n'
+        f'{body}\n'
+        '    </div>\n'
+    )
+    with open(html_file_path, "r") as f:
+        html = f.read()
+    if "</body>" in html:
+        html = html.replace("</body>", section + "</body>", 1)
+    else:
+        html += section
+    with open(html_file_path, "w") as f:
+        f.write(html)
 
 
 class SamplingFramework:
@@ -60,7 +98,8 @@ class SamplingFramework:
                  surrogate_restart: SurrogateRestart | None = None):
         """
         Args:
-            conf: run configuration; identical on every rank (not broadcast/checked).
+            conf: run configuration; must be identical on every rank -- its
+                posterior-affecting fields are checked against rank 0's in ``run()``.
             prior: prior distribution (internal space, see ``docs/concepts.md``).
             likelihood: likelihood distribution, evaluated on solver/surrogate output.
             list_of_stages: sampling stages, run in order on every sampler rank.
@@ -89,14 +128,18 @@ class SamplingFramework:
                 explicitly.
 
         Notes:
-            Nothing here is broadcast or validated across ranks; an inconsistent
-            ``conf``/stage list between ranks is not detected until it causes a
-            mismatched collective call.
+            ``run()`` checks the posterior-affecting fields of ``conf`` across ranks
+            (finding 2.9, see ``communication.check_configuration_consistency``); the rest
+            -- the stage list, prior, likelihood, surrogate objects -- is still neither
+            broadcast nor validated, and an inconsistency there is not detected until it
+            causes a mismatched collective call.
         """
         self.conf = conf
-        # captured before _configure_surrogate_gradients() may flip conf.use_surrogate_gradients,
-        # so the run manifest can record both the requested and the effective value:
-        self._use_surrogate_gradients_requested = conf.use_surrogate_gradients
+        # Snapshotted by Configuration.__post_init__ (together with every other posterior-affecting
+        # field, for the cross-rank check below), i.e. before _configure_surrogate_gradients() can
+        # flip conf.use_surrogate_gradients, so the run manifest can record both the requested and
+        # the effective value:
+        self._use_surrogate_gradients_requested = conf.use_surrogate_gradients_requested
         self.prior = prior
         self.likelihood = likelihood
         self.solver_spec = solver_spec
@@ -204,7 +247,12 @@ class SamplingFramework:
         """
         Dispatch this rank to its role (sampler / solvers pool / collector) and run it
         to completion; must be called on every rank of ``MPI.COMM_WORLD`` (it is a
-        collective operation: role dispatch ends in a ``comm_world.Barrier()``).
+        collective operation: it starts with the cross-rank configuration check below and
+        role dispatch ends in a ``comm_world.Barrier()``).
+
+        Before anything else, ``communication.check_configuration_consistency`` compares the
+        requested values of ``Configuration.POSTERIOR_AFFECTING_FIELDS`` against rank 0's
+        (finding 2.9) and aborts the whole job if a rank was built with a different one.
 
         On rank 0, also writes ``sampling_output/run_manifest.json`` before dispatch and
         finalizes it (``finished_at`` + per-stage counters) after the sampler role
@@ -223,6 +271,13 @@ class SamplingFramework:
             ``MPI.COMM_WORLD.Abort(1)`` for the whole job (``KeyboardInterrupt`` and
             ``SystemExit`` are re-raised instead of being turned into an abort).
         """
+        # Cross-rank configuration check (finding 2.9), first thing on every rank: rank 0
+        # broadcasts the *requested* (as-constructed, pre-mutation) values of
+        # Configuration.POSTERIOR_AFFECTING_FIELDS and every rank asserts equality. Collective,
+        # and it raises on every rank at once; _run_role turns that into a job-wide Abort with a
+        # traceback, like any other fatal error in a role body.
+        self._run_role(lambda: check_configuration_consistency(self.conf), "CONFIGURATION CHECK")
+
         # Configuration.torch_threads (WS4/2026-09-18): on every rank, before anything
         # evaluates/trains a network and before the run manifest is built below (so
         # manifest["environment"]["torch_num_threads"] records the effective value).
@@ -248,6 +303,11 @@ class SamplingFramework:
                 print(stage.describe(i), flush=True)
             if self.surrogate_restart is not None:
                 print(f"  {self.surrogate_restart.describe()}", flush=True)
+
+            # start-up diagnostic (finding 2.11): MPI tags grow by one per full-model evaluation
+            # and are never reused, while MPI_TAG_UB is only guaranteed to be >= 32767. Warns on
+            # rank 0 only; never raises and never changes control flow.
+            check_tag_upper_bound(self.list_of_stages)
 
         if self.rank_world == 0:
             # run manifest (WS4, library_notes/09_improvement_plan.md §0 principle 4): must never
@@ -336,7 +396,7 @@ class SamplingFramework:
         return optional_output
 
 
-    def write_report(self, stages_to_disp: list[int] | None = None, 
+    def write_report(self, stages_to_disp: list[int | str] | None = None,
                      observations: np.ndarray | None = None,
                      par_names: list[str] | None = None, 
                      bins1d: int = 20, bins2d: int = 20, 
@@ -360,7 +420,9 @@ class SamplingFramework:
         (WS9b).
 
         Args:
-            stages_to_disp: list of stage indices to include in the report, if None, all stages are included
+            stages_to_disp: list of stage indices and/or stage names (as produced by
+                ``surrDAMH.stages.stage_name()``, e.g. ``"alg0000_MH"``) to include in the
+                report; may mix both. If None, all stages are included.
             observations: reference observations, if None, no reference observations are used
             par_names: list of parameter names, if None, default names are used
             bins1d: number of bins for 1D histograms
@@ -383,9 +445,10 @@ class SamplingFramework:
             report/summary); ``None`` on every other rank.
 
         Raises:
-            ValueError: if ``stages_to_disp`` resolves to an empty list. This (like every
-                other failure of report generation) is turned into
-                ``MPI.COMM_WORLD.Abort(1)`` with a printed traceback by ``_run_role``.
+            ValueError: if ``stages_to_disp`` resolves to an empty list, or contains a
+                stage name not present in this run. This (like every other failure of
+                report generation) is turned into ``MPI.COMM_WORLD.Abort(1)`` with a
+                printed traceback by ``_run_role``.
 
         Notes:
             If ``solver_instance`` was given to ``__init__`` and exposes
@@ -393,6 +456,12 @@ class SamplingFramework:
             statistics are added to the report; the best-fit sample is also
             re-evaluated with the solver for ``visualize_solution()`` figures (solver
             errors here are caught and only printed, they do not fail the report).
+
+            If ``conf.use_solvers_pool=True``, rank 0 (the reporting rank) never holds a
+            live ``Solver`` instance (it lives in the spawned solver pool instead): a
+            ``RuntimeWarning``-style message is printed here, and the report marks the
+            parameter-names, posterior-field-statistics and best-fit-solver-visualization
+            sections "Not available" instead of silently omitting them (finding 2.7).
         """
 
         if self.rank_world != 0:
@@ -419,10 +488,29 @@ class SamplingFramework:
                             include_expensive_sections, grid, grid_interp, obs_grid, no_sensors,
                             cmap, chains_to_disp, field_statistics_max_samples=None) -> surrDAMH.post_processing.Samples:
         """Body of :meth:`write_report`, run on rank 0 only (see that method for the arguments)."""
+        # Finding 2.7: use_solvers_pool=True means the actual Solver lives in the spawned
+        # solver pool, never on rank 0 (the reporting rank); self.solver_instance is then
+        # always None here, so the sections below that need a live Solver silently had
+        # nothing to show. Warn now (stdout) and pass a note through so the report itself
+        # says so too, instead of just omitting those sections.
+        pool_mode_note = None
+        if self.conf.use_solvers_pool and self.solver_instance is None:
+            pool_mode_note = ("Not available: pool mode (`use_solvers_pool=True`) has no live "
+                              "Solver object on the reporting rank.")
+            print(f"RuntimeWarning: {pool_mode_note} Affected report sections: parameter "
+                  "names, posterior field statistics, best-fit solver visualization.",
+                  flush=True)
+
+        samples = surrDAMH.post_processing.Samples(self.conf.no_parameters, self.conf.output_dir)
+        # WS9 bullet 5: stages_to_disp accepts stage NAMES (as produced by
+        # surrDAMH.stages.stage_name()) alongside the existing positional indices;
+        # Samples._resolve_stages does the lookup (against this run's own stage names, read
+        # from output_dir) and also covers the pre-existing None-means-"all stages" default,
+        # so an int-only or None caller takes exactly the old path.
+        stages_to_disp = samples._resolve_stages(stages_to_disp)
+
         if par_names is None:
             par_names = getattr(self.solver_instance, "par_names", None)
-        if stages_to_disp is None:
-            stages_to_disp = [stage_idx for stage_idx in range(len(self.list_of_stages))]
         if parameters_to_disp is None:
             parameters_to_disp = list(range(min(self.conf.no_parameters, 10)))
         if not stages_to_disp:
@@ -431,7 +519,6 @@ class SamplingFramework:
         post_processing_dir_path = os.path.join(self.conf.output_dir, "post_processing_output")
         ensure_dir(post_processing_dir_path)
 
-        samples = surrDAMH.post_processing.Samples(self.conf.no_parameters, self.conf.output_dir)
         samples.calculate_CpUS([[i] for i in stages_to_disp])
         setattr(samples, "summary", samples.summary.iloc[stages_to_disp, :].copy())
         samples.get_summary().to_csv(os.path.join(post_processing_dir_path, "summary.csv"))
@@ -481,10 +568,15 @@ class SamplingFramework:
             obs_grid=obs_grid,
             no_sensors=no_sensors,
             cmap=cmap,
-            chains_to_disp=chains_to_disp
-
+            chains_to_disp=chains_to_disp,
+            pool_mode_note=pool_mode_note,
         )
 
+        # Finding 2.7: best-fit solver visualization figures are saved as separate PNG
+        # files next to report_extended.html (below, unchanged); this note/image list is
+        # inserted into the already-written HTML so the report says what happened instead
+        # of leaving the gap silent -- additive only, no existing section is touched.
+        best_fit_visualization_images: list[str] = []
         if self.solver_instance is not None:
             best_fit_parameters = np.asarray(getattr(samples, "best_fit_parameters", []), dtype=float)
             if best_fit_parameters.size:
@@ -498,10 +590,16 @@ class SamplingFramework:
                     print(f"Solver visualization skipped for best fit: {exc}", flush=True)
                     visualizations = []
                 for fig_idx, (fig, _) in enumerate(visualizations, start=1):
-                    fig_path = os.path.join(post_processing_dir_path, f"best_fit_solver_visualization_{fig_idx}.png")
+                    fig_name = f"best_fit_solver_visualization_{fig_idx}.png"
+                    fig_path = os.path.join(post_processing_dir_path, fig_name)
                     try:
                         fig.savefig(fig_path, bbox_inches="tight", dpi=150)
+                        best_fit_visualization_images.append(fig_name)
                     finally:
                         plt.close(fig)
+
+        _insert_best_fit_visualization_note(
+            output_html_file_path, pool_mode_note=pool_mode_note,
+            image_filenames=best_fit_visualization_images)
 
         return samples

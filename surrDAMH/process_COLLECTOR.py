@@ -8,6 +8,8 @@ Created on Thu Nov  7 13:26:55 2019
 
 import csv
 import os
+import pickle
+import warnings
 
 import numpy as np
 from mpi4py import MPI
@@ -15,6 +17,7 @@ from mpi4py import MPI
 from surrDAMH.configuration import Configuration
 from surrDAMH.modules.communication import (CommEvaluator_collector,
                                             CommSnapshot_collector,
+                                            ServiceLoopThrottle,
                                             send_initial_surrogate_availability)
 from surrDAMH.modules.tools import ensure_dir
 from surrDAMH.surrogates.parent import Updater
@@ -87,12 +90,70 @@ def _compute_surrogate_quality_metrics(evaluator, parameters: np.ndarray, true_o
     if weights is None:
         weighted_rmse = rmse
         weighted_mean_abs_error = float(np.mean(np.abs(errors)))
+        # uniform weights: ESS equals the number of test points by definition
+        weighted_ess = float(true_observations.shape[0])
     else:
         normalized_weights = np.asarray(weights, dtype=float).reshape(-1, 1)
         normalized_weights = normalized_weights / np.sum(normalized_weights)
         weighted_rmse = float(np.sqrt(np.sum(normalized_weights * (errors ** 2))))
         weighted_mean_abs_error = float(np.sum(normalized_weights * np.abs(errors)))
-    return rmse, max_abs_error, weighted_rmse, weighted_mean_abs_error
+        # effective sample size of the posterior weights (Kish's formula): 1 / sum(w_i^2) for
+        # normalized weights summing to 1. Diagnoses finding S10 -- a concentrated posterior with
+        # few informative test points can make weighted_rmse essentially the error at one point.
+        weighted_ess = float(1.0 / np.sum(normalized_weights ** 2))
+    return rmse, max_abs_error, weighted_rmse, weighted_mean_abs_error, weighted_ess
+
+
+def _evaluator_is_finite_on(evaluator, parameters: np.ndarray | None) -> bool:
+    """
+    Does a freshly retrained ``evaluator`` predict finite values on the newest snapshots?
+
+    2026-09-20: a neural-network updater that was fed one outlier snapshot can come out of
+    ``train()`` with NaN weights; the evaluator built from it returns NaN everywhere, and once
+    a sampler installs it every leapfrog gradient, every proposal and every acceptance
+    probability is NaN for the rest of the run. One batched call here is enough to see it.
+    ``True`` when there is nothing to probe on (the check cannot then say anything). An
+    evaluator that raises is a separate failure and is deliberately not swallowed here as
+    "non-finite". Non-finite probe points are dropped first, so that a healthy surrogate is
+    never vetoed for being unable to predict at ``inf``.
+    """
+    if parameters is None:
+        return True
+    probe_points = np.asarray(parameters, dtype=float)
+    if probe_points.shape[0] == 0:
+        return True
+    probe_points = probe_points[np.all(np.isfinite(probe_points), axis=1)]
+    if probe_points.shape[0] == 0:
+        return True
+    predictions = np.asarray(evaluator(probe_points), dtype=float)
+    return bool(np.all(np.isfinite(predictions)))
+
+
+def _check_evaluator_pickle_size(evaluator, max_buffer_size: int) -> None:
+    """
+    Finding 4.1/M10: ``CommEvaluator_sampler`` posts a fixed-size ``irecv(buf=max_buffer_size)``
+    for the pickled ``Evaluator`` the collector sends. If the pickled evaluator does not fit,
+    mpi4py/MPI truncates or errors far from here, with no clue what caused it. Check the actual
+    pickled size against the configured buffer right when a fresh evaluator is built, so an
+    oversized surrogate (e.g. a large NN) fails loudly and immediately here instead.
+    """
+    size = len(pickle.dumps(evaluator))
+    if size > max_buffer_size:
+        raise RuntimeError(
+            f"Pickled evaluator ({type(evaluator).__name__}) is {size} bytes, which exceeds "
+            f"Configuration.max_buffer_size ({max_buffer_size} bytes). Sending it to a sampler "
+            "would truncate the message. Increase Configuration.max_buffer_size to at least "
+            f"{size} bytes (a comfortable margin above it, since it will grow as more snapshots "
+            "are added)."
+        )
+    if size > 0.5 * max_buffer_size:
+        warnings.warn(
+            f"Pickled evaluator ({type(evaluator).__name__}) is {size} bytes, over half of "
+            f"Configuration.max_buffer_size ({max_buffer_size} bytes). It may grow past the "
+            "buffer as more snapshots are added, which would truncate the MPI message to "
+            "samplers. Consider raising Configuration.max_buffer_size.",
+            RuntimeWarning,
+        )
 
 
 def run_COLLECTOR(conf: Configuration, surrogate_updater: Updater, surrogate_delayed_init_data=None,
@@ -130,6 +191,12 @@ def run_COLLECTOR(conf: Configuration, surrogate_updater: Updater, surrogate_del
     # related to surrogate evaluators:
     sampler_got_last_evaluator = np.array([True] * conf.no_samplers)
 
+    # newest snapshot batch handed to the updater, kept so that a retrained evaluator can be
+    # probed for non-finite predictions before it is published (2026-09-20); and how many
+    # consecutive retrainings were refused for that reason (one printed line per streak)
+    last_snapshot_parameters: np.ndarray | None = None
+    nonfinite_evaluator_streak = 0
+
     # related to received snapshots
     preloaded_snapshots = None
     if initial_snapshots is None:
@@ -151,6 +218,7 @@ def run_COLLECTOR(conf: Configuration, surrogate_updater: Updater, surrogate_del
         if getattr(surrogate_updater, "pretrained_ready", False) and no_preloaded_snapshots > 0:
             no_snapshots_used = no_preloaded_snapshots
             evaluator_instance = surrogate_updater.get_evaluator()
+            _check_evaluator_pickle_size(evaluator_instance, conf.max_buffer_size)
             sampler_got_last_evaluator = [False] * conf.no_samplers
 
     # surrogate quality monitoring:
@@ -174,7 +242,15 @@ def run_COLLECTOR(conf: Configuration, surrogate_updater: Updater, surrogate_del
     for r in sampler_ranks:
         send_initial_surrogate_availability(int(r), can_provide_evaluator)
 
+    # findings 4.2/M11: the loop below is otherwise a pure busy-wait on Get_status/get_status and
+    # pegs a core at 100% while the samplers are busy with the full model. did_something tracks
+    # whether an iteration did any real work (received a snapshot, trained, sent an evaluator,
+    # consumed a stop signal); the throttle yields the core only once the loop has been idle for a
+    # while (see ServiceLoopThrottle). No message is sent, received or reordered because of this.
+    throttle = ServiceLoopThrottle()
+
     while any(needs_evaluator):  # while at least 1 sampling algorithm still requires updates
+        did_something = False
 
         # receiving snapshots from samplers:
         num_new_snapshots = list_new_snapshots[0].shape[0]
@@ -190,6 +266,7 @@ def run_COLLECTOR(conf: Configuration, surrogate_updater: Updater, surrogate_del
             num_new_snapshots += counter
             if counter == 0:  # if no snapshots received (from any sampler), break
                 break
+            did_something = True
             if num_new_snapshots > conf.max_collected_snapshots_per_loop:
                 break
 
@@ -214,45 +291,66 @@ def run_COLLECTOR(conf: Configuration, surrogate_updater: Updater, surrogate_del
         if num_new_snapshots > 0:
             no_snapshots_total += num_new_snapshots
             surrogate_updater.add_data(list_new_snapshots[0], list_new_snapshots[1], list_new_snapshots[2])
+            # kept for the finiteness probe below: the training arrays are cleared here, but a
+            # retrained evaluator must still be checked on the newest snapshot batch
+            last_snapshot_parameters = list_new_snapshots[0]
             list_new_snapshots = [np.empty((0, conf.no_parameters)), np.empty((0, conf.no_observations)), np.empty((0, 1))]
         # create initial evaluator or update:
         cond_init = no_snapshots_used == 0 and no_snapshots_total >= conf.min_snapshots_initial  # initial surrogate model
         cond_update = no_snapshots_used > 0 and no_snapshots_total - no_snapshots_used >= conf.min_snapshots_to_update
         if (cond_init or cond_update):
+            did_something = True
             surrogate_updater.train()
             no_snapshots_used = no_snapshots_total
-            # evaluator changed
-            sampler_got_last_evaluator = [False] * conf.no_samplers
-            evaluator_instance = surrogate_updater.get_evaluator()
-            monitoring_evaluator = evaluator_instance  # update monitoring evaluator
-            surrogate_update_index += 1
+            retrained_evaluator = surrogate_updater.get_evaluator()
+            if not _evaluator_is_finite_on(retrained_evaluator, last_snapshot_parameters):
+                # never publish a non-finite surrogate (2026-09-20): the samplers keep the
+                # evaluator they already have, and the next update (with more data) may succeed
+                if nonfinite_evaluator_streak == 0:
+                    print(f"collector: retrained surrogate is non-finite on the newest "
+                          f"{int(np.asarray(last_snapshot_parameters).shape[0])} snapshots; "
+                          "keeping the previous evaluator", flush=True)
+                nonfinite_evaluator_streak += 1
+            else:
+                if nonfinite_evaluator_streak > 0:
+                    print(f"collector: retrained surrogate is finite again after "
+                          f"{nonfinite_evaluator_streak} rejected update(s)", flush=True)
+                    nonfinite_evaluator_streak = 0
+                # evaluator changed
+                sampler_got_last_evaluator = [False] * conf.no_samplers
+                evaluator_instance = retrained_evaluator
+                _check_evaluator_pickle_size(evaluator_instance, conf.max_buffer_size)
+                monitoring_evaluator = evaluator_instance  # update monitoring evaluator
+                surrogate_update_index += 1
 
-            if surrogate_test_data is not None:
-                try:
-                    test_parameters, test_observations, test_log_posterior, test_weights = surrogate_test_data
-                    rmse, max_abs_error, weighted_rmse, weighted_mean_abs_error = _compute_surrogate_quality_metrics(
-                        evaluator_instance, test_parameters, test_observations, test_weights
-                    )
-                    surrogate_test_rows.append([
-                        surrogate_update_index,
-                        no_snapshots_total,
-                        test_parameters.shape[0],
-                        float(np.max(test_log_posterior)),
-                        rmse,
-                        max_abs_error,
-                        weighted_rmse,
-                        weighted_mean_abs_error,
-                    ])
-                    if conf.debug:
-                        print(
-                            f"Surrogate quality on fixed test set: RMSE={rmse:.4e}, MaxAbsErr={max_abs_error:.4e}, "
-                            f"WeightedRMSE={weighted_rmse:.4e}, WeightedMAE={weighted_mean_abs_error:.4e}, "
-                            f"update_index={surrogate_update_index}, snapshots_total={no_snapshots_total}, "
-                            f"n_test={test_parameters.shape[0]}",
-                            flush=True,
+                if surrogate_test_data is not None:
+                    try:
+                        test_parameters, test_observations, test_log_posterior, test_weights = surrogate_test_data
+                        rmse, max_abs_error, weighted_rmse, weighted_mean_abs_error, weighted_ess = _compute_surrogate_quality_metrics(
+                            evaluator_instance, test_parameters, test_observations, test_weights
                         )
-                except Exception as e:
-                    print(f"Surrogate fixed-test monitoring error: {e}", flush=True)
+                        surrogate_test_rows.append([
+                            surrogate_update_index,
+                            no_snapshots_total,
+                            test_parameters.shape[0],
+                            float(np.max(test_log_posterior)),
+                            rmse,
+                            max_abs_error,
+                            weighted_rmse,
+                            weighted_mean_abs_error,
+                            weighted_ess,
+                        ])
+                        if conf.debug:
+                            print(
+                                f"Surrogate quality on fixed test set: RMSE={rmse:.4e}, MaxAbsErr={max_abs_error:.4e}, "
+                                f"WeightedRMSE={weighted_rmse:.4e}, WeightedMAE={weighted_mean_abs_error:.4e}, "
+                                f"WeightedESS={weighted_ess:.2f}, "
+                                f"update_index={surrogate_update_index}, snapshots_total={no_snapshots_total}, "
+                                f"n_test={test_parameters.shape[0]}",
+                                flush=True,
+                            )
+                    except Exception as e:
+                        print(f"Surrogate fixed-test monitoring error: {e}", flush=True)
         # send evaluator to samplers:
         # invariant: an update request (TAG_UPDATE) is consumed only together with sending an
         # evaluator; CommEvaluator_collector.terminate() relies on this to know whether a final
@@ -264,15 +362,19 @@ def run_COLLECTOR(conf: Configuration, surrogate_updater: Updater, surrogate_del
                     if comm.sampler_requests_evaluator():
                         comm.send_evaluator(evaluator_instance)
                         sampler_got_last_evaluator[i] = True
+                        did_something = True
                 # poll the stop signal even before the first surrogate exists; otherwise a
                 # run whose samplers never need a surrogate (or stop before one is trained)
                 # hangs here forever
                 if comm.sampler_stops():
                     needs_evaluator[i] = False
+                    did_something = True
                     if sampler_got_last_evaluator[i]:
                         comm.terminate(None)
                     else:
                         comm.terminate(evaluator_instance)
+
+        throttle.step(did_something)
 
     # save surrogate quality metrics to CSV:
     if len(surrogate_quality_rows) > 0:
@@ -296,6 +398,7 @@ def run_COLLECTOR(conf: Configuration, surrogate_updater: Updater, surrogate_del
                 "max_abs_error",
                 "weighted_rmse",
                 "weighted_mean_abs_error",
+                "weighted_ess",
             ])
             writer.writerows(surrogate_test_rows)
         print(f"Surrogate fixed-test metrics saved to {surrogate_test_csv_path}", flush=True)

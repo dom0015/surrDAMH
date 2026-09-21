@@ -50,9 +50,6 @@ conf = surrDAMH.Configuration(
     min_snapshots_to_update=2,                  # further snapshots needed before each surrogate re-fit
     initial_sample_type="prior",                 # "prior"/"lhs"/"user_specified"/"continued"; "prior" is NOT
                                                  # reproducible run-to-run today (library_notes finding 1.9)
-    state_dependent_approximation=False,        # True shifts the DAMH approximation by the surrogate error at
-                                                 # the current sample; UNVERIFIED for subchain_max_length > 1
-                                                 # (finding 1.1) -- leave at the default unless you know why.
 )
 
 # --- 5. surrogate model -------------------------------------------------------

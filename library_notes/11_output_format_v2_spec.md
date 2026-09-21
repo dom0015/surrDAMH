@@ -1,5 +1,13 @@
 # Output format v2 — specification (WS9, decision 6: no converter)
 
+**Dated record.** Written as a pre-implementation design draft (2026-09-16); §1 was already
+the pre-change layout and §2 the proposed one. Implemented as proposed, decisions applied
+inline. Kept for the writer↔reader design rationale; the current contract is `docs/outputs.md`
+and the current behaviour is verified in `10_manual_review_notes.md` §2.14. Inline references
+below to `03_surrogates_and_distributions.md`/`04_post_processing.md` point to per-subsystem
+review notes deleted 2026-09-18 (superseded by `06_findings_consolidated.md`) — left as-is,
+they're historical citations of what those notes said at the time, not live links.
+
 Status: **implemented 2026-09-17 (WS9a)**, with WS9b applied the same day. The writers,
 `manifest.FORMAT_VERSION = 2`, `read_run`, the `post_processing` reader migration, the tests
 and `docs/outputs.md` are in the working tree; §1 below still describes the *old* (v1) layout

@@ -66,10 +66,12 @@ class TestData:
             A new ``TestData`` with ``log_posterior``/``weights`` already populated.
         """
         solver = resolve_solver(solver)
-        rng_state = np.random.get_state()
-        np.random.seed(seed)
-        parameters = np.vstack([prior.rvs() for _ in range(size)])
-        np.random.set_state(rng_state)
+        # WS4, 2026-09-18: an owned generator instead of save/restore-the-global-seed. Both are
+        # deterministic for a given seed and don't disturb unrelated code; this one also matches
+        # the generator=-based seeding the rest of the library uses since G4 (modules/seeds.py).
+        # Changes the exact test points a given seed produces (a different bit generator).
+        rng = np.random.default_rng(seed)
+        parameters = np.vstack([prior.rvs(generator=rng) for _ in range(size)])
 
         if conf.transform_before_surrogate:
             surrogate_parameters = np.vstack([prior.transform(p.copy()) for p in parameters])

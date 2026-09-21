@@ -13,18 +13,16 @@ def as_covariance_matrix(sd_or_cov: npt.ArrayLike, no_parameters: int) -> npt.ND
     Normalise a proposal scale to a full ``(no_parameters, no_parameters)`` covariance matrix.
 
     ``GaussRandomWalk.set_covariance`` accepts a scalar, a vector of standard deviations or a
-    covariance matrix, and ``GaussRandomWalk_adaptive`` REPLACES a 1-D ``sd_or_cov`` by a 2-D
-    covariance the first time it adapts. The per-stage reduction of the adaptive covariance
-    (``process_SAMPLER``'s ``Allreduce``) therefore used to mix 1-D and 2-D buffers across
-    ranks whenever the ranks' ``adapt()`` counts straddled the adaptation period, which
-    aborted the whole job with ``Message truncated`` (finding 2.5). Both runners now call this
-    function on every rank before the reduction, so the shapes always agree and the next stage
-    always receives a 2-D matrix (G2, 2026-09-17).
+    covariance matrix; this function turns any of those into the one 2-D spelling.
 
-    Consequence for the edge case where NO rank ever adapted: the next stage is handed
-    ``diag(sd**2)`` instead of the 1-D ``sd`` vector, i.e. it draws with
-    ``multivariate_normal`` instead of independent ``normal`` calls -- the same distribution
-    but a different RNG stream, so such runs are not bit-identical to before G2.
+    History: it was introduced for the per-stage ``Allreduce`` of the adaptive covariance (G2,
+    2026-09-17), which used to mix 1-D and 2-D buffers across ranks and abort the job with
+    ``Message truncated`` (finding 2.5). That reduction is gone -- the ranks now exchange the
+    adaptation's sufficient statistics through ``GaussRandomWalk_adaptive.adapted_state()``,
+    whose length is fixed by ``no_parameters`` alone -- and ``GaussRandomWalk_adaptive`` keeps
+    ``sd_or_cov`` 2-D at all times, so neither runner needs this any more. It stays because it
+    is the one place that defines what an accepted ``sd_or_cov`` is, and the adaptive random
+    walk uses it to normalise its initial covariance.
 
     Args:
         sd_or_cov: scalar standard deviation, 1-D vector of standard deviations, or a 2-D
@@ -47,6 +45,27 @@ def as_covariance_matrix(sd_or_cov: npt.ArrayLike, no_parameters: int) -> npt.ND
                              f"got shape {array.shape}")
         return np.ascontiguousarray(array.copy())
     raise ValueError(f"sd_or_cov must be scalar, 1-D or 2-D, got {array.ndim} dimensions")
+
+
+def _is_finite(vector: npt.NDArray) -> bool:
+    """``True`` iff every entry of ``vector`` is finite (leapfrog divergence check, 2026-09-20)."""
+    return bool(np.all(np.isfinite(vector)))
+
+
+def acceptance_probability(log_acceptance_probability: float) -> float:
+    """
+    ``min(1, exp(log_acceptance_probability))``, without overflow and without warnings.
+
+    ``-inf`` (DAMH's pre-rejected iterations) maps to ``0.0``, a non-negative log-ratio to
+    ``1.0`` without ever calling ``exp`` on a large number, and ``nan`` (which no code path
+    should produce) to ``0.0`` rather than propagating.
+    """
+    value = float(log_acceptance_probability)
+    if np.isnan(value):
+        return 0.0
+    if value >= 0.0:
+        return 1.0
+    return float(np.exp(value))
 
 
 _SUBPROPOSAL_SEED_BASE = 2**31  # disjoint from the seed0 = 10*(no_stages*rank + i) family
@@ -121,11 +140,28 @@ class Proposal:
             stacklevel=2,
         )
 
-    def adapt(self, **kwargs):
+    def adapt(self, proposed_sample: npt.NDArray, log_acceptance_probability: float,
+              current_sample: npt.NDArray,
+              subchain_log_acceptance_probabilities: list[float] | None = None) -> None:
         """
-        Adapts the proposal distribution.
+        Feed one accept/reject outcome to the proposal; no-op unless the proposal adapts.
+
+        Called by the algorithms once per (outer) iteration, AFTER the accept/reject decision
+        has been applied to the chain (2026-09-20), with
+
+        * ``proposed_sample``: the proposed parameters,
+        * ``log_acceptance_probability``: the log of their Metropolis acceptance probability
+          (``-inf`` = probability 0, used by DAMH for pre-rejected iterations),
+        * ``current_sample``: the chain state AFTER the decision (the proposal if it was
+          accepted, the previous state otherwise) -- what a Haario-style covariance estimator
+          needs,
+        * ``subchain_log_acceptance_probabilities``: in a DAMH stage, the per-step log
+          acceptance probabilities the surrogate sub-chain computed (one per sub-chain step,
+          in order); ``None`` in an MH stage.
+
+        The fixed signature makes a wrong keyword an error for every proposal, not only for
+        the adaptive ones.
         """
-        pass
 
     def choose_group(self):
         """
@@ -234,113 +270,307 @@ class PCN(Proposal):  # preconditioned Crank-Nicolson proposal
 
 class GaussRandomWalk_adaptive(GaussRandomWalk):  # initiated by SAMPLERs
     """
-    ``GaussRandomWalk`` whose covariance is periodically re-estimated from the
-    accepted-vs-rejected history (Haario-style adaptation) to chase ``target_rate``.
+    Adaptive Gaussian random walk: shrinkage-regularised Haario covariance for the SHAPE and a
+    Robbins-Monro recursion on the log-scale for the SCALE (rewritten 2026-09-20, recommendation
+    2 of ``library_notes/16_adaptivity_options_research_2026-09-20.md`` §5; prototype formulas in
+    that study's ``proto/RESULTS_PROTO.md`` §1, "AMShrinkRM").
 
-    ``target_rate``, ``corr_limit`` and ``sample_limit`` are set from
-    ``Stage.adaptive_target_rate`` / ``adaptive_corr_limit`` / ``adaptive_sample_limit``
-    by ``build_proposal`` whenever those fields are not ``None`` (G1, 2026-09-17); a stage
-    that leaves them ``None`` gets the constructor defaults below, which are the values
-    hard-coded before G1. With ``sample_limit=None`` (the default) the sample history
-    accumulates without bound across the whole stage; with an integer only the last
-    ``sample_limit`` proposals are kept, which bounds memory and makes the adaptation
-    forget the early, badly-scaled part of the chain.
+    Per ``adapt()`` call (one per outer iteration of the stage)::
 
-    Note for DAMH stages: ``adapt()`` is only called once per OUTER step (from the exact
-    acceptance test on the sub-chain endpoint), so ``target_rate`` is a target for the
-    outer/second-stage acceptance rate, not the sub-chain rate.
+        alpha        = min(1, exp(log_acceptance_probability))
+        n           += 1
+        log_sigma   += n**(-0.7) * (alpha - target_rate)          [Andrieu & Thoms 2008 Alg. 4]
+        (mean, M2)   = Welford update with the POST-decision chain state
+
+    and, every ``period`` iterations once ``n >= warmup``::
+
+        C            = M2 / (n - 1)                               [Haario et al. 2001 estimator]
+        delta        = min(1, 2d/n)
+        C            = (1 - delta) * C + delta * (tr C / d) * I    [Ledoit-Wolf-style shrinkage]
+        base_cov     = (2.38**2/d) * (C + 1e-6 * (tr C / d) * I)   [relative ridge]
+
+    The proposal is ``x' = x + exp(log_sigma) * L z``, ``L L^T = base_cov``, ``z ~ N(0, I)``;
+    ``self.sd_or_cov`` is kept equal to ``exp(2*log_sigma) * base_cov`` (always 2-D) so that every
+    existing reader of it -- the stage hand-over, ``as_covariance_matrix``, the start-up prints --
+    keeps working.
+
+    What was REMOVED with the rewrite (breaking, see CHANGELOG): ``corr_limit`` (the entrywise
+    correlation clip, which made the covariance indefinite and had numpy draw ~every proposal
+    through an SVD fallback -- 19 750 warnings in a 20 000-evaluation prototype run), the
+    ``sample_limit`` bounded history (unstable: a 4-orders-of-magnitude scale blow-up in the
+    2026-09-18 study), the ``coef`` acceptance feedback, the stored sample/weight history and the
+    degenerate-weights guard they needed. The ridge is RELATIVE to ``tr C / d`` rather than the
+    prototype's absolute ``1e-6``, so the regularisation does not depend on the units of the
+    parameters.
+
+    DAMH stages: ``adapt()`` is called on **every** outer iteration -- with the exact-posterior
+    acceptance probability of the sub-chain endpoint when the sub-chain moved, and with
+    ``-inf`` (probability 0) on a pre-rejected iteration. The rate driven to ``target_rate`` is
+    therefore the *overall* acceptance of an outer iteration; scoring only the moved iterations
+    feeds back the conditional second-stage rate, which tends to 1 and makes the scale diverge
+    (`16` §2 item 1, §4.2). For ``subchain_max_length > 1`` the whole multi-step move is scored,
+    so the per-step scale ends above its own optimum -- prefer ``subchain_max_length=1`` when
+    adapting.
+
+    Cross-rank hand-over: ``adapted_state()`` / ``set_pooled_state()`` / ``carry_over()`` pool the
+    SUFFICIENT STATISTICS of all chains (Chan et al. parallel combination of ``(n, mean, M2)``,
+    plus the mean log-scale) instead of averaging per-rank covariances; see the runners.
     """
 
+    #: column names of ``adaptive_stats/<stage>/rank%04d.csv`` (see docs/outputs.md)
+    adaptation_stats_header = ["n", "mean_acceptance_probability", "log_sigma",
+                              "trace_C_over_d", "shrinkage_delta"]
+
     def __init__(self, no_parameters: int, sd_or_cov: npt.ArrayLike = 1.0, seed: int = 0,
-                 target_rate: float = 0.25, corr_limit: float = 0.3,
-                 period: int = 10, sample_limit: int | None = None) -> None:
+                 target_rate: float = 0.234, period: int = 10, warmup: int = 100) -> None:
         """
         Args:
-            target_rate (float): target acceptance rate
-            corr_limit (float): maximal alowed correlation of proposal distribution
-            period (int): number of proposed samples to adapt
-            sample_limit (int | None): if given, only the last ``sample_limit`` proposed
-                samples/acceptance weights are kept and used to estimate the covariance
-                and the current acceptance rate; ``None`` keeps the whole history.
+            no_parameters: dimension of the parameter space.
+            sd_or_cov: initial proposal scale (scalar sd, vector of sds, or covariance matrix).
+                Only the starting point of the recursion -- both scale and shape are learned.
+            seed: seed of this proposal's random generator.
+            target_rate: target acceptance rate of the Robbins-Monro scale recursion
+                (``Stage.adaptive_target_rate``; 0.234 is the high-dimensional RWM optimum).
+            period: re-estimate the covariance every ``period`` ``adapt()`` calls.
+            warmup: no covariance is installed before ``n >= warmup`` (the scale recursion runs
+                from the first call).
         """
-        Proposal.__init__(self)  # not GaussRandomWalk.__init__: covariance is set below
-        self.no_parameters = no_parameters
+        Proposal.__init__(self)  # not GaussRandomWalk.__init__: the covariance is set below
+        self.no_parameters = int(no_parameters)
         self._generator = np.random.RandomState(seed=seed)
+        self.target_rate = float(target_rate)
+        self.period = int(period)
+        self.warmup = int(warmup)
+        self.scale_factor = 2.38 ** 2 / self.no_parameters
+
+        self.n = 0
+        self.mean = np.zeros(self.no_parameters)
+        self.M2 = np.zeros((self.no_parameters, self.no_parameters))
+        self.log_sigma = 0.0
+        self._trace_over_d = np.nan  # of the last installed covariance estimate
+        self._shrinkage_delta = np.nan
+        self._period_alpha_sum = 0.0
+        self._period_alpha_count = 0
+        self.adaptation_stats_rows: list[tuple] = []
+
         self.set_covariance(sd_or_cov=sd_or_cov)
 
-        self.target_rate = target_rate
-        self.corr_limit = corr_limit
-        self.period = period
-        self.sample_limit = sample_limit
-        self.counter = 0  # counter of proposed samples
+    # -- proposal -----------------------------------------------------------------------
+    def set_covariance(self, sd_or_cov: npt.ArrayLike) -> None:
+        """Replace the (unscaled) base covariance; ``log_sigma`` and the statistics are kept.
 
-        self.samples = np.empty((0, self.no_parameters))
-        self.aweights = np.empty((0,), dtype=float)
-        self.init_flag = True
-        self.coef = 1
+        Overrides ``GaussRandomWalk.set_covariance``, which would install one of the two
+        fixed-covariance ``propose_sample`` implementations as an instance attribute and thereby
+        shadow this class's own ``propose_sample``.
+        """
+        self.base_cov = as_covariance_matrix(sd_or_cov, self.no_parameters)
+        self._refactor()
 
-        if self.sd_or_cov.ndim == 1:
-            self.initial_sd = self.sd_or_cov
+    def _update_public_covariance(self) -> None:
+        """``sd_or_cov`` is the covariance the proposal actually draws with, ``exp(2 log_sigma)
+        * base_cov``; it depends on the scale, which changes on every ``adapt()`` call."""
+        self.sd_or_cov = np.exp(2.0 * self.log_sigma) * self.base_cov
+
+    def _refactor(self) -> None:
+        """Recompute the Cholesky factor of ``base_cov`` and the public ``sd_or_cov``.
+
+        Only needed when ``base_cov`` itself changed: ``propose_sample`` multiplies ``L`` by
+        ``exp(log_sigma)``, so a scale-only update needs no factorisation.
+        """
+        symmetric = 0.5 * (self.base_cov + self.base_cov.T)
+        try:
+            self.L = np.linalg.cholesky(symmetric)
+        except np.linalg.LinAlgError:
+            # never observed with the shrinkage+ridge above; kept so that a pathological
+            # estimate degrades to its PSD projection instead of aborting the run
+            eigenvalues, eigenvectors = np.linalg.eigh(symmetric)
+            self.L = eigenvectors @ np.diag(np.sqrt(np.clip(eigenvalues, 1e-14, None)))
+        self._update_public_covariance()
+
+    def propose_sample(self, current_sample: npt.NDArray) -> npt.NDArray:
+        z = self._generator.standard_normal(self.no_parameters)
+        return current_sample + np.exp(self.log_sigma) * (self.L @ z)
+
+    # -- adaptation ---------------------------------------------------------------------
+    def adapt(self, proposed_sample: npt.NDArray, log_acceptance_probability: float,
+              current_sample: npt.NDArray,
+              subchain_log_acceptance_probabilities: list[float] | None = None) -> None:
+        alpha = acceptance_probability(log_acceptance_probability)
+        self.n += 1
+        self.log_sigma += self.n ** (-0.7) * (alpha - self.target_rate)
+
+        # Welford update of the mean/scatter of the POST-decision chain states
+        state = np.asarray(current_sample, dtype=float)
+        difference = state - self.mean
+        self.mean = self.mean + difference / self.n
+        self.M2 += np.outer(difference, state - self.mean)
+
+        self._period_alpha_sum += alpha
+        self._period_alpha_count += 1
+        if self.n >= self.warmup and self.n % self.period == 0 \
+                and self._install_covariance_from_statistics(self.n, self.M2):
+            self._refactor()  # base_cov changed: re-factorise (once per period at most)
         else:
-            self.initial_sd = np.sqrt(np.diag(self.sd_or_cov))
+            self._update_public_covariance()  # scale-only update, no factorisation needed
+        if self.n % self.period == 0:
+            self.adaptation_stats_rows.append((
+                self.n,
+                self._period_alpha_sum / max(self._period_alpha_count, 1),
+                self.log_sigma,
+                self._trace_over_d,
+                self._shrinkage_delta,
+            ))
+            self._period_alpha_sum = 0.0
+            self._period_alpha_count = 0
 
-    def adapt(self, proposed_sample: npt.NDArray, log_acceptance_probability: float):
-        self.samples = np.vstack((self.samples, proposed_sample))
-        # TODO: temporary thing?
-        acceptance_probability = min(1.0, np.exp(log_acceptance_probability))
-        self.aweights = np.append(self.aweights, acceptance_probability)
-        if self.sample_limit is not None and len(self.aweights) > self.sample_limit:
-            # bounded history (G1, Stage.adaptive_sample_limit): keep only the most recent
-            # sample_limit proposals; with sample_limit=None nothing is trimmed, which is
-            # bit-identical to the pre-G1 behaviour.
-            self.samples = self.samples[-self.sample_limit:]
-            self.aweights = self.aweights[-self.sample_limit:]
+    def _install_covariance_from_statistics(self, n: int, scatter: npt.NDArray) -> bool:
+        """``base_cov`` from ``(n, M2)``: shrinkage towards ``(tr C / d) I`` plus a relative ridge.
 
-        self.counter += 1
-        if self.counter % self.period == 0:
-            # Guard (WS7 "NaN-safe weights", finding A15c/d): if every acceptance weight in
-            # this period is zero (e.g. all proposals in the period were rejected) or
-            # non-finite, np.cov(..., aweights=...) divides by their sum and raises
-            # ZeroDivisionError; even when it does not raise, a degenerate weight set can
-            # yield a covariance with a zero/non-finite diagonal. In either case skip this
-            # adaptation step and keep the previous proposal covariance instead of crashing
-            # or corrupting sd_or_cov; the arithmetic below is otherwise unchanged, so every
-            # non-degenerate adaptation is bit-identical to before this guard was added.
-            weights_sum = np.sum(self.aweights)
-            degenerate = not np.isfinite(weights_sum) or weights_sum == 0 or np.any(~np.isfinite(self.aweights))
-            sample_cov = None
-            diag = None
-            if not degenerate:
-                sample_cov = np.cov(self.samples, aweights=self.aweights, rowvar=False)
-                diag = np.diag(sample_cov)
-                degenerate = bool(np.any(~np.isfinite(diag)) or np.any(diag == 0))
-            if degenerate:
-                warnings.warn(
-                    "adaptive proposal: degenerate acceptance weights/covariance in this "
-                    "period, keeping the previous proposal covariance",
-                    RuntimeWarning,
-                    stacklevel=2,
-                )
-            else:
-                current_rate = np.mean(self.aweights)
-                sd = np.sqrt(diag)
-                sample_corr = sample_cov/sd.reshape((self.no_parameters, 1))
-                sample_corr = sample_corr/sd.reshape(1, self.no_parameters)
-                sample_corr[sample_corr < -self.corr_limit] = -self.corr_limit
-                sample_corr[sample_corr > self.corr_limit] = self.corr_limit
-                np.fill_diagonal(sample_corr, 1.0)
-                sample_cov = sample_corr*sd.reshape((self.no_parameters, 1))
-                sample_cov = sample_cov*sd.reshape((1, self.no_parameters))
-                if self.init_flag:
-                    self.init_flag = False
-                    self.coef = np.mean(self.initial_sd/sd)
-                ratio = current_rate/self.target_rate
-                if ratio > 1.2:  # acceptance rate is too high:
-                    self.coef = self.coef*min(ratio**(2/self.no_parameters), 2.0)
-                    self.set_covariance(self.coef*sample_cov)
-                elif (1/ratio) > 1.2:  # acceptance rate is too low:
-                    self.coef = self.coef*max(ratio**(2/self.no_parameters), 0.5)
-                    self.set_covariance(self.coef*sample_cov)
+        Returns ``True`` iff a new ``base_cov`` was installed (so the caller knows whether the
+        Cholesky factor has to be recomputed)."""
+        d = self.no_parameters
+        if n < 2:
+            return False
+        C = scatter / (n - 1)
+        trace_over_d = float(np.trace(C)) / d
+        if not np.all(np.isfinite(C)) or not np.isfinite(trace_over_d) or trace_over_d <= 0.0:
+            # a chain that never moved (or a non-finite statistic): keep the previous covariance
+            # instead of installing a singular one the proposal could never leave
+            return False
+        delta = min(1.0, 2.0 * d / n)
+        C = (1.0 - delta) * C + delta * trace_over_d * np.eye(d)
+        self.base_cov = self.scale_factor * (C + 1e-6 * trace_over_d * np.eye(d))
+        self._trace_over_d = trace_over_d
+        self._shrinkage_delta = delta
+        return True
+
+    # -- cross-rank hand-over -----------------------------------------------------------
+    def adapted_state(self) -> npt.NDArray:
+        """``[n, mean (d), M2 (d*d), log_sigma]`` -- fixed length, same on every rank."""
+        return np.concatenate((
+            np.array([float(self.n)]),
+            self.mean.astype(np.float64).ravel(),
+            self.M2.astype(np.float64).ravel(),
+            np.array([float(self.log_sigma)]),
+        ))
+
+    def set_pooled_state(self, states: npt.NDArray) -> None:
+        """
+        Combine the ``adapted_state()`` rows of all chains into this proposal.
+
+        ``(n_r, mean_r, M2_r)`` are combined by the Chan-Golub-LeVeque parallel formula, which
+        gives exactly the statistics of the concatenated chains; ``log_sigma`` is averaged.
+        Pooling the SAMPLES (rather than averaging per-rank covariances) is what Craiu et al.
+        (2009) / Solonen et al. (2012) recommend and what removes the 6-17x rank disagreement
+        the 2026-09-18 study measured.
+
+        With a single row there is nothing to pool: the statistics are this chain's own and the
+        adapted covariance is left EXACTLY as the stage ended it (a covariance rebuilt at an
+        arbitrary ``n`` would differ from the one installed at the last period boundary). That
+        keeps ``run_local`` reproducing MPI chain 0 of a one-sampler run.
+        """
+        states = np.atleast_2d(np.asarray(states, dtype=float))
+        d = self.no_parameters
+        expected = 1 + d + d * d + 1
+        if states.shape[1] != expected:
+            raise ValueError(f"expected adapted-state rows of length {expected}, got {states.shape}")
+
+        counts = states[:, 0]
+        means = states[:, 1:1 + d]
+        scatters = states[:, 1 + d:1 + d + d * d].reshape(-1, d, d)
+        total = float(counts.sum())
+        if total > 0:
+            pooled_mean = (counts[:, None] * means).sum(axis=0) / total
+            pooled_scatter = scatters.sum(axis=0)
+            for count, mean in zip(counts, means):
+                shift = mean - pooled_mean
+                pooled_scatter = pooled_scatter + count * np.outer(shift, shift)
+            self.n = int(round(total))
+            self.mean = pooled_mean
+            self.M2 = pooled_scatter
+        self.log_sigma = float(states[:, -1].mean())
+
+        if states.shape[0] > 1 and self.n >= self.warmup:
+            self._install_covariance_from_statistics(self.n, self.M2)
+        self._refactor()
+
+    def carry_over(self) -> dict:
+        """Stage fields this adapted proposal hands to the following stages."""
+        return {"proposal_sd_or_cov": self.sd_or_cov}
+
+
+class PCN_adaptive(PCN):
+    """
+    ``PCN`` whose step size ``beta`` is adapted by a Robbins-Monro recursion on its logit
+    (new 2026-09-20, recommendation 6 of `16` §5; prototype `RESULTS_PROTO.md` §1 "P6", §7)::
+
+        alpha        = min(1, exp(log_acceptance_probability))
+        n           += 1
+        logit_beta  += n**(-0.7) * (alpha - target_rate)
+        beta         = sigmoid(logit_beta)
+
+    Adapting the logit keeps ``beta`` in ``(0, 1)`` by construction, so no clipping is needed.
+    Target 0.234 (not 0.5) is what the prototype measured: it recovers 0.77-0.99 of the ESS of
+    the best fixed ``beta`` on every problem and beats target 0.5 by 1.03-2.14x, while the
+    optimal ``beta`` spans 0.1-0.8 across problems, i.e. a fixed default cannot serve them all.
+
+    In a DAMH stage the feedback is the same overall outer acceptance probability
+    ``GaussRandomWalk_adaptive`` uses (pre-rejected iterations scored as 0).
+    """
+
+    adaptation_stats_header = ["n", "mean_acceptance_probability", "beta"]
+
+    def __init__(self, no_parameters: int, beta: float, prior_mean: npt.NDArray,
+                 prior_sd_or_cov: npt.ArrayLike, seed: int = 0,
+                 target_rate: float = 0.234, period: int = 10) -> None:
+        if not 0.0 < beta < 1.0:
+            raise ValueError(f"adaptive pCN needs an initial beta strictly inside (0, 1), got {beta}")
+        super().__init__(no_parameters=no_parameters, beta=beta, prior_mean=prior_mean,
+                         prior_sd_or_cov=prior_sd_or_cov, seed=seed)
+        self.target_rate = float(target_rate)
+        self.period = int(period)
+        self.n = 0
+        self.logit_beta = float(np.log(beta / (1.0 - beta)))
+        self._period_alpha_sum = 0.0
+        self._period_alpha_count = 0
+        self.adaptation_stats_rows: list[tuple] = []
+
+    def adapt(self, proposed_sample: npt.NDArray, log_acceptance_probability: float,
+              current_sample: npt.NDArray,
+              subchain_log_acceptance_probabilities: list[float] | None = None) -> None:
+        alpha = acceptance_probability(log_acceptance_probability)
+        self.n += 1
+        self.logit_beta += self.n ** (-0.7) * (alpha - self.target_rate)
+        self._set_beta_from_logit()
+        self._period_alpha_sum += alpha
+        self._period_alpha_count += 1
+        if self.n % self.period == 0:
+            self.adaptation_stats_rows.append((
+                self.n, self._period_alpha_sum / max(self._period_alpha_count, 1), self.beta))
+            self._period_alpha_sum = 0.0
+            self._period_alpha_count = 0
+
+    def _set_beta_from_logit(self) -> None:
+        # numerically stable sigmoid: never 0 or 1 for a finite logit
+        if self.logit_beta >= 0.0:
+            self.beta = 1.0 / (1.0 + float(np.exp(-self.logit_beta)))
+        else:
+            exponential = float(np.exp(self.logit_beta))
+            self.beta = exponential / (1.0 + exponential)
+
+    def adapted_state(self) -> npt.NDArray:
+        return np.array([float(self.n), float(self.logit_beta)])
+
+    def set_pooled_state(self, states: npt.NDArray) -> None:
+        """Average the logit over the chains (``n`` stays this chain's own count)."""
+        states = np.atleast_2d(np.asarray(states, dtype=float))
+        if states.shape[1] != 2:
+            raise ValueError(f"expected adapted-state rows of length 2, got {states.shape}")
+        self.logit_beta = float(states[:, 1].mean())
+        self._set_beta_from_logit()
+
+    def carry_over(self) -> dict:
+        return {"pcn_beta": self.beta}
 
 
 class Hamiltonian(Proposal):
@@ -349,7 +579,7 @@ class Hamiltonian(Proposal):
     ``needs_gradients=True``: requires ``set_gradient_functions`` to be called before
     ``propose_sample`` (``build_proposal``/the algorithm classes wire this to the
     surrogate's ``vjp``/``jacobian``, never the exact model -- see
-    ``docs/concepts.md``), and requires ``Configuration.use_surrogate_gradients=True``
+    ``docs/stages.md``), and requires ``Configuration.use_surrogate_gradients=True``
     in effect (``build_proposal`` asserts this).
     """
 
@@ -435,14 +665,27 @@ class Hamiltonian(Proposal):
         Returns:
             q: ndarray — final position
             p_end: ndarray — final momentum (after momentum flip)
+
+        Divergent trajectories (2026-09-20): as soon as ``q`` or ``p`` stops being finite the
+        integration is abandoned and the non-finite ``q`` is returned, so the remaining
+        surrogate-gradient evaluations are saved and the algorithm rejects the proposal without
+        calling the full model (``AlgorithmBase._reject_nonfinite_proposal``). The checks read
+        the state but never modify it, so a finite trajectory is bit-identical to the version
+        without them.
         """
         q = q0.copy()
         p = p0_start.copy()
         p = p - 0.5 * self.step_size * (self.log_likelihood_gradient(q) + self.log_prior_gradient(q))  # half step for momentum
-        for i in range(self.num_steps): 
+        if not _is_finite(p):
+            return q, -p
+        for i in range(self.num_steps):
             q = q + self.step_size * self.M_inv @ p  # full step for position
+            if not _is_finite(q):
+                return q, -p
             if i < self.num_steps - 1:
                 p = p - self.step_size * (self.log_likelihood_gradient(q) + self.log_prior_gradient(q))  # full step for momentum (except at the end)
+                if not _is_finite(p):
+                    return q, -p
         p = p - 0.5 * self.step_size * (self.log_likelihood_gradient(q) + self.log_prior_gradient(q))  # final half step for momentum
         p_end = -p  # negate momentum (for reversibility — does not affect acceptance)
         return q, p_end
@@ -451,17 +694,27 @@ class Hamiltonian(Proposal):
 class HamiltonianInfinite(Hamiltonian):
     """
     Hamiltonian proposal whose free flow is the exact solution of the harmonic oscillator
-    H(q, p) = 0.5 q^T q + 0.5 p^T M^{-1} p (a rotation in phase space), so that only the
-    likelihood gradient is integrated numerically (split integrator).
+    H(q, p) = 0.5 q^T q + 0.5 p^T M^{-1} p (a rotation in phase space, ``M = diag(sd^2)``
+    or the full matrix passed as ``sd_or_cov``), so that only the likelihood gradient is
+    integrated numerically (split integrator).
 
-    The rotation is prior-preserving only when the INTERNAL prior is N(0, I) (zero mean,
-    identity covariance) and the mass matrix is M = diag(sd^2) built from ``sd_or_cov``
-    (or the full matrix passed as ``sd_or_cov``). For any other prior the map is still
-    volume-preserving and reversible (composition of symplectic maps and a momentum flip),
-    hence a valid Metropolis-Hastings proposal whose prior term enters through
-    ``get_log_acceptance_probability``; it is just no longer prior-preserving.
-    The relation between the mass matrix and the prior covariance is documented as-is
-    (library_notes/09 decision 8).
+    ``sd_or_cov`` is permanently the MASS matrix, not the prior covariance (decision 8,
+    `library_notes/09_improvement_plan.md` §3 — kept, not reinterpreted: the rotation's
+    angle depends only on the product mass*prior_covariance, so it cannot be told apart
+    from a prior-covariance parametrisation without also changing the mixing amplitudes,
+    which the harmonic-oscillator flow fixes). The rotation preserves
+    ``0.5*q@q + 0.5*p@M_inv@p`` EXACTLY for any positive-definite mass ``M`` (verified
+    2026-09-18, not only for ``sd_or_cov == 1`` as an earlier version of this docstring
+    and its test claimed) -- but it is prior-preserving (i.e. it makes the proposal
+    exactly reversible w.r.t. an N(0,I) target with no extra prior-ratio correction) only
+    when the INTERNAL prior actually is N(0, I). That holds for every prior class this
+    library ships with an internal-space design (`PriorIndependentComponents`); a
+    hand-built `Normal` prior with `sd != 1` / `cov != I` would still be a VALID
+    Metropolis-Hastings proposal (the map stays volume-preserving and reversible --
+    composition of symplectic maps and a momentum flip -- and the real prior ratio still
+    enters through `get_log_acceptance_probability`), just an inefficient one for that
+    prior. `sd_or_cov=1` (the default) is the canonical dimension-robust choice for the
+    N(0,I) internal prior (mass = inverse prior covariance, i.e. mass = I here).
     """
 
     def _apply_prior_kinetic_flow(self, q: npt.NDArray, p: npt.NDArray) -> tuple[npt.NDArray, npt.NDArray]:
@@ -497,17 +750,158 @@ class HamiltonianInfinite(Hamiltonian):
         Returns:
             q: ndarray — final position
             p_end: ndarray — final velocity (after velocity flip)
+
+        Divergent trajectories are abandoned as in ``Hamiltonian._leapfrog`` (2026-09-20); the
+        checks do not touch the state, so a finite trajectory is bit-identical to the version
+        without them.
         """
         q = q0.copy()
         p = p0_start.copy()
         p = p - 0.5 * self.step_size * self.log_likelihood_gradient(q)  # half step for momentum
+        if not _is_finite(p):
+            return q, -p
         for i in range(self.num_steps):
             q, p = self._apply_prior_kinetic_flow(q, p)
+            if not (_is_finite(q) and _is_finite(p)):
+                return q, -p
             if i < self.num_steps - 1:
                 p = p - self.step_size * self.log_likelihood_gradient(q)  # full step for momentum (except at the end)
+                if not _is_finite(p):
+                    return q, -p
         p = p - 0.5 * self.step_size * self.log_likelihood_gradient(q)  # final half step for momentum
         p_end = -p  # negate momentum (for reversibility — does not affect acceptance)
         return q, p_end
+
+
+#: safety bound on ``|log eps - mu|`` in the dual-averaging recursion. ``H_bar`` is bounded by 1
+#: in absolute value, so ``log eps`` can transiently reach ``mu +- 20*sqrt(m)`` before the
+#: feedback catches up; clipping keeps ``exp`` from overflowing to ``inf`` (which would poison
+#: the leapfrog with NaNs) without touching any converged run -- ``exp(50) ~ 5e21``.
+_DUAL_AVERAGING_LOG_STEP_CLIP = 50.0
+
+
+class _DualAveragingStepSize:
+    """
+    Dual-averaging adaptation of the leapfrog ``step_size`` (Hoffman & Gelman 2014, *The
+    No-U-Turn Sampler*, JMLR 15, Algorithm 5 / §3.2.1), mixed into the Hamiltonian proposals
+    (new 2026-09-20, recommendation 4 of `16` §5; prototype `RESULTS_PROTO.md` §5).
+
+    Per update::
+
+        alpha        = min(1, exp(la))
+        m           += 1
+        H_bar        = (1 - 1/(m+t0)) * H_bar + (delta - alpha)/(m+t0)
+        log_eps      = mu - sqrt(m)/gamma * H_bar          # the step size actually used next
+        eta          = m**(-kappa)
+        log_eps_bar  = eta*log_eps + (1-eta)*log_eps_bar   # the averaged, frozen step size
+
+    with ``mu = log(10*step_size_0)``, ``gamma = 0.05``, ``t0 = 10``, ``kappa = 0.75`` and
+    ``delta = target_rate`` defaulting to **0.8** (not Beskos et al.'s 0.65: at 0.65 the
+    prototype overshot by ~2x into the ``eps*L ~ 2*pi`` resonance when the mass was
+    well-conditioned, `RESULTS_PROTO.md` §5.2).
+
+    The first few updates deliberately push the step size UP (``mu = log(10*step_size_0)``), which
+    can send an early leapfrog trajectory off to non-finite positions; that is harmless, because a
+    divergent trajectory is abandoned by the integrator, rejected without any model evaluation and
+    without being sent to the surrogate collector (``AlgorithmBase._reject_nonfinite_proposal``),
+    and scores ``alpha = 0`` here -- exactly the "divergent transition" signal the recursion needs.
+
+    In a DAMH stage one update is done per **sub-chain** step, on the sub-chain's own acceptance
+    probability against the surrogate posterior: the leapfrog integrates the SURROGATE gradient
+    field, so that is the Hamiltonian whose energy error the step size controls, and the outer
+    DAMH acceptance is flat over a 20x step range and therefore uninformative (`16` §5 item 4,
+    `15` §2.7). In an MH stage the single outer acceptance probability is used.
+
+    The mass (``sd_or_cov``) and ``num_steps`` are NOT adapted. Only ``step_size`` changes, and
+    nothing derived from it is cached: ``Hamiltonian._leapfrog`` reads ``self.step_size`` per
+    step and ``HamiltonianInfinite._apply_prior_kinetic_flow`` recomputes its rotation angles
+    (``step_size / sqrt(mass eigenvalue)``) on every call, so the integrator can never run with
+    a stale angle. ``set_step_size`` is the single place that changes it.
+    """
+
+    adaptation_stats_header = ["m", "mean_acceptance_probability", "log_step_size",
+                              "log_step_size_bar"]
+
+    def __init__(self, *args, target_rate: float = 0.8, gamma: float = 0.05, t0: float = 10.0,
+                 kappa: float = 0.75, period: int = 10, **kwargs) -> None:
+        super().__init__(*args, **kwargs)  # type: ignore[call-arg]
+        step_size_0 = float(self.step_size)  # type: ignore[attr-defined]
+        if not step_size_0 > 0.0:
+            raise ValueError(f"dual averaging needs a positive initial step_size, got {step_size_0}")
+        self.target_rate = float(target_rate)
+        self.gamma = float(gamma)
+        self.t0 = float(t0)
+        self.kappa = float(kappa)
+        self.period = int(period)
+        self.mu = float(np.log(10.0 * step_size_0))
+        self.H_bar = 0.0
+        self.log_eps_bar = float(np.log(step_size_0))
+        self.m = 0
+        self._period_alpha_sum = 0.0
+        self._period_alpha_count = 0
+        self.adaptation_stats_rows: list[tuple] = []
+
+    def set_step_size(self, step_size: float) -> None:
+        """Install a new leapfrog step size (nothing derived from it is cached, see the docstring)."""
+        self.step_size = float(step_size)  # type: ignore[attr-defined]
+
+    def adapt(self, proposed_sample: npt.NDArray, log_acceptance_probability: float,
+              current_sample: npt.NDArray,
+              subchain_log_acceptance_probabilities: list[float] | None = None) -> None:
+        if subchain_log_acceptance_probabilities is None:
+            log_probabilities = [log_acceptance_probability]
+        else:
+            log_probabilities = list(subchain_log_acceptance_probabilities)
+        for log_probability in log_probabilities:
+            self._dual_averaging_update(acceptance_probability(log_probability))
+
+    def _dual_averaging_update(self, alpha: float) -> None:
+        self.m += 1
+        m = self.m
+        self.H_bar = (1.0 - 1.0 / (m + self.t0)) * self.H_bar + (self.target_rate - alpha) / (m + self.t0)
+        log_eps = self.mu - np.sqrt(m) / self.gamma * self.H_bar
+        log_eps = float(np.clip(log_eps, self.mu - _DUAL_AVERAGING_LOG_STEP_CLIP,
+                                self.mu + _DUAL_AVERAGING_LOG_STEP_CLIP))
+        eta = m ** (-self.kappa)
+        self.log_eps_bar = eta * log_eps + (1.0 - eta) * self.log_eps_bar
+        self.set_step_size(np.exp(log_eps))
+
+        self._period_alpha_sum += alpha
+        self._period_alpha_count += 1
+        if m % self.period == 0:
+            self.adaptation_stats_rows.append((
+                m, self._period_alpha_sum / max(self._period_alpha_count, 1),
+                log_eps, self.log_eps_bar))
+            self._period_alpha_sum = 0.0
+            self._period_alpha_count = 0
+
+    # -- cross-rank hand-over -----------------------------------------------------------
+    def adapted_state(self) -> npt.NDArray:
+        return np.array([float(self.m), float(self.H_bar), float(self.log_eps_bar), float(self.mu)])
+
+    def set_pooled_state(self, states: npt.NDArray) -> None:
+        """Average ``log_eps_bar`` over the chains and freeze the live step size at it.
+
+        ``m``/``H_bar``/``mu`` stay this chain's own: they only drive the recursion, which does
+        not continue past the end of the stage (the next stage builds a fresh proposal).
+        """
+        states = np.atleast_2d(np.asarray(states, dtype=float))
+        if states.shape[1] != 4:
+            raise ValueError(f"expected adapted-state rows of length 4, got {states.shape}")
+        self.log_eps_bar = float(states[:, 2].mean())
+        self.set_step_size(np.exp(self.log_eps_bar))
+
+    def carry_over(self) -> dict:
+        return {"hamiltonian_step_size": float(np.exp(self.log_eps_bar))}
+
+
+class Hamiltonian_adaptive(_DualAveragingStepSize, Hamiltonian):
+    """``Hamiltonian`` with a dual-averaged leapfrog step size; see ``_DualAveragingStepSize``."""
+
+
+class HamiltonianInfinite_adaptive(_DualAveragingStepSize, HamiltonianInfinite):
+    """``HamiltonianInfinite`` with a dual-averaged leapfrog step size (the split integrator's
+    rotation angles are recomputed from ``step_size`` on every call, so they are never stale)."""
 
 
 class BlockProposal(Proposal):
@@ -516,10 +910,20 @@ class BlockProposal(Proposal):
     parameters on each call (``choose_group`` picks the group; only that group is
     updated per proposal). ``needs_gradients`` is True iff any sub-proposal needs
     gradients, in which case ``set_gradient_functions`` wraps the full gradient
-    functions to only expose that group's slice to each Hamiltonian-family
-    sub-proposal (other groups' gradient components are zeroed, not the sample's
-    actual values -- a known inefficiency for nonlinear models, not a correctness
-    bug: any gradient field still yields a valid reversible HMC proposal).
+    functions so that each Hamiltonian-family sub-proposal only sees its own group's
+    slice of the full gradient.
+
+    Gradient evaluation point (WS7, 2026-09-18): the wrapped gradient functions build the
+    full argument by putting the sub-proposal's trial coordinates into the active group and
+    the CURRENT SAMPLE's coordinates (tracked in ``self.current_sample``, updated by
+    ``propose_sample``) into the inactive groups. Before this change the inactive groups were
+    zero-filled, which evaluates the gradient at a point the chain is not at unless the model
+    is separable (e.g. linear in each group). This was never a correctness bug -- any gradient
+    field yields a valid reversible HMC proposal, and the acceptance ratio uses the exact model
+    -- but it degraded the leapfrog trajectory for nonlinear models. For a genuinely separable
+    model the two versions agree exactly (the inactive coordinates do not enter the active
+    group's gradient components at all), so only nonlinear/coupled models see a different
+    sample stream.
 
     Sub-proposal seeding (G5, 2026-09-17): the sub-proposals in ``list_of_proposals`` are
     re-seeded in ``__init__`` from this block's own ``seed`` via ``subproposal_seed``, so the
@@ -554,6 +958,11 @@ class BlockProposal(Proposal):
         self.no_groups = len(list_of_groups)
         self.group_index = 0  # will be set in propose_sample
         self.needs_gradients = any(proposal.needs_gradients for proposal in list_of_proposals)
+        # Full current state of the chain, kept up to date by propose_sample and used by the
+        # wrapped gradient functions to fill in the coordinates of the groups that are NOT
+        # being updated (WS7). Zeros until the first propose_sample call, which reproduces the
+        # pre-WS7 behaviour for a gradient evaluated before the chain ever moved.
+        self.current_sample = np.zeros(no_parameters)
 
     def _reseed_subproposals(self, seed: int) -> None:
         """Give every sub-proposal its own deterministic stream derived from ``seed`` (G5)."""
@@ -572,6 +981,10 @@ class BlockProposal(Proposal):
     def propose_sample(self, current_sample: npt.NDArray) -> npt.NDArray:
         group = self.list_of_groups[self.group_index]
         proposal = self.list_of_proposals[self.group_index]
+        # Remember the full current state BEFORE the sub-proposal runs: a Hamiltonian
+        # sub-proposal evaluates the wrapped gradient functions inside its leapfrog
+        # integrator, and those need the inactive groups' current coordinates (WS7).
+        self.current_sample = np.asarray(current_sample, dtype=float).copy()
         # Propose new values for the selected group:
         proposed_sample = current_sample.copy()
         proposed_sample[group] = proposal.propose_sample(current_sample[group])
@@ -584,16 +997,28 @@ class BlockProposal(Proposal):
         return proposal.get_log_acceptance_probability(log_likelihood_proposed, log_likelihood_current,
                                                       log_prior_proposed, log_prior_current)
 
+    def _full_gradient_argument(self, x: npt.NDArray, group) -> npt.NDArray:
+        """
+        Full parameter vector at which a group's gradient contribution is evaluated.
+
+        The active ``group`` gets the sub-proposal's trial coordinates ``x``, every other
+        group gets the chain's CURRENT value (``self.current_sample``, WS7) instead of the
+        zeros used before. A group's sub-proposal only ever sees ``[group]`` of the result,
+        so for a separable model the inactive coordinates cancel out and this is bit-identical
+        to the old zero-filled version; for a coupled model it is the gradient at the point
+        the chain actually occupies.
+        """
+        full_argument = self.current_sample.copy()
+        full_argument[group] = x
+        return full_argument
+
     def set_gradient_functions(self, log_likelihood_gradient_function: Callable, log_prior_gradient_function: Callable):
+        # The sub-proposals are reused unmodified: each one is handed gradient functions that
+        # take/return only its own group's coordinates, built from the full ones here.
         for proposal, group in zip(self.list_of_proposals, self.list_of_groups):
             if proposal.needs_gradients:
-                # TODO: this is a bit hacky, we create gradient functions for the group that call the full gradient functions with zeroes for other parameters. It would be cleaner if the proposal could directly call the full gradient functions with the full parameter vector and just use the relevant parts, but this way we can reuse existing proposals without modification.
                 def group_log_likelihood_gradient_function(x, group=group):
-                    full_argument = np.zeros(self.no_parameters)
-                    full_argument[group] = x
-                    return log_likelihood_gradient_function(full_argument)[group]
+                    return log_likelihood_gradient_function(self._full_gradient_argument(x, group))[group]
                 def group_log_prior_gradient_function(x, group=group):
-                    full_argument = np.zeros(self.no_parameters)
-                    full_argument[group] = x
-                    return log_prior_gradient_function(full_argument)[group]
+                    return log_prior_gradient_function(self._full_gradient_argument(x, group))[group]
                 proposal.set_gradient_functions(group_log_likelihood_gradient_function, group_log_prior_gradient_function)

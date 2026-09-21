@@ -4,7 +4,8 @@
 Construction of :class:`Samples` / :class:`StageSamples` from a
 :class:`surrDAMH.modules.run_data.RunData` (output format v2), plus the per-run
 bookkeeping that every other part of the package reads: stage names, ``notes``,
-``subchain_stats``, the acceptance ``summary`` table and the raw-snapshot loader.
+``subchain_stats``, ``adaptive_stats``, the acceptance ``summary`` table and the
+raw-snapshot loader.
 
 Split out of the former single-file ``surrDAMH/post_processing.py`` (WS9b). ``Samples``
 is assembled here as the end of a linear mixin chain --
@@ -122,9 +123,17 @@ class Samples(SamplesReports):
         self.subchain_stats = [pd.DataFrame() if stats is None else stats.copy()
                                for stats in self.run_data.subchain_stats]
 
+    def load_adaptive_stats(self):
+        """``adaptive_stats[stage]``: the per-period adaptation trace of every chain of an
+        ``adaptive=True`` stage, empty for every stage whose proposal did not adapt
+        (columns depend on the proposal class, see ``docs/outputs.md``)."""
+        self.adaptive_stats = [pd.DataFrame() if stats is None else stats.copy()
+                               for stats in self.run_data.adaptive_stats]
+
     def summarize(self):
         self.load_notes()
         self.load_subchain_stats()
+        self.load_adaptive_stats()
         # create pandas data frame containing sums of dataframes in self.notes:
         summary = pd.DataFrame()
         for notes in self.notes:

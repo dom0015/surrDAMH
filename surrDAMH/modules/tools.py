@@ -42,10 +42,8 @@ def evaluate_on_a_grid(Solver, par0_grid, par1_grid, filename):
 def generate_surrogate_test_data(prior_distribution, solver, n_test: int, seed: int,
                                  transform_before_surrogate: bool, conf: surrDAMH.Configuration) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Superseded by ``surrDAMH.modules.test_data.TestData.generate`` (WS5); no caller left in the tree."""
-    rng_state = np.random.get_state()
-    np.random.seed(seed)
-    test_parameters = np.vstack([prior_distribution.rvs() for _ in range(n_test)])
-    np.random.set_state(rng_state)
+    rng = np.random.default_rng(seed)  # WS4, 2026-09-18: owned generator instead of global save/restore
+    test_parameters = np.vstack([prior_distribution.rvs(generator=rng) for _ in range(n_test)])
 
     if transform_before_surrogate:
         surrogate_test_parameters = np.vstack([

@@ -1,9 +1,12 @@
 # `Configuration` reference
 
 `surrDAMH.Configuration` (`surrDAMH/configuration.py`), one instance constructed
-identically on every MPI rank (not broadcast or cross-checked — an inconsistent copy
-across ranks is not detected until it causes a mismatched collective call,
-`library_notes/10_manual_review_notes.md` §2.8/2.9). `__post_init__` derives the MPI
+identically on every MPI rank — and checked: `SamplingFramework.run()` broadcasts rank 0's
+requested values of the fields in `POSTERIOR_AFFECTING_FIELDS` and every rank asserts
+equality, so a script that builds a different `Configuration` per rank aborts the job at
+start-up instead of sampling a different posterior per chain (finding 2.9;
+`modules/communication.py::check_configuration_consistency`). Fields that are not
+posterior-affecting are not compared. `__post_init__` derives the MPI
 role layout (`no_samplers`, `rank_collector`, `rank_solvers_pool`) from
 `MPI.COMM_WORLD`'s size and `use_collector`/`use_solvers_pool` — see
 [`running.md`](running.md) for the resulting process-count table.
@@ -25,14 +28,13 @@ role layout (`no_samplers`, `rank_collector`, `rank_solvers_pool`) from
 | `initial_samples_distribution` | `Distribution\|None` | `None` | Source for `initial_sample_type="user_specified"`. | yes, when used |
 | `continued_from_dir` | `str\|None` | `None` | Source run directory for `initial_sample_type="continued"`. | yes, when used |
 | `lhs_scale` | `float\|ndarray` | `1.0` | Spread of the LHS initial-sample design (`initial_sample_type="lhs"`). | yes, when used |
-| `state_dependent_approximation` | `bool` | `False` | Shift the DAMH surrogate approximation by the model/surrogate error at the current state. | **unverified** for `Stage.subchain_max_length > 1` (finding 1.1); warns at construction if `True` |
 | `min_snapshots_initial` | `int` | `1` | Snapshots needed before the first surrogate is trained. | **yes**, for DAMH-SMU (changes retrain timing → accept/reject sequence) |
 | `min_snapshots_to_update` | `int` | `1` | Further snapshots needed before each retrain. | **yes**, for DAMH-SMU |
-| `max_collected_snapshots_per_loop` | `int` | `1000` | Collector-side batching cap per poll loop. | no (performance) |
+| `max_collected_snapshots_per_loop` | `int` | `1000` | Collector-side batching cap per poll loop. | **yes** — controls exactly when the surrogate is (re)trained (`surrDAMH.configuration.POSTERIOR_AFFECTING_FIELDS`), hence the DAMH-SMU accept/reject sequence |
 | `max_sampler_isend_requests` | `int` | `100` | Size of the sampler→collector snapshot `isend` buffer. | no (performance) |
 | `use_surrogate_gradients` | `bool` | `True` | Whether Hamiltonian-family proposals may use surrogate autograd. | **yes** — may be silently forced to `False` by `SamplingFramework` if the surrogate/settings are incompatible; the *effective* value is recorded in `run_manifest.json` |
 | `paths_to_append` | `list[str]\|None` | `None` | Appended to `sys.path` in this process only. | **ineffective for spawned children** (finding M18): they unpickle `conf` without running `__post_init__`. No longer needed to locate the solver module — `SolverSpec` stores an absolute `solver_module_path` since WS5 — but a solver module whose own *imports* need these directories still fails in the child; use `PYTHONPATH` for those |
-| `max_buffer_size` | `int` | `1 << 30` | Bytes pre-allocated for the collector→sampler evaluator `irecv` buffer. | no (performance/buffering) |
+| `max_buffer_size` | `int` | `1 << 30` | Bytes pre-allocated for the collector→sampler evaluator `irecv` buffer. Lower it for a smaller memory footprint per sampler, or raise it for a large surrogate (e.g. a big NN); the collector checks the pickled evaluator's actual size against this every time it builds one and raises `RuntimeError` before sending if it would not fit (warns above half, 2026-09-18, finding 4.1). | no (performance/buffering) |
 | `debug` | `bool` | `False` | Collector-side: print extra diagnostics. | no |
 | `torch_threads` | `int\|None` | `1` | Torch intra-op CPU thread count, set on every rank that has torch loaded (samplers evaluating the NN surrogate; the collector when it trains on CPU — irrelevant on GPU). `None` leaves torch's own default (all visible cores per process), which oversubscribes the node once more than one rank evaluates/trains the NN. Author decision 2026-09-18; see [`running.md`](running.md#torch-cpu-threads). | no (performance only) |
 
@@ -50,7 +52,8 @@ configuration plus one block per stage once on rank 0 before dispatching to the 
 and `run_local()` does the same; a three-stage run takes about 34 lines.
 
 Values are shown *after* every silent correction, which is the point: `Stage.__post_init__`
-forcing `surrogate_model_updates=False` in an MH stage or `adaptive=False` for pCN, the
+resolving `surrogate_model_updates` (`None` -> the stage type's default; `True` refused on an
+MH stage whose proposal needs no gradients), the
 default `max_evaluations=10` inserted when no stopping condition was given, and the
 `[effective] use_surrogate_gradients: requested=… , in effect=…` line that
 `Configuration.describe(use_surrogate_gradients_requested=…)` adds when

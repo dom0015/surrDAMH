@@ -17,7 +17,7 @@ needs from "below" is visible through ordinary single inheritance.
 
 No behaviour changes here: the six methods below are moved verbatim from
 ``Samples`` in ``loading.py``; ``Samples.__init__`` (and the methods that only
-``Samples`` itself needs -- ``load_notes``, ``load_subchain_stats``, ``summarize``,
+``Samples`` itself needs -- ``load_notes``, ``load_subchain_stats``, ``load_adaptive_stats``, ``summarize``,
 ``get_summary``, ``load_snapshots``) stay in ``loading.py``.
 """
 
@@ -54,12 +54,32 @@ class SamplesBase:
     summary: pd.DataFrame
     notes: List[pd.DataFrame]
     subchain_stats: List[pd.DataFrame]
+    adaptive_stats: List[pd.DataFrame]  # empty DataFrame for a stage whose proposal did not adapt
 
     def _resolve_stages(self, stages_to_disp: Iterable | None) -> List[int]:
-        """Stage indices to include; ``None`` means every stage of the run."""
+        """
+        Stage indices to include; ``None`` means every stage of the run.
+
+        Entries may be positional indices (``int``) or stage names as produced by
+        ``surrDAMH.stages.stage_name()`` (``str``, e.g. ``"alg0000_MH"``) -- string
+        entries are resolved against ``self.stage_names`` first (WS9 bullet 5), then the
+        existing index-based validation below runs unchanged, so a caller that only ever
+        passed integers sees no behaviour change.
+        """
         if stages_to_disp is None:
             return list(range(self.no_stages))
-        stages = [int(stage) for stage in stages_to_disp]
+        name_to_index = {name: index for index, name in enumerate(self.stage_names)}
+        stages = []
+        for stage in stages_to_disp:
+            if isinstance(stage, str):
+                if stage not in name_to_index:
+                    raise ValueError(
+                        f"stages_to_disp contains unknown stage name {stage!r}; the run in "
+                        f"{self.sampling_output_dir} has stage(s) named {self.stage_names}."
+                    )
+                stages.append(name_to_index[stage])
+            else:
+                stages.append(int(stage))
         out_of_range = [stage for stage in stages if not 0 <= stage < self.no_stages]
         if out_of_range:
             raise IndexError(

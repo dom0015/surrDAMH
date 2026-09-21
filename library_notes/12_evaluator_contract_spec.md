@@ -1,5 +1,12 @@
 # Evaluator/Updater contract — specification (WS6)
 
+**Dated record.** Pre-implementation design draft (2026-09-16), implemented as proposed with
+the decisions recorded in `09_improvement_plan.md` §3. Kept for the conformance-matrix
+rationale; the current contract is `docs/writing_a_surrogate.md` and `surrDAMH/surrogates/parent.py`.
+Inline references below to `03_surrogates_and_distributions.md` point to a per-subsystem review
+note deleted 2026-09-18 (superseded by `06_findings_consolidated.md`) — historical citations,
+not live links.
+
 **Status: IMPLEMENTED (2026-09-17).** §1 below is a historical record of the *pre-WS6* state;
 §2 is the contract that now holds. Applied evidence with numbers:
 `library_notes/10_manual_review_notes.md` §2.16; user-facing summary: `CHANGELOG.md` WS6;
@@ -34,6 +41,14 @@ Deviations from this draft, decided by the author on 2026-09-17 and applied inst
 6. §4 open question 5: `neural_network_surrogate.py` **and** `sampling_TSX.py` were both migrated
    to the preset now (the author decided to keep the TSX example);
    `neural_network_surrogate_copy.py` was already deleted.
+7. **2026-09-18**: §2's "document, don't wire / `Ridge` is out of scope" row for the classical
+   surrogates is fully superseded — findings 3.3 and 3.10 were implemented (author-approved):
+   `PolynomialSklearnUpdater` is now `StandardScaler → PolynomialFeatures → Ridge(alpha=1e-6)`
+   with `ridge__sample_weight` and a minimum-snapshot rule, and `RBFInterpolationUpdater`
+   de-duplicates snapshots, caps `neighbors` at `max_neighbors=50` and no longer has the
+   shifted-copy fallback. Contract-relevant detail: `Ridge.predict` returns `(n,)` for
+   `no_observations == 1`, so `PolynomialSklearnEvaluator.__call__` reshapes explicitly to keep
+   the `(n, q)` contract of §2.
 
 Shapes in §1 were read from the actual `__call__`/`jacobian`/`vjp` bodies as they were before
 WS6, not inferred from docstrings.

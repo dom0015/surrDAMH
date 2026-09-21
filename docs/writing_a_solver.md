@@ -26,6 +26,11 @@ class MySolver(surrDAMH.solvers.Solver):
 - `solver_tag`: if `Configuration.solver_returns_tag=True`, return
   `(observations, tag)` from `get_observations()` instead; `tag < 0` marks a failed
   solve (the solvers pool then substitutes zeros and forwards the negative tag).
+  `tag = -2` is **reserved by the library** and must not be returned by a solver: it
+  marks a proposal that was not finite and therefore never reached the solver at all
+  (`surrDAMH.modules.algorithms.SOLVER_TAG_NONFINITE_PROPOSAL`, 2026-09-20). Like any
+  negative tag it yields `log_likelihood = -inf` and keeps the sample out of the
+  surrogate training data.
 - `visualize_solution(show=False) -> list[(figure, axes)]`: optional, called by
   `SamplingFramework.write_report()` on the best-fit sample; default returns `[]`.
 - Optional duck-typed attributes (checked with `hasattr`, not required): `par_names`

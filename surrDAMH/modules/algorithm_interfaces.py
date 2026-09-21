@@ -68,7 +68,6 @@ class AlgorithmConfiguration(Protocol):
     transform_before_saving: bool
     save_snapshots_to_file: bool
     transform_before_surrogate: bool
-    state_dependent_approximation: bool
     use_surrogate_gradients: bool
 
 

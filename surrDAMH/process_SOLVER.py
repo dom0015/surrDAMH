@@ -15,6 +15,7 @@ import numpy as np
 from mpi4py import MPI
 
 from surrDAMH.configuration import Configuration
+from surrDAMH.modules.communication import ServiceLoopThrottle
 from surrDAMH.modules.tools import ensure_dir
 from surrDAMH.solver_specification import SolverSpec
 
@@ -81,7 +82,9 @@ def run_SOLVER(conf: Configuration, solver_spec: SolverSpec):
         comm_world.send([sent_data.copy(), solver_tag], dest=rank_dest, tag=occupied_by_tag[i])
         sampler_can_send[samplers_rank == rank_dest] = True
 
-    def receive_parameters_from_sampler():
+    def receive_parameters_from_sampler() -> bool:
+        """Receive at most one message from each sampler; returns True if any was received."""
+        received_any = False
         sources = samplers_rank[sampler_can_send]
         sources = np.random.permutation(sources)
         for rank in sources:
@@ -91,6 +94,7 @@ def run_SOLVER(conf: Configuration, solver_spec: SolverSpec):
                 rank_source = status.Get_source()
                 tag = status.Get_tag()
                 comm_world.Recv(received_data, source=rank_source, tag=tag)
+                received_any = True
                 sampler_can_send[samplers_rank == rank_source] = False
                 if tag == 0:  # if received message has tag 0, switch corresponding sampler to inactive
                     # there will be no other message from that sampler
@@ -98,13 +102,22 @@ def run_SOLVER(conf: Configuration, solver_spec: SolverSpec):
                 else:  # put the request into queue (remember source and tag)
                     parameters_queue.append([rank_source, tag, received_data.copy()])
                     # nothing else will come from this sampler until completion of this request
+        return received_any
+
+    # findings 4.2/M11: the loop below is otherwise a pure busy-wait on Iprobe/Iprobe-with-child and
+    # pegs a core at 100% while every child is still computing. did_something tracks whether an
+    # iteration did any real work; the throttle yields the core only once the loop has been idle
+    # for a while (see ServiceLoopThrottle). No message is sent, received or reordered because of
+    # this, and a busy pool spins exactly as it did before.
+    throttle = ServiceLoopThrottle()
 
     while any(sampler_is_active):  # while at least 1 sampling algorithm is active
-        receive_parameters_from_sampler()
+        did_something = receive_parameters_from_sampler()
         for i in range(conf.no_solvers):  # for all child solvers
             if not child_can_solve[i]:  # if the child is busy, check if it finished its request
                 if comm_with_child[i].is_solved():  # if finished, send solution to sampler
                     receive_observations_and_resend(i)
+                    did_something = True
             if child_can_solve[i]:
                 if parameters_queue:  # if the queue is not empty
                     rank_source, tag, received_data = parameters_queue.popleft()
@@ -112,6 +125,8 @@ def run_SOLVER(conf: Configuration, solver_spec: SolverSpec):
                     occupied_by_tag[i] = tag
                     comm_with_child[i].send_parameters(received_data)
                     child_can_solve[i] = False
+                    did_something = True
+        throttle.step(did_something)
     for i in range(conf.no_solvers):
         f = getattr(comm_with_child[i], "terminate", None)
         if callable(f):

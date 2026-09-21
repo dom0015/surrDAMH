@@ -268,8 +268,6 @@ def _continued_from(conf: Any) -> dict[str, Any] | None:
 
 def _unverified_options(conf: Any, use_surrogate_gradients_requested: bool | None) -> list[str]:
     options = []
-    if getattr(conf, "state_dependent_approximation", False):
-        options.append("state_dependent_approximation=True (unverified for subchain_max_length > 1, finding 1.1)")
     if (use_surrogate_gradients_requested and not conf.use_surrogate_gradients):
         options.append("use_surrogate_gradients was disabled by SamplingFramework")
     return options

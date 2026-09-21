@@ -2,8 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Report writers for one sampling run: the self-contained extended HTML report
-(``html_report_extended``) plus the two legacy single-file reports (``pdf_report``,
-``html_report``).
+(``html_report_extended``) plus the legacy single-file report (``html_report``).
 
 Split out of the former single-file ``surrDAMH/post_processing.py`` (WS9b).
 ``SamplesReports(SamplesPlots)`` is the last link of the mixin chain combined into
@@ -26,56 +25,6 @@ from surrDAMH.post_processing.plots import SamplesPlots
 
 class SamplesReports(SamplesPlots):
     """Reporting layer of :class:`surrDAMH.post_processing.Samples` (see module docstring)."""
-
-    def pdf_report(self, no_observations: int, chosen_observations: np.ndarray | None = None, grid: np.ndarray | None = None,
-                   grid_interp: np.ndarray | None = None, bins: List[int] | None = None, chains_to_disp: Iterable | None = None,
-                   stages_to_disp: List[int] | None = None, observations: np.ndarray | None = None, cmap="viridis_r"):
-        """
-        Creates a report in pdf format containing all of the above post-processing tools, 
-        e.g. summary table, histograms of observations, chain traces.
-
-        Args:
-            no_observations (int): number of observations
-            chosen_observations (ndarray of int of length N): indices forming the time series (otherwise all are used)
-            grid (ndarray of float of length N): time values for the time series (otherwise range(N) is used)
-            grid_interp (ndarray of float): time grid for horizontal axis (otherwise grid_inter = grid)
-            bins (list of int of length 2): [bins_x, bins_y] (optional)
-            chains_to_disp (list of int of length N): chains that should be included (otherwise all chains are included)
-            stages_to_disp (list of int): stages that should be included (otherwise all stages are included)
-            observations (ndarray of shape (no_observations,)): vector of observations (optional)
-        """
-        from matplotlib.backends.backend_pdf import PdfPages
-        with PdfPages('report.pdf') as pdf:
-            # summary table:
-            fig, ax = plt.subplots(figsize=(10, 2))
-            try:
-                ax.axis('tight')
-                ax.axis('off')
-                table = ax.table(cellText=self.summary.values, colLabels=self.summary.columns, rowLabels=self.summary.index, loc='center')
-                table.auto_set_font_size(False)
-                table.set_fontsize(8)
-                table.scale(1.2, 1.2)
-                pdf.savefig(fig)
-            finally:
-                plt.close(fig)
-
-            # histograms of observations:
-            fig = self.hist_observations(no_observations=no_observations, chosen_observations=chosen_observations,
-                                         grid=grid, grid_interp=grid_interp, bins=bins, chains_to_disp=chains_to_disp,
-                                         stages_to_disp=stages_to_disp, observations=observations, cmap=cmap)
-            try:
-                pdf.savefig(fig)
-            finally:
-                plt.close(fig)
-
-            # chain traces:
-            fig, _ = self.plot_chains(average=False, parameters_to_disp=None, stages_to_disp=stages_to_disp,
-                                      scale=None, par_names=None, burn_in=None,
-                                      chains_to_disp=chains_to_disp)
-            try:
-                pdf.savefig(fig)
-            finally:
-                plt.close(fig)
 
     def html_report(self, no_observations: int, chosen_observations: np.ndarray | None = None, grid: np.ndarray | None = None,
                     grid_interp: np.ndarray | None = None, bins: List[int] | None = None, chains_to_disp: Iterable | None = None,
@@ -142,7 +91,8 @@ class SamplesReports(SamplesPlots):
                             include_expensive_sections: bool = False,
                             field_statistics: List[dict[str, Any]] | None = None,
                             configuration: Any | None = None,
-                            ranking_mode: Literal["l2", "posterior", "likelihood"] = "l2"):
+                            ranking_mode: Literal["l2", "posterior", "likelihood"] = "l2",
+                            pool_mode_note: str | None = None):
         """
         Creates an extended report in HTML format containing all available post-processing tools,
         including visualizations and statistics for combined stages and individual stages separately.
@@ -173,6 +123,11 @@ class SamplesReports(SamplesPlots):
                 keys "name", "mean", "std", and optionally "coordinates".
             configuration (Any | None): Run configuration to render near the top of the report. If
                 None, the effective configuration recorded in ``run_manifest.json`` is used.
+            pool_mode_note (str | None): finding 2.7 -- when the caller has no live Solver
+                on the reporting rank (``use_solvers_pool=True``), a short explanatory
+                note to show in place of the sections that need one (parameter names,
+                posterior field statistics) instead of silently falling back to generic
+                labels / an unexplained "not supplied" message.
 
         Notes:
             ``chains_to_disp`` restricts every sample-derived section (moments, histograms,
@@ -341,6 +296,11 @@ class SamplesReports(SamplesPlots):
         html_parts.append('        <h3>2.1 Posterior Mean and Covariance Matrix</h3>')
         html_parts.append('        <p class="description">The posterior mean represents the expected value of each parameter, ')
         html_parts.append('        while the covariance matrix shows the variance and correlation structure among parameters.</p>')
+        if par_names is None and pool_mode_note:
+            # finding 2.7: par_names normally comes from the live Solver; explain the
+            # generic "Parameter N" labels below instead of leaving it unexplained.
+            html_parts.append(f'        <p class="description" style="color: orange;">{escape(pool_mode_note)} '
+                              'Parameter names below fall back to generic labels ("Parameter N").</p>')
         posterior_mean, cov = self.get_mean_and_cov(stages_to_disp=stages_to_disp, chains_to_disp=chains_to_disp)
 
         html_parts.append('        <div class="stats-table">')
@@ -463,6 +423,10 @@ class SamplesReports(SamplesPlots):
                     html_parts.append(f'        <img src="data:image/png;base64,{img_base64}" alt="{field_name}">')
                 except Exception as e:
                     html_parts.append(f'        <p class="description" style="color: orange;">Field statistics unavailable: {str(e)}</p>')
+        elif pool_mode_note:
+            # finding 2.7: distinguish "no live Solver to compute these from" from the
+            # generic "nothing was supplied" case below.
+            html_parts.append(f'        <p class="description" style="color: orange;">{escape(pool_mode_note)}</p>')
         else:
             html_parts.append('        <p class="description">No posterior field statistics were supplied for this report.</p>')
         html_parts.append('        </div>')

@@ -11,8 +11,8 @@ where `u` are unknown parameters, `G` an expensive forward model (a PDE solver, 
 argument's `logpdf`, evaluated at `y − G(u)` or however the user's `Distribution`
 subclass defines it — the library never subtracts `y` itself, that is the caller's
 `likelihood`'s job). One MPI rank runs one Markov chain; several ranks run several
-chains of the same posterior in parallel, independently (no inter-chain coupling beyond
-adaptive-proposal covariance averaging, see `docs/stages.md`).
+chains of the same posterior in parallel, independently (the only inter-chain coupling is the
+end-of-stage pooling of an adaptive proposal's adaptation statistics, see `docs/stages.md`).
 
 ## Internal vs. physical space
 
@@ -73,7 +73,8 @@ delayed-acceptance scheme with one sub-chain step per outer iteration.
 
 ## DAMH-SMU (surrogate model updates during sampling)
 
-With `Stage.surrogate_model_updates=True` (DAMH-SMU) the surrogate keeps retraining on
+With `Stage.surrogate_model_updates=True` (DAMH-SMU; `None`, the default, means `True` for a
+DAMH stage) the surrogate keeps retraining on
 the collector while the chain runs. To keep the telescoping in step 2 valid, the
 evaluator is **frozen for the duration of one sub-chain**: it is refreshed at most once,
 right before the sub-chain starts, and held fixed until the sub-chain ends (a new
@@ -85,16 +86,25 @@ derivation comment in `Algorithm_DAMH.run` and
 before/after sample-stream comparison (the freeze changed DAMH-SMU streams for
 `subchain_max_length > 1`; `subchain_max_length=1` is unaffected).
 
-## `state_dependent_approximation` (unverified)
+Since WS7 (2026-09-18) the same field also opts an **MH** stage with a gradient-based proposal
+(`Hamiltonian`/`HamiltonianInfinite`, or a `block` proposal containing one) into refreshing its
+surrogate: it then polls once per iteration and re-installs the proposal's gradient functions
+when a newer evaluator arrives. There is no telescoping constraint to respect here, because an
+MH stage's accept/reject test uses the exact model only — the surrogate enters through the
+proposal's gradients alone, and the chain targets the exact posterior for any gradient field.
+The default (`None`) keeps the pre-WS7 behaviour: one evaluator for the whole MH stage.
 
-`Configuration.state_dependent_approximation=True` uses the surrogate as an *additive
-correction* around the current exact state (`observations_approx + G(x) − G~(x)`)
-instead of using the surrogate values directly. This is **not validated** for
-`Stage.subchain_max_length > 1` (the shifted sub-chain kernel's reversibility has not
-been derived, `library_notes/06_findings_consolidated.md` finding 1.1); the default is
-`False`, and setting it to `True` raises a `RuntimeWarning` at `Configuration`
-construction. Do not use it for `subchain_max_length > 1` unless you have checked the
-theory yourself (`library_notes/09_improvement_plan.md` §3 decision 1, §4 item 1).
+## Why the surrogate must not depend on the current state
+
+The correction above cancels only because the sub-chain is reversible w.r.t. **one fixed**
+surrogate posterior `pi~`: that is what gives `Q(y→x)/Q(x→y) = pi~(y)/pi~(x)`. A surrogate
+re-centred on the outer chain's current state — e.g. the removed
+`Configuration.state_dependent_approximation`, which used `observations_approx + G(x₀) − G~(x₀)`
+instead of the surrogate values directly — makes `pi~` a different density at every outer step,
+so that identity (and with it the DAMH acceptance ratio) no longer holds. This is true already at
+`subchain_max_length = 1`, not only for `> 1` as this document previously claimed; the option was
+therefore removed on 2026-09-18 rather than fixed (`library_notes/06_findings_consolidated.md`
+finding 1.1).
 
 ## What "posterior-affecting" means in this documentation
 

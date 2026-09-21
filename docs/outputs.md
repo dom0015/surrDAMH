@@ -19,9 +19,10 @@ sampling_output/
                                            log_likelihood, log_prior                                    (header row; only if save_snapshots_to_file)
   notes/<stage.name>/rank%04d.csv          accepted, rejected, pre-rejected, sum, seed                  (header row)
   subchain_stats/<stage.name>/rank%04d.csv iteration, subchain_max_length, subchain_accepted, subchain_acceptance_rate, correction_log_ratio, outer_proposed_changed, outer_accepted, rank_world   (header row; DAMH stages only)
+  adaptive_stats/<stage.name>/rank%04d.csv  one row per adaptation period                                (header row; adaptive=True stages only)
   last_sample/<stage.name>/rank%04d.npz    parameters (float64), no_parameters                          (one file per chain, written after each stage)
   surrogate_quality.csv                    snapshots_total, batch_size, rmse, max_abs_error             (header row; collector only)
-  surrogate_quality_test.csv               update_index, snapshots_total, n_test, max_log_posterior, rmse, max_abs_error, weighted_rmse, weighted_mean_abs_error   (header row; collector only)
+  surrogate_quality_test.csv               update_index, snapshots_total, n_test, max_log_posterior, rmse, max_abs_error, weighted_rmse, weighted_mean_abs_error, weighted_ess   (header row; collector only; weighted_ess added 2026-09-18, finding S10 -- effective sample size of the posterior weights, Kish's formula; equals n_test when no weights are supplied)
   run_manifest.json                        see "Run manifest" below
 solver_output/rank<k>/                     solver-defined scratch directory
 post_processing_output/
@@ -82,7 +83,7 @@ stage type, NaN where a quantity does not exist.
 |---|---|
 | `state_type` | `accepted`, `rejected` or `prerejected` |
 | `par_0 .. par_{p-1}` | the proposed parameters (physical space if `transform_before_saving=True`) |
-| `solver_tag` | the solver's status for this proposal (`< 0` = solver failure, observations invalid); always `0` for `prerejected` |
+| `solver_tag` | the solver's status for this proposal (`< 0` = solver failure, observations invalid); `-2` = the proposal itself was not finite, so the solver was **never called** for it (2026-09-20, see `docs/writing_a_solver.md`); always `0` for `prerejected` |
 | `obs_0 .. obs_{m-1}` | **exact** model observations `G(x)`. **All NaN for `prerejected` rows** — the exact model was never called for them. |
 | `obs_approx_0 .. obs_approx_{m-1}` | **surrogate** observations `G~(x)`. All NaN where no surrogate value exists (any plain MH stage); filled for every DAMH row. |
 | `log_likelihood` | the log-likelihood **the acceptance decision for this row used**: the exact one for `accepted`/`rejected` rows, the **surrogate** one for `prerejected` rows (the sub-chain never left the current state, so only the surrogate was ever evaluated). |
@@ -112,6 +113,31 @@ One row per outer DAMH iteration: `iteration, subchain_max_length, subchain_acce
 subchain_acceptance_rate, correction_log_ratio, outer_proposed_changed, outer_accepted,
 rank_world`.
 
+### `adaptive_stats/<stage>/rank%04d.csv` (`adaptive=True` stages only)
+
+One row per completed adaptation period (10 `adapt()` calls by default), written at stage end
+(new 2026-09-20). The columns depend on the proposal class, and every row ends with
+`rank_world`:
+
+| proposal | columns |
+|---|---|
+| `GaussRandomWalk_adaptive` | `n, mean_acceptance_probability, log_sigma, trace_C_over_d, shrinkage_delta, rank_world` |
+| `PCN_adaptive` | `n, mean_acceptance_probability, beta, rank_world` |
+| `Hamiltonian_adaptive`, `HamiltonianInfinite_adaptive` | `m, mean_acceptance_probability, log_step_size, log_step_size_bar, rank_world` |
+
+`mean_acceptance_probability` is the mean over that period of the acceptance probability the
+proposal was fed (which in a DAMH stage is the *overall* outer probability for RWMH/pCN and the
+*sub-chain* probability for the Hamiltonian family, see `docs/stages.md`). For the random walk,
+`trace_C_over_d` and `shrinkage_delta` are `NaN` in the periods before the `warmup=100` count is
+reached, where the covariance is not yet re-estimated (the Robbins–Monro `log_sigma` runs from
+the first call). The Hamiltonian's `m` counts *sub-chain* steps in a DAMH stage, so it advances
+by `subchain_max_length` per outer iteration.
+
+No file is written for a stage whose proposal does not adapt, and none for a stage with
+`save_to_file=False`; `read_run` then reports `adaptive_stats[stage] is None`
+(`Samples.adaptive_stats[stage]` an empty `DataFrame`). A run produced before this file existed
+reads back the same way, so the reader is backwards compatible here.
+
 ### `last_sample/<stage>/rank%04d.npz`
 
 Written by both the MPI sampler and `run_local` after every stage (regardless of
@@ -128,7 +154,7 @@ the full `configuration`/`stages`/`prior`/`likelihood` summaries, `surrogate`
 `seed0 = 10*(no_stages*rank+i)` formula and every per-rank/per-stage seed, plus whether
 `initial_sample_type` makes the run reproducible), `mpi` layout, `environment`
 (thread-count env vars), `unverified_options` (e.g.
-`state_dependent_approximation=True`), and `continued_from` (with the source run's own
+`use_surrogate_gradients was disabled by SamplingFramework`), and `continued_from` (with the source run's own
 manifest embedded, if it had one). Manifest writing/finalizing never aborts a run — any
 failure there is printed as a `WARNING`, not raised.
 
@@ -151,6 +177,7 @@ exact_only = snapshots[snapshots["state_type"] != "prerejected"]
 
 run.notes[0]                                  # DataFrame, one row per chain
 run.subchain_stats[1]                         # DataFrame for a DAMH stage, None for MH
+run.adaptive_stats[0]                         # DataFrame for an adaptive stage, None otherwise
 run.last_sample["alg0001_DAMH-SMU"]           # (no_chains, p) float64
 run.surrogate_quality, run.surrogate_quality_test   # DataFrames or None
 ```
@@ -162,7 +189,8 @@ files instead.
 Per-stage lists are always `len(stage_names)` long and in stage-index order. A stage that
 wrote nothing for a category carries an empty entry: `samples[i] == []` for
 `Stage.save_to_file=False`, `raw_data[i] is None` when snapshots were not saved,
-`subchain_stats[i] is None` for a non-DAMH stage.
+`subchain_stats[i] is None` for a non-DAMH stage, `adaptive_stats[i] is None` for a stage whose
+proposal did not adapt.
 
 `surrDAMH.post_processing.Samples(no_parameters, output_dir)` is a facade on top of
 `read_run` and keeps the plotting/statistics API used by

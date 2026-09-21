@@ -1,5 +1,10 @@
 # 14 — GRF-diffusion validation runs (2026-09-18)
 
+**Dated record of a one-time validation campaign** — not maintained going forward. Headline
+result summarized in `10_manual_review_notes.md` §5e; the 14 GB of run output this report
+describes lives in `toy_examples/out_grf_validation_2026-09-17/` and is off-limits (do not
+read/list/delete without the author's say — it's an experiment output, not a build artefact).
+
 Longer validation runs of the maintained GRF-diffusion example, on branch `working_Kuba`,
 commit `1ded39e` (dirty working tree), format v2. Everything below was produced by running
 the code; **no file under `surrDAMH/`, `tests/` or `toy_examples/` was modified**, and no git

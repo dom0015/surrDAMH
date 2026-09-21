@@ -37,7 +37,8 @@ from surrDAMH.modules.manifest import (FORMAT_VERSION, RunFormatError,
                                        raw_data_columns, samples_columns)
 
 # every ``sampling_output/<data_name>/`` directory that is organized per stage
-STAGE_DATA_NAMES = ("samples", "raw_data", "notes", "subchain_stats", "last_sample")
+STAGE_DATA_NAMES = ("samples", "raw_data", "notes", "subchain_stats", "adaptive_stats",
+                    "last_sample")
 
 _STAGE_INDEX_PATTERN = re.compile(r"^alg(\d+)_")
 
@@ -54,6 +55,7 @@ class RunData:
     * ``raw_data[i] is None`` when ``Configuration.save_snapshots_to_file`` was off (or
       when ``read_run(..., load_raw_data=False)`` skipped it);
     * ``subchain_stats[i] is None`` for a non-DAMH stage;
+    * ``adaptive_stats[i] is None`` for a stage whose proposal did not adapt;
     * ``notes[i]`` is an empty ``DataFrame`` for a stage that wrote no notes.
     """
 
@@ -66,6 +68,7 @@ class RunData:
     samples: list[list[np.ndarray]]             # [stage][chain] -> (n, 2+p) float64
     notes: list[pd.DataFrame]                   # [stage] -> one row per chain
     subchain_stats: list[pd.DataFrame | None]   # [stage] -> None for non-DAMH stages
+    adaptive_stats: list[pd.DataFrame | None]   # [stage] -> None for non-adaptive stages
     raw_data_columns: list[str]                 # ["state_type", "par_0", ..., "log_prior"]
     raw_data: list[list[pd.DataFrame] | None]   # [stage][chain]; None if not saved/not loaded
     last_sample: dict[str, np.ndarray]          # stage_name -> (no_chains, p) float64
@@ -248,6 +251,7 @@ def read_run(output_dir: str, load_raw_data: bool = True) -> RunData:
     samples: list[list[np.ndarray]] = []
     notes: list[pd.DataFrame] = []
     subchain_stats: list[pd.DataFrame | None] = []
+    adaptive_stats: list[pd.DataFrame | None] = []
     raw_data: list[list[pd.DataFrame] | None] = []
     last_sample: dict[str, np.ndarray] = {}
 
@@ -262,6 +266,11 @@ def read_run(output_dir: str, load_raw_data: bool = True) -> RunData:
 
         stats = _concat_rank_csvs(os.path.join(sampling_dir, "subchain_stats", stage_name))
         subchain_stats.append(None if stats.empty else stats)
+
+        # written only by a stage whose proposal adapts (2026-09-20); absent for every other
+        # stage and for every run produced before adaptive_stats existed -> None, not an error
+        adaptation = _concat_rank_csvs(os.path.join(sampling_dir, "adaptive_stats", stage_name))
+        adaptive_stats.append(None if adaptation.empty else adaptation)
 
         raw_dir = os.path.join(sampling_dir, "raw_data", stage_name)
         if not load_raw_data or not os.path.isdir(raw_dir):
@@ -283,6 +292,7 @@ def read_run(output_dir: str, load_raw_data: bool = True) -> RunData:
         samples=samples,
         notes=notes,
         subchain_stats=subchain_stats,
+        adaptive_stats=adaptive_stats,
         raw_data_columns=expected_raw_data_columns,
         raw_data=raw_data,
         last_sample=last_sample,

@@ -4,9 +4,8 @@ Surrogate-accelerated MCMC (delayed-acceptance Metropolis-Hastings, DAMH) for Ba
 inverse problems, parallelised with mpi4py. Python 3.12.
 
 This is the user-facing documentation (WS11 of `library_notes/09_improvement_plan.md`).
-For the ongoing refactor's rationale, findings and open decisions see `library_notes/`
-(start at `00_overview.md`); for the posterior-affecting changes so far see
-`../CHANGELOG.md`.
+For the refactor's rationale, findings and open decisions see `library_notes/README.md`
+(the entry point); for the posterior-affecting changes so far see `../CHANGELOG.md`.
 
 ## Pages
 
@@ -38,8 +37,8 @@ process-count combination, are explained in `running.md`.
 
 ## The maintained examples
 
-`toy_examples/` is the only maintained example set (`library_notes/05_toy_examples_and_docs.md`);
-the `README.md` table lists every file with its process count. In tiers:
+`toy_examples/` is the only maintained example set; the `README.md` table lists every file
+with its process count. In tiers:
 
 - **basic**: `minimal_example.py`, `one_process_only.py`, `own_solver.py`,
   `with_simple_postprocessing.py`, `typical_example.py`, `post_processing_with_html_report.py`

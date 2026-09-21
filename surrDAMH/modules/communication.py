@@ -2,7 +2,9 @@
 # -*- coding: utf-8 -*-
 
 import copy
+import sys
 import time
+import warnings
 from typing import Any, List, Tuple
 
 import numpy as np
@@ -28,6 +30,206 @@ TAG_FIRST_SNAPSHOT = 10
 # (measured: 0/3 runs kept the message, 5/5 keep it with 0.5 s). Lives here (not in core.py) so
 # the spawned solver children can import it without pulling in the whole framework.
 ABORT_GRACE_SECONDS = 0.5
+
+# Idle throttling of the service loops (solvers pool, collector), findings 4.2/M11. Both loops are
+# otherwise a pure busy-wait on Iprobe/Get_status and peg a core at 100% even with nothing to do.
+# Measured on toy_examples/typical_example.py (4 ranks, MPICH, 32-core container): 4m20s of user
+# CPU before, 3m35s after, at unchanged wall time.
+#
+# The sleep must not be unconditional-per-idle-iteration: with a sub-millisecond forward model the
+# pool is "idle" only for the fraction of a millisecond its child needs, and sleeping 1 ms there
+# adds that to every evaluation (measured on toy_examples/minimal_example.py, whose solver is an
+# analytic formula: 9.4 s -> 13.9 s wall). Hence ServiceLoopThrottle below: spin as before for the
+# first IDLE_SPIN_ITERATIONS consecutive idle iterations (cheap Iprobe calls, ~0.1-0.5 ms in total,
+# enough to cover a fast solver's turnaround), and only sleep once the loop is idle beyond that.
+IDLE_SLEEP_SECONDS = 0.001
+IDLE_SPIN_ITERATIONS = 100
+
+
+class ServiceLoopThrottle:
+    """
+    Keeps a polling service loop from burning a whole core while it has nothing to do.
+
+    Call :meth:`step` exactly once per loop iteration with whether that iteration did any real
+    work. Consecutive idle iterations first spin (no sleep at all, so a fast forward model sees
+    the same latency as before this existed) and then sleep ``sleep_seconds`` each.
+
+    Purely a timing device: it sends, receives and reorders nothing, and a loop using it makes the
+    same sequence of MPI calls it made before.
+    """
+
+    def __init__(self, spin_iterations: int = IDLE_SPIN_ITERATIONS,
+                 sleep_seconds: float = IDLE_SLEEP_SECONDS) -> None:
+        self.spin_iterations = spin_iterations
+        self.sleep_seconds = sleep_seconds
+        self.consecutive_idle = 0
+
+    def step(self, did_something: bool) -> bool:
+        """Returns True if this call slept (for tests; the loops ignore the return value)."""
+        if did_something:
+            self.consecutive_idle = 0
+            return False
+        self.consecutive_idle += 1
+        if self.consecutive_idle > self.spin_iterations:
+            time.sleep(self.sleep_seconds)
+            return True
+        return False
+
+
+# Below this value for MPI_TAG_UB, a run that cannot be bounded in advance (only a time limit) is
+# considered at risk. The MPI standard guarantees MPI_TAG_UB >= 32767 only; real implementations
+# offer far more (measured here: MPICH 4.3.1 reports 1073741823 = 2^30 - 1), which no realistic
+# run exhausts.
+TAG_UB_UNBOUNDED_RUN_THRESHOLD = 1 << 20
+
+
+def check_tag_upper_bound(list_of_stages: List[Any], tag_ub: int | None = None) -> str | None:
+    """
+    Start-up diagnostic for finding 2.11: warn if this run could plausibly exhaust ``MPI_TAG_UB``.
+
+    Two counters in this module grow by one per full-model evaluation and are used *as MPI tags*:
+    ``SolverMPI.tag_solver`` (sampler -> solvers pool request tag) and ``CommSnapshot_sampler.idx``
+    (sampler -> collector snapshot tag, starting at ``TAG_FIRST_SNAPSHOT``). Neither wraps. The MPI
+    standard only guarantees ``MPI_TAG_UB >= 32767``, so a long run on an implementation at that
+    floor would eventually pass an invalid tag.
+
+    Diagnostic only: it never raises and never changes control flow. Called once, on rank 0, from
+    ``SamplingFramework.run()``.
+
+    Args:
+        list_of_stages: the run's stages; each contributes ``min(max_evaluations, max_samples)``
+            to the projection, or "unbounded" if it has neither (a ``time_limit``-only stage).
+        tag_ub: the value to check against; ``None`` queries ``MPI.COMM_WORLD`` for it.
+
+    Returns:
+        The warning message that was issued, or ``None`` if nothing was warned about (including
+        every failure to determine the projection or the limit).
+    """
+    try:
+        if tag_ub is None:
+            tag_ub = MPI.COMM_WORLD.Get_attr(MPI.TAG_UB)
+        if tag_ub is None:
+            return None
+        tag_ub = int(tag_ub)
+
+        projected = TAG_FIRST_SNAPSHOT
+        has_unbounded_stage = False
+        for stage in list_of_stages:
+            bound = min(int(getattr(stage, "max_evaluations", sys.maxsize)),
+                        int(getattr(stage, "max_samples", sys.maxsize)))
+            if bound >= sys.maxsize:
+                has_unbounded_stage = True
+            else:
+                projected += bound
+
+        message = None
+        if projected > tag_ub:
+            message = (f"MPI_TAG_UB is {tag_ub}, but this run projects up to about {projected} MPI tags "
+                       f"(one per full-model evaluation, per sampler, summed over stages). Tags are not "
+                       f"reused, so the run may fail with an invalid-tag error before it finishes. "
+                       f"Reduce max_evaluations/max_samples or use an MPI implementation with a larger "
+                       f"MPI_TAG_UB.")
+        elif has_unbounded_stage and tag_ub < TAG_UB_UNBOUNDED_RUN_THRESHOLD:
+            message = (f"MPI_TAG_UB is only {tag_ub} and at least one stage has no max_evaluations/"
+                       f"max_samples bound (time limit only). MPI tags grow by one per full-model "
+                       f"evaluation and are not reused, so a long enough run may fail with an "
+                       f"invalid-tag error.")
+        if message is not None:
+            warnings.warn(message, RuntimeWarning, stacklevel=2)
+        return message
+    except Exception:  # diagnostic only - must never be able to break a run
+        return None
+
+
+def _values_equal(own: Any, reference: Any) -> bool:
+    """``==`` on two normalized configuration values, never raising and never ambiguous.
+
+    ``Configuration.requested_posterior_fields_for_comparison()`` already reduces everything to
+    primitives, but a stray array-like (e.g. from a custom subclass) must not produce
+    ``ValueError: truth value of an array ... is ambiguous`` here, so anything whose ``==`` does
+    not yield a plain bool falls back to ``np.array_equal``.
+    """
+    try:
+        result = (own == reference)
+        if isinstance(result, bool):
+            return result
+        return bool(np.array_equal(own, reference))
+    except Exception:
+        return bool(np.array_equal(own, reference))
+
+
+def check_configuration_consistency(conf: Configuration, comm: Any = None) -> None:
+    """
+    Fail loudly at start-up if the ranks were given different ``Configuration`` objects (2.9).
+
+    Rank 0 broadcasts the **requested** values (the literal constructor arguments, snapshotted in
+    ``Configuration.__post_init__``) of every field in
+    ``surrDAMH.configuration.POSTERIOR_AFFECTING_FIELDS``, and every rank compares its own
+    snapshot field by field. A script that builds its ``Configuration`` correctly runs the same
+    call with the same literal arguments on every rank, so the requested values always match;
+    a script that (by bug) builds a different one per rank used to run anyway - sampling a
+    different posterior per chain, hanging, or crashing somewhere unrelated later.
+
+    Why the *requested* values and not the effective ones: ``use_surrogate_gradients`` may
+    legitimately end up different per rank, since
+    ``SamplingFramework._configure_surrogate_gradients()`` disables it locally on a rank whose
+    updater/evaluator cannot do gradients (only the collector holds an ``Updater``). Comparing
+    the pre-mutation snapshot sidesteps that without needing a per-field exclusion list.
+
+    Not compared: the MPI-layout fields (``no_samplers``, ``rank_collector``,
+    ``rank_solvers_pool``, ``sampler_ranks``), which ``__post_init__`` derives from
+    ``MPI.COMM_WORLD.Get_size()`` and are identical on every rank by construction; and every
+    non-posterior-affecting field (buffer sizes, ``debug``, ...), whose divergence cannot change
+    a result.
+
+    Collective: must be called on every rank of ``comm`` (once per role, from
+    ``SamplingFramework.run()`` before role dispatch). A single ``bcast`` of a small dict of
+    primitives plus one ``allreduce``; the ``allreduce`` makes *every* rank raise when *any* rank
+    sees a difference, so the job fails with the same error everywhere instead of one rank
+    crashing while the rest block in a matching MPI call.
+
+    Args:
+        conf: this rank's configuration.
+        comm: communicator to check over; ``None`` means ``MPI.COMM_WORLD``. A size-1
+            communicator (or the MPI-free ``run_local()``, which never calls this) has nothing
+            to compare against and returns immediately.
+
+    Raises:
+        RuntimeError: on every rank, naming the differing field(s) and both values, if any rank's
+            requested posterior-affecting fields differ from rank 0's.
+    """
+    if comm is None:
+        comm = MPI.COMM_WORLD
+    if comm.Get_size() < 2:
+        return
+    rank = comm.Get_rank()
+
+    local = conf.requested_posterior_fields_for_comparison()
+    reference = comm.bcast(local if rank == 0 else None, root=0)
+
+    differences: List[str] = []
+    for name in sorted(set(reference) | set(local)):
+        if name not in local:
+            differences.append(f"{name}: missing on rank {rank}, rank 0 has {reference[name]!r}")
+        elif name not in reference:
+            differences.append(f"{name}: rank {rank} has {local[name]!r}, missing on rank 0")
+        elif not _values_equal(local[name], reference[name]):
+            differences.append(f"{name}: rank {rank} has {local[name]!r}, rank 0 has {reference[name]!r}")
+
+    any_mismatch = bool(comm.allreduce(1 if differences else 0, op=MPI.MAX))
+    if not any_mismatch:
+        return
+    if differences:
+        raise RuntimeError(
+            f"Configuration mismatch across MPI ranks (finding 2.9): rank {rank} was constructed with "
+            f"posterior-affecting Configuration field(s) differing from rank 0: " + "; ".join(differences) +
+            ". Every rank must construct the same Configuration(...); fix the script so it does not "
+            "make any Configuration argument depend on the rank.")
+    raise RuntimeError(
+        f"Configuration mismatch across MPI ranks (finding 2.9): rank {rank}'s own posterior-affecting "
+        "Configuration fields match rank 0's, but at least one other rank reported a difference - see "
+        "its traceback for the offending field(s). The whole job is aborted because the ranks would "
+        "otherwise sample different posteriors.")
 
 
 def send_initial_surrogate_availability(rank_sampler: int, can_provide_evaluator: bool) -> None:
@@ -108,6 +310,15 @@ class CommEvaluator_sampler:
         self.comm_world.Send(buf=buf, dest=self.rank_collector, tag=TAG_STOP_UPDATING)
         evaluator = self.request_irecv.wait()
         self.request_irecv = None
+        # Complete the last TAG_UPDATE Isend posted by request_evaluator() before dropping the
+        # reference (finding 2.10): abandoning a pending non-blocking send is undefined by the MPI
+        # standard (the buffer may still be read by the implementation). Same pattern as
+        # request_evaluator() itself and as CommEvaluator_collector.terminate(). The message is a
+        # single int, so it is sent eagerly and this never blocks; the collector always has a
+        # matching TAG_UPDATE Irecv posted (re-posted in sampler_requests_evaluator(), cancelled
+        # only in sampler_stops()/terminate()). Wire protocol unchanged.
+        if self.request_Isend is not None:
+            self.request_Isend.Wait()
         self.request_Isend = None
         self.comm_world = None
         if evaluator is None:  # this means that at least one evaluator has been received before

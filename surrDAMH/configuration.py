@@ -7,9 +7,8 @@ Created on Sun Feb 28 12:32:40 2021
 """
 
 import sys
-import warnings
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 import numpy as np
 import numpy.typing as npt
@@ -23,26 +22,83 @@ from surrDAMH.modules.describe import describe_fields
 #: with a trailing ``*`` so the start-up log says which numbers matter for a result.
 POSTERIOR_AFFECTING_FIELDS: frozenset[str] = frozenset({
     "no_parameters", "no_observations", "transform_before_surrogate",
-    "state_dependent_approximation", "min_snapshots_initial", "min_snapshots_to_update",
+    "min_snapshots_initial", "min_snapshots_to_update",
     "max_collected_snapshots_per_loop", "use_surrogate_gradients", "initial_sample_type",
     "initial_samples_distribution", "continued_from_dir", "lhs_scale", "use_collector",
 })
+
+#: How deep :func:`normalize_for_comparison` descends into containers/objects before it gives up
+#: and uses the type name only (guards against cycles and against huge nested objects).
+MAX_NORMALIZATION_DEPTH = 4
+
+
+def _qualified_type_name(value: Any) -> str:
+    return f"{type(value).__module__}.{type(value).__qualname__}"
+
+
+def normalize_for_comparison(value: Any, _depth: int = 0) -> Any:
+    """
+    Turn a configuration field value into picklable primitives that compare with plain ``==``.
+
+    Used by the cross-rank configuration check
+    (``surrDAMH.modules.communication.check_configuration_consistency``, finding 2.9): the
+    normalized values are what rank 0 broadcasts and what every rank compares against, so this
+    must avoid both spurious *differences* and spurious *exceptions*:
+
+    - numpy arrays (``lhs_scale``) become ``("ndarray", shape, dtype, nested lists)`` instead of
+      an element-wise comparison whose truth value is ambiguous;
+    - an arbitrary object (``initial_samples_distribution`` is a duck-typed ``Distribution``,
+      usually without ``__eq__``, whose instances on two ranks are never ``==``) becomes its
+      qualified type name plus its normalized ``__dict__``, i.e. a structural fingerprint that
+      is identical on two ranks that ran the same constructor call;
+    - anything that cannot be normalized (recursion limit, exotic object) falls back to the
+      qualified type name, which never raises and never differs between equally-built ranks.
+
+    NaN is deliberately not special-cased: ``float("nan")`` is not equal to itself, so a NaN in a
+    posterior-affecting field would be reported as a mismatch. None of these fields takes NaN.
+    """
+    if value is None or isinstance(value, (bool, int, float, str, bytes)):
+        return value
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, np.ndarray):
+        return ("ndarray", tuple(value.shape), value.dtype.str, value.tolist())
+    if _depth >= MAX_NORMALIZATION_DEPTH:
+        return _qualified_type_name(value)
+    try:
+        if isinstance(value, (list, tuple)):
+            return (type(value).__name__, tuple(normalize_for_comparison(item, _depth + 1) for item in value))
+        if isinstance(value, (set, frozenset)):
+            return (type(value).__name__,
+                    tuple(sorted(repr(normalize_for_comparison(item, _depth + 1)) for item in value)))
+        if isinstance(value, dict):
+            return ("dict", tuple(sorted(((str(key), normalize_for_comparison(item, _depth + 1))
+                                          for key, item in value.items()), key=lambda pair: pair[0])))
+        attributes = getattr(value, "__dict__", None)
+        if attributes:
+            return (_qualified_type_name(value), normalize_for_comparison(dict(attributes), _depth + 1))
+        return _qualified_type_name(value)
+    except Exception:  # never let a fingerprint break a run
+        return _qualified_type_name(value)
 
 
 @dataclass
 class Configuration:
     """
-    Run-wide configuration, identical on every MPI rank (not broadcast or checked;
-    an inconsistent copy across ranks is not detected, see
-    ``library_notes/10_manual_review_notes.md`` §2.8/2.9). ``__post_init__`` derives
+    Run-wide configuration, identical on every MPI rank. Since 2026-09-18 (finding 2.9) this is
+    checked: ``SamplingFramework.run()`` broadcasts rank 0's *requested* values of
+    ``POSTERIOR_AFFECTING_FIELDS`` and every rank asserts equality, so a script that builds a
+    different ``Configuration`` per rank fails at start-up instead of sampling a different
+    posterior per chain (``modules.communication.check_configuration_consistency``). Fields
+    outside that set are not compared. ``__post_init__`` derives
     the MPI role layout (``no_samplers``, ``rank_collector``, ``rank_solvers_pool``)
     from ``MPI.COMM_WORLD``'s size and the two topology flags below; see
     ``docs/running.md`` for the process-count table and ``docs/configuration.md`` for
     the full field reference (generated from this dataclass).
 
     Posterior-, acceptance-rate- or reproducibility-affecting fields: ``transform_before_surrogate``
-    (which space the surrogate is trained on), ``state_dependent_approximation`` (see
-    below), ``min_snapshots_initial``/``min_snapshots_to_update``/``max_collected_snapshots_per_loop``
+    (which space the surrogate is trained on),
+    ``min_snapshots_initial``/``min_snapshots_to_update``/``max_collected_snapshots_per_loop``
     (control exactly when the surrogate is (re)trained, hence the DAMH-SMU accept/reject
     sequence for runs that use a collector), ``use_surrogate_gradients`` (may be silently
     disabled by ``SamplingFramework`` for an incompatible surrogate, see
@@ -54,13 +110,6 @@ class Configuration:
     written to disk, not the posterior itself; ``torch_threads`` is a performance-only
     knob (intra-op CPU thread count for torch) and does not affect the posterior,
     acceptance rate or surrogate accuracy.
-
-    Unverified: ``state_dependent_approximation=True`` shifts the DAMH surrogate
-    approximation by the model-vs-surrogate error at the current state; it is not
-    validated for ``Stage.subchain_max_length > 1`` (finding 1.1, decision 1 in
-    ``library_notes/09_improvement_plan.md`` §3) and emits a ``RuntimeWarning`` at
-    construction. Do not use it unless you have checked the theory for your own
-    ``subchain_max_length``.
 
     Ineffective for spawned children: ``paths_to_append`` is appended to ``sys.path``
     in the process that constructs this ``Configuration`` only -- it does NOT reach
@@ -79,6 +128,14 @@ class Configuration:
     pickled ``[observations, solver_tag]`` payload, so the solver's status code never becomes an
     MPI tag (this removes finding 2.4/M6: a negative ``solver_tag`` used to be an invalid MPI
     tag, and the raw path's fixed-size/dtype buffer hazards of finding 2.3).
+
+    Removed field (2026-09-18, finding 1.1): ``state_dependent_approximation``. Passing it now
+    raises ``TypeError: Configuration.__init__() got an unexpected keyword argument
+    'state_dependent_approximation'`` -- just delete the argument, there is no replacement.
+    The DAMH sub-chain always uses the surrogate posterior directly (no shift by the
+    model-vs-surrogate error at the current state): the delayed-acceptance correction is only
+    valid for a surrogate that is a fixed, state-independent density, so the shifted variant was
+    unsound at every ``Stage.subchain_max_length``, not only for ``> 1`` as previously documented.
 
     Invalid combinations that raise (at ``Stage``/proposal construction, i.e. at
     ``SamplingFramework.run()`` time, not eagerly at ``Configuration()`` time):
@@ -107,7 +164,6 @@ class Configuration:
     initial_samples_distribution: Distribution | None = None  # only if initial_sample_type == "user_specified"
     continued_from_dir: str | None = None  # experiment directory to continue from (only if initial_sample_type == "continued")
     lhs_scale: float | npt.NDArray = 1.0  # only if initial_sample_type == "lhs"
-    state_dependent_approximation: bool = False  # shift posterior approximation by surrogate model error in current sample; NOT verified (incorrect for subchain_max_length > 1, see library_notes/06 item 1.1), do not use unless you know what you are doing
     min_snapshots_initial: int = 1  # minimal number of snapshots for the construction of initial surrogate model; posterior-affecting for DAMH-SMU (controls when the first surrogate is trained)
     min_snapshots_to_update: int = 1  # how many snapshots (at least) have to be added to update the surrogate model; posterior-affecting for DAMH-SMU (controls when later retrains happen)
     max_collected_snapshots_per_loop: int = 1000  # maximal number of snapshots to be collected in one loop (collector-side batching/performance knob)
@@ -119,17 +175,22 @@ class Configuration:
     torch_threads: int | None = 1  # number of torch intra-op CPU threads set on every rank that has torch loaded (samplers evaluating the NN surrogate; the collector when it trains on CPU -- irrelevant on GPU); None = leave torch's default (all cores per process), which oversubscribes the node when several ranks evaluate the NN
 
     def __post_init__(self) -> None:
+        # Requested (as-passed-in) values of the posterior-affecting fields, captured before
+        # anything -- this method, SamplingFramework._configure_surrogate_gradients() -- can
+        # mutate them. Two users: the requested-vs-effective reporting of
+        # use_surrogate_gradients (describe()/run_manifest.json), and the cross-rank consistency
+        # check of finding 2.9 (communication.check_configuration_consistency). The *requested*
+        # values are the right thing to compare across ranks: a correct script runs the same
+        # Configuration(...) call on every rank, whereas the *effective* use_surrogate_gradients
+        # may legitimately differ per rank (only the collector holds an Updater, and an updater
+        # that cannot do gradients turns the flag off on that rank alone).
+        self._requested_posterior_fields: dict[str, Any] = {
+            name: getattr(self, name) for name in sorted(POSTERIOR_AFFECTING_FIELDS)}
+
         if self.torch_threads is not None and (
                 not isinstance(self.torch_threads, int) or isinstance(self.torch_threads, bool)
                 or self.torch_threads <= 0):
             raise ValueError(f"torch_threads must be None or a positive int, got {self.torch_threads!r}")
-        if self.state_dependent_approximation:
-            warnings.warn(
-                "state_dependent_approximation=True is NOT verified (incorrect for subchain_max_length > 1, "
-                "see library_notes/06 item 1.1); do not use it unless you know what you are doing",
-                RuntimeWarning,
-                stacklevel=2,
-            )
         if self.paths_to_append is None:
             self.paths_to_append = []
         else:
@@ -168,6 +229,24 @@ class Configuration:
                 no_parameters=self.no_parameters,
                 no_chains=self.no_samplers,
             )
+
+    @property
+    def use_surrogate_gradients_requested(self) -> bool:
+        """``use_surrogate_gradients`` as passed to the constructor, i.e. before
+        ``SamplingFramework._configure_surrogate_gradients()`` may have turned it off for an
+        incompatible surrogate (see ``run_manifest.json`` and :meth:`describe`)."""
+        return bool(self._requested_posterior_fields["use_surrogate_gradients"])
+
+    def requested_posterior_fields(self) -> dict[str, Any]:
+        """Copy of the constructor values of every field in :data:`POSTERIOR_AFFECTING_FIELDS`."""
+        return dict(self._requested_posterior_fields)
+
+    def requested_posterior_fields_for_comparison(self) -> dict[str, Any]:
+        """:meth:`requested_posterior_fields` with every value passed through
+        :func:`normalize_for_comparison`: picklable primitives that compare with plain ``==``,
+        for the cross-rank check in ``modules.communication.check_configuration_consistency``."""
+        return {name: normalize_for_comparison(value)
+                for name, value in self._requested_posterior_fields.items()}
 
     def _append_path(self) -> None:
         assert self.paths_to_append is not None

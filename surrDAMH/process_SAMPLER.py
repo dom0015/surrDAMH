@@ -21,7 +21,6 @@ from surrDAMH.modules.communication import recv_initial_surrogate_availability
 from surrDAMH.modules import algorithms as alg
 from surrDAMH.modules import lhs_normal as lhs
 from surrDAMH.modules.proposal_builder import build_proposal
-from surrDAMH.modules.proposals import as_covariance_matrix
 from surrDAMH.modules.seeds import initial_sample_seed, stage_seed0
 from surrDAMH.solvers import Solver
 from surrDAMH.stages import Stage, stage_name
@@ -74,14 +73,17 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
         initial_sample = alg.Sample(parameters=rvs_with_generator(prior, initial_sample_generator))
     print("Sampler at rank", rank_world, "- initial sample:", initial_sample.parameters, flush=True)
 
-    proposal_cov_adaptive = None
+    # Merged carry-over of every adaptive stage so far, keyed by Stage field name
+    # ("proposal_sd_or_cov", "pcn_beta", "hamiltonian_step_size"); consumed by build_proposal
+    # for every stage field left None (2026-09-20).
+    carried: dict = {}
     # A30: True once a previous stage has written this chain's current state to its samples
     # file, so the next stage must not count that state again in its first row.
     initial_sample_is_carried_over = False
 
     first_stage = list_of_stages[0]
     first_stage_needs_surrogate = (first_stage.algorithm_type == "DAMH"
-                                   or str(first_stage.proposal_type).startswith("Hamiltonian"))
+                                   or first_stage.proposal_needs_gradients())
     if conf.use_collector:
         # start-up handshake (WS8, finding 2.2), counterpart of the send in process_COLLECTOR:
         # every sampler consumes exactly one message here, whether or not it needs a surrogate.
@@ -101,7 +103,7 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
 
         # choice of proposal distribution for this stage:
         my_Prop = build_proposal(stage=stage, conf=conf, prior=prior, seed=seed0+1,
-                                 prev_cov=proposal_cov_adaptive, stage_index=i)
+                                 carried=carried, stage_index=i)
 
         # choice of communicators for this stage:
         if stage.send_snapshots_to_collector:
@@ -115,8 +117,11 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
             commEvaluator_stage = commEvaluator
         else:
             commEvaluator_stage = None
-        if stage.proposal_type == "Hamiltonian" or stage.proposal_type == "HamiltonianInfinite":  # TODO
-            # TODO this is a temporary workaround, we need the exact model for gradients until surrogate supports them
+        if stage.proposal_needs_gradients():
+            # a gradient-needing proposal (Hamiltonian family, or a block proposal containing
+            # one) is driven by the surrogate's gradients, so it needs the evaluator even in an
+            # MH stage; with Stage.surrogate_model_updates=True the stage keeps re-polling it
+            # for a newer one (WS7)
             assert commEvaluator is not None
             commEvaluator_stage = commEvaluator
         if stage.use_only_surrogate:
@@ -145,17 +150,24 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
                                  initial_sample_is_carried_over=initial_sample_is_carried_over)
         alg_instance.run()
 
-        # set mean proposal covariance for next stage:
+        # cross-rank hand-over of the adapted proposal (2026-09-20, `16` §5 item 2): the chains
+        # exchange the SUFFICIENT STATISTICS of their adaptation (``adapted_state()``: a fixed-
+        # length float64 vector, so the buffer shape can never disagree between ranks) and every
+        # rank combines the same pooled state, instead of averaging per-rank covariances -- which
+        # is what Craiu et al. (2009) / Solonen et al. (2012) recommend and what removes the
+        # 6-17x rank disagreement measured in `15` §2.4. The resulting carry-over is identical on
+        # every rank, so the next stage starts from the same proposal everywhere.
         if stage.adaptive:
-            # G2: normalise to a 2-D covariance matrix on EVERY rank before the reduction, so
-            # ranks whose adapt() counts straddled the adaptation period cannot disagree on
-            # the buffer shape (finding 2.5). runner_local does the same normalisation so that
-            # a local run still reproduces chain 0 of an MPI run.
-            sendbuf = as_covariance_matrix(my_Prop.sd_or_cov, conf.no_parameters)
-            recvbuf = np.empty_like(sendbuf)
-            comm_sampler.Allreduce(sendbuf, recvbuf)
-            proposal_cov_adaptive = recvbuf/conf.no_samplers
-            print('Stage', alg_instance.stage.name, 'at MPI rank', rank_world, 'prop_cov', my_Prop.sd_or_cov)
+            buf = np.ascontiguousarray(my_Prop.adapted_state(), dtype=np.float64)
+            all_states = np.empty((conf.no_samplers, buf.size), dtype=np.float64)
+            comm_sampler.Allgather(buf, all_states)
+            my_Prop.set_pooled_state(all_states)
+            stage_carry_over = my_Prop.carry_over()
+            carried.update(stage_carry_over)
+            for key, value in sorted(stage_carry_over.items()):
+                print('Stage', alg_instance.stage.name, 'at MPI rank', rank_world,
+                      'carry-over', key + ':',
+                      np.asarray(value, dtype=float).ravel().tolist(), flush=True)
 
         # set initial sample for next stage (after a use_only_surrogate stage its surrogate
         # observations are dropped so that the next stage re-evaluates it exactly, finding A11):
@@ -171,7 +183,7 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
         # terminate communicators between sampler and collector if they will not be used later:
         following_DAMH = [list_of_stages[j].algorithm_type == "DAMH" for j in range(i+1, no_stages)]
         following_onlySurr = [list_of_stages[j].use_only_surrogate for j in range(i+1, no_stages)]
-        following_hamiltonian = [list_of_stages[j].proposal_type in ("Hamiltonian", "HamiltonianInfinite") for j in range(i+1, no_stages)]
+        following_hamiltonian = [list_of_stages[j].proposal_needs_gradients() for j in range(i+1, no_stages)]
         stages_will_use_surrogate = any(following_DAMH) or any(following_onlySurr) or any(following_hamiltonian)
         if commSnapshot is not None:
             if stages_will_use_surrogate:
@@ -184,7 +196,9 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
 
         # stage finished, wait for all samplers:
         print('Stage', alg_instance.stage.name, 'at MPI rank', rank_world, 'finished - acc/rej/prerej samples:',
-              alg_instance.counter_accepted, alg_instance.counter_rejected, alg_instance.counter_prerejected, flush=True)
+              alg_instance.counter_accepted, alg_instance.counter_rejected, alg_instance.counter_prerejected,
+              '- non-finite proposals:', alg_instance.counter_nonfinite_proposals,
+              '- refused non-finite evaluators:', alg_instance.counter_nonfinite_evaluators, flush=True)
         comm_sampler.Barrier()
     f = getattr(commSolver, "terminate", None)
     if callable(f):

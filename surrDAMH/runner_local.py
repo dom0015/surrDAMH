@@ -23,7 +23,7 @@ Continuation works in both directions: every stage's last sample is written to
 ``initial_sample_type="continued"`` reads chain 0 of the source run.
 
 Not covered here (MPI / collector territory, unchanged):
-- multi-chain reductions (adaptive covariances are taken from the single chain),
+- multi-chain pooling of an adaptive proposal's statistics (the single chain keeps its own),
 - solver pools and spawned solver processes.
 """
 
@@ -45,7 +45,6 @@ from surrDAMH.modules.continuation import save_last_sample
 from surrDAMH.modules.manifest import (build_run_manifest, finalize_run_manifest,
                                        write_run_manifest)
 from surrDAMH.modules.proposal_builder import build_proposal
-from surrDAMH.modules.proposals import as_covariance_matrix
 from surrDAMH.modules.seeds import initial_sample_seed, stage_seed0
 from surrDAMH.modules.torch_threads import apply_torch_threads
 from surrDAMH.solvers import Solver
@@ -177,7 +176,8 @@ def run_local(conf: Configuration, prior: Distribution, likelihood: Distribution
     print("Local sampler - initial sample:", initial_sample.parameters, flush=True)
 
     result = SamplingResult()
-    proposal_cov_adaptive = None
+    # merged carry-over of the adaptive stages so far, exactly as in process_SAMPLER
+    carried: dict = {}
     # A30 (see AlgorithmBase's docstring); set exactly as in process_SAMPLER
     initial_sample_is_carried_over = False
 
@@ -185,12 +185,12 @@ def run_local(conf: Configuration, prior: Distribution, likelihood: Distribution
         seed0 = stage_seed0(no_stages, LOCAL_RANK_WORLD, i)
 
         proposal = build_proposal(stage=stage, conf=conf, prior=prior, seed=seed0+1,
-                                  prev_cov=proposal_cov_adaptive, stage_index=i)
+                                  carried=carried, stage_index=i)
 
         # choice of services for this stage (mirrors process_SAMPLER):
         snapshot_collector_stage = surrogate_manager if stage.send_snapshots_to_collector else None
         evaluator_provider_stage = None
-        if stage.algorithm_type == "DAMH" or stage.proposal_type in ("Hamiltonian", "HamiltonianInfinite"):
+        if stage.algorithm_type == "DAMH" or stage.proposal_needs_gradients():
             assert evaluator_provider is not None, ("stage requires a surrogate model; pass 'updater' or 'evaluator' "
                                                     "to run_local()")
             evaluator_provider_stage = evaluator_provider
@@ -218,11 +218,15 @@ def run_local(conf: Configuration, prior: Distribution, likelihood: Distribution
                                  initial_sample_is_carried_over=initial_sample_is_carried_over)
         alg_instance.run()
 
-        # proposal covariance for the next stage (single chain, no reduction needed, but the
-        # same G2 normalisation as process_SAMPLER so that the carried covariance has the same
-        # shape -- and hence the same RNG stream in the next stage -- as MPI chain 0):
+        # carry-over of the adapted proposal for the next stage (2026-09-20). One chain, so the
+        # "pooling" has a single row: ``set_pooled_state`` then keeps this chain's own adapted
+        # state exactly, which is what makes a local run reproduce chain 0 of a one-sampler MPI
+        # run (an MPI run with several samplers pools their statistics and gets a different,
+        # better, carry-over -- as it did before, when it averaged their covariances).
         if stage.adaptive:
-            proposal_cov_adaptive = as_covariance_matrix(proposal.sd_or_cov, conf.no_parameters)
+            buf = np.ascontiguousarray(proposal.adapted_state(), dtype=np.float64)
+            proposal.set_pooled_state(buf[None, :])
+            carried.update(proposal.carry_over())
 
         # initial sample for the next stage (after a use_only_surrogate stage its surrogate
         # observations are dropped so that the next stage re-evaluates it exactly, finding A11):
@@ -243,7 +247,9 @@ def run_local(conf: Configuration, prior: Distribution, likelihood: Distribution
                                                 counter_rejected=alg_instance.counter_rejected,
                                                 counter_prerejected=alg_instance.counter_prerejected))
         print("Stage", stage.name, "finished - acc/rej/prerej samples:", alg_instance.counter_accepted,
-              alg_instance.counter_rejected, alg_instance.counter_prerejected, flush=True)
+              alg_instance.counter_rejected, alg_instance.counter_prerejected,
+              "- non-finite proposals:", alg_instance.counter_nonfinite_proposals,
+              "- refused non-finite evaluators:", alg_instance.counter_nonfinite_evaluators, flush=True)
 
     if evaluator_provider is not None:
         evaluator_provider.close()
@@ -255,7 +261,9 @@ def run_local(conf: Configuration, prior: Distribution, likelihood: Distribution
         manifest = build_run_manifest(
             conf, stages, prior, likelihood, runner="local",
             solver_instance=solver, surrogate_updater=updater, surrogate_evaluator=evaluator,
-            mpi_layout=None, use_surrogate_gradients_requested=conf.use_surrogate_gradients)
+            # same snapshot as SamplingFramework uses; run_local() never mutates the flag, so
+            # requested == effective here (there is also no cross-rank check to run: one process)
+            mpi_layout=None, use_surrogate_gradients_requested=conf.use_surrogate_gradients_requested)
         write_run_manifest(conf.output_dir, manifest)
         stage_counters = [{"name": r.name, "counter_accepted": r.counter_accepted,
                            "counter_rejected": r.counter_rejected,

@@ -1,4 +1,5 @@
 import os
+import warnings
 from typing import Literal
 from typing import cast
 
@@ -23,25 +24,37 @@ class PyTorchMLP(nn.Module):
         self.output_size = output_size
         self.hidden_layers = tuple(hidden_layers)
         self.activation = activation
+        # Seed only the weight initialization below, then restore torch's global RNG state
+        # (WS4, 2026-09-18): torch.manual_seed used to reseed the process-wide generator
+        # permanently, so constructing a second PyTorchMLP (or anything else drawing from
+        # torch's global RNG afterward, e.g. on a checkpoint reload) would silently continue
+        # from this seeded point rather than its own prior stream. nn.Module's default
+        # parameter init (Linear.reset_parameters) has no generator= hook, so save/restore
+        # around it is the only way to isolate it without reimplementing the init itself.
         if seed is not None:
+            cpu_rng_state = torch.get_rng_state()
+            cuda_rng_state = torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None
             torch.manual_seed(seed)
-            torch.cuda.manual_seed(seed)
-            torch.cuda.manual_seed_all(seed)
-            print("SEED", seed)
-
-        if len(self.hidden_layers) == 0:
-            self.network = nn.Sequential(nn.Linear(input_size, output_size))
-            return
-
-        layers: list[nn.Module] = [
-            nn.Linear(input_size, self.hidden_layers[0]),
-            self.create_activation_layer(activation),
-        ]
-        for i in range(1, len(self.hidden_layers)):
-            layers.append(nn.Linear(self.hidden_layers[i - 1], self.hidden_layers[i]))
-            layers.append(self.create_activation_layer(activation))
-        layers.append(nn.Linear(self.hidden_layers[-1], output_size))
-        self.network = nn.Sequential(*layers)
+            if torch.cuda.is_available():
+                torch.cuda.manual_seed_all(seed)
+        try:
+            if len(self.hidden_layers) == 0:
+                self.network = nn.Sequential(nn.Linear(input_size, output_size))
+            else:
+                layers: list[nn.Module] = [
+                    nn.Linear(input_size, self.hidden_layers[0]),
+                    self.create_activation_layer(activation),
+                ]
+                for i in range(1, len(self.hidden_layers)):
+                    layers.append(nn.Linear(self.hidden_layers[i - 1], self.hidden_layers[i]))
+                    layers.append(self.create_activation_layer(activation))
+                layers.append(nn.Linear(self.hidden_layers[-1], output_size))
+                self.network = nn.Sequential(*layers)
+        finally:
+            if seed is not None:
+                torch.set_rng_state(cpu_rng_state)
+                if cuda_rng_state is not None:
+                    torch.cuda.set_rng_state_all(cuda_rng_state)
 
     def forward(self, x):
         return self.network(x)
@@ -354,6 +367,11 @@ class NeuralNetworkUpdaterMinibatches(Updater):
         self.multiplicity = torch.empty((0, 1), dtype=torch.float32, device=self.device)
         self.no_snapshots = 0
         self.last_loss = 1.0
+        # 2026-09-20: snapshots whose parameters/observations are not finite are dropped on
+        # arrival (one warning, then counted only), and a training pass that produces
+        # non-finite weights is rolled back (see add_data/train).
+        self.no_nonfinite_snapshots_skipped = 0
+        self._nonfinite_snapshot_warning_emitted = False
 
     def _set_output_statistics(self, output_mean, output_scale) -> None:
         """Validates and stores ``output_mean``/``output_scale`` (``None`` = identity)."""
@@ -655,7 +673,10 @@ class NeuralNetworkUpdaterMinibatches(Updater):
         snapshot arrays are restored before returning, so ``get_training_data_arrays()``,
         ``get_initial_snapshots()`` and the checkpoint never report fabricated data.
         """
-        parameters = np.random.randn(n, self.no_parameters).astype(np.float32)
+        # WS4, 2026-09-18: draw from the updater's own seeded generator (self._rng) instead of
+        # the unseeded global numpy RNG, so these synthetic warm-up rows are reproducible run to
+        # run for a given seed, like everything else this generator drives (replay sampling above).
+        parameters = self._rng.standard_normal((n, self.no_parameters)).astype(np.float32)
         observations = np.tile(self.normalize_outputs(constant_observations), (n, 1)).astype(np.float32)
         saved = (self.par, self.obs, self.multiplicity, self.no_snapshots,
                  self._last_added_indices, self.training_data_loaded)
@@ -671,6 +692,40 @@ class NeuralNetworkUpdaterMinibatches(Updater):
              self._last_added_indices, self.training_data_loaded) = saved
         if self.verbose:
             print(f"Initial training, MSE loss: {self.last_loss:.4e}", flush=True)
+
+    def _finite_rows(self, parameters: np.ndarray, normalized_observations: np.ndarray) -> np.ndarray:
+        """
+        Boolean mask of the snapshot rows that are safe to train on (2026-09-20).
+
+        A single non-finite row is enough to turn every weight of the network into NaN in one
+        optimizer step, after which the published evaluator predicts NaN everywhere. Both
+        arrays are already cast to ``float32`` here, so a value that is finite in float64 but
+        overflows float32 (the GRF example's ``exp`` outputs) is caught as well.
+        """
+        finite = (np.all(np.isfinite(parameters), axis=1)
+                  & np.all(np.isfinite(normalized_observations), axis=1))
+        skipped = int(np.count_nonzero(~finite))
+        if skipped:
+            self.no_nonfinite_snapshots_skipped += skipped
+            if not self._nonfinite_snapshot_warning_emitted:
+                self._nonfinite_snapshot_warning_emitted = True
+                warnings.warn(
+                    f"{type(self).__name__}: skipping {skipped} snapshot(s) with non-finite "
+                    "parameters or observations; training on them would destroy the network "
+                    "weights (further occurrences are counted in "
+                    "no_nonfinite_snapshots_skipped, not warned about)",
+                    RuntimeWarning,
+                    stacklevel=3,
+                )
+        return finite
+
+    def _model_state_snapshot(self) -> dict:
+        """Detached copy of every tensor in ``state_dict()`` (rollback source for ``train``)."""
+        return {key: value.detach().clone() for key, value in self.model.state_dict().items()}
+
+    def _model_is_finite(self) -> bool:
+        return all(bool(torch.isfinite(value).all()) for value in self.model.state_dict().values()
+                   if value.is_floating_point())
 
     def add_data(
         self,
@@ -688,6 +743,7 @@ class NeuralNetworkUpdaterMinibatches(Updater):
             loc_mul_np = np.asarray(multiplicity, dtype=np.float32).reshape(-1, 1)
 
         mask = self._rows_to_use(loc_mul_np, loc_par_np.shape[0])
+        mask = mask & self._finite_rows(loc_par_np, loc_obs_np)
         loc_par_np, loc_obs_np, loc_mul_np = loc_par_np[mask], loc_obs_np[mask], loc_mul_np[mask]
 
         loc_par = torch.tensor(loc_par_np, dtype=torch.float32, device=self.device)
@@ -733,10 +789,34 @@ class NeuralNetworkUpdaterMinibatches(Updater):
         return float(loss.item())
 
     def train(self):
+        """
+        One training pass over all stored snapshots, rolled back if it breaks the network.
+
+        2026-09-20: the weights are snapshotted before training and restored if any of them
+        comes out non-finite, so that a single poisonous batch cannot kill the surrogate for
+        the rest of the run -- a later ``train()`` with more (or better) data can still
+        succeed. ``last_loss`` is only updated when the pass is kept; the arithmetic of a
+        pass that stays finite is untouched.
+        """
         if self.no_snapshots == 0:
             return
         full_indices = np.arange(self.no_snapshots, dtype=np.int64)
-        self.last_loss = self._train_minibatches(full_indices, self.iterations_batch)
+        state_before_training = self._model_state_snapshot()
+        last_loss = self._train_minibatches(full_indices, self.iterations_batch)
+        if not self._model_is_finite():
+            self.model.load_state_dict(state_before_training)
+            # the optimizer's moment estimates were computed from the same non-finite gradients
+            # and would re-poison the restored weights on the next step; start them afresh
+            self.optimizer = self._build_optimizer()
+            warnings.warn(
+                f"{type(self).__name__}: training produced non-finite weights; the model was "
+                "restored to its state before this training pass and no new surrogate is "
+                "published from it",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            return
+        self.last_loss = last_loss
         if self.verbose:
             print(f"Training loss: {self.last_loss:.4e}, steps: {self.iterations_batch}", flush=True)
 
