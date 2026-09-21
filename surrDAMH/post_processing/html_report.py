@@ -21,6 +21,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from surrDAMH.post_processing.plots import SamplesPlots
+from surrDAMH.stages import POSTERIOR_AFFECTING_FIELDS, Stage
 
 
 class SamplesReports(SamplesPlots):
@@ -92,7 +93,8 @@ class SamplesReports(SamplesPlots):
                             field_statistics: List[dict[str, Any]] | None = None,
                             configuration: Any | None = None,
                             ranking_mode: Literal["l2", "posterior", "likelihood"] = "l2",
-                            pool_mode_note: str | None = None):
+                            pool_mode_note: str | None = None,
+                            stages: List[Any] | None = None):
         """
         Creates an extended report in HTML format containing all available post-processing tools,
         including visualizations and statistics for combined stages and individual stages separately.
@@ -128,6 +130,17 @@ class SamplesReports(SamplesPlots):
                 note to show in place of the sections that need one (parameter names,
                 posterior field statistics) instead of silently falling back to generic
                 labels / an unexplained "not supplied" message.
+            stages (list | None): the run's ``Stage`` objects (or dicts), rendered in the
+                "Sampling Stages" section. If None, the ``stages`` list recorded in
+                ``run_manifest.json`` is used (2026-09-21).
+
+        Layout (2026-09-21): every top-level section and every per-stage block is a
+        ``<details>`` element that is COLLAPSED when the file is opened; the "Expand all" /
+        "Collapse all" buttons under the title and the table-of-contents links (which open the
+        section they point into) are plain HTML + a few lines of inline JavaScript, the report
+        stays a single self-contained file. The "Proposal Adaptation" section (5) plots, for
+        every displayed stage with an adaptive proposal, the per-period acceptance probability
+        the proposal was fed and its adapted parameters (``plot_adaptation``).
 
         Notes:
             ``chains_to_disp`` restricts every sample-derived section (moments, histograms,
@@ -137,6 +150,9 @@ class SamplesReports(SamplesPlots):
             report says so where it shows them (WS9b, finding P5).
         """
         import base64
+        import json
+        import math
+        import sys
         from dataclasses import fields, is_dataclass
         from html import escape
         from io import BytesIO
@@ -184,7 +200,161 @@ class SamplesReports(SamplesPlots):
             parts.append('        </table>')
             return parts
 
+        def section_open(section_id: str, title: str, open_by_default: bool = False) -> list[str]:
+            """A top-level report section: a ``<details>`` block, collapsed unless asked otherwise."""
+            open_attr = ' open' if open_by_default else ''
+            return [f'    <details class="section" id="{section_id}"{open_attr}>',
+                    f'        <summary><h2>{title}</h2></summary>']
+
+        def stage_open(block_id: str, title: str, level: str = "h3") -> list[str]:
+            """A collapsed per-stage block nested inside a section."""
+            return [f'        <details class="stage" id="{escape(block_id)}">',
+                    f'            <summary><{level}>{escape(title)}</{level}></summary>']
+
+        stage_close = '        </details>'
+
+        def get_stage_items(spec: Any) -> dict[str, Any]:
+            if is_dataclass(spec):
+                return {field.name: getattr(spec, field.name) for field in fields(spec)}
+            if isinstance(spec, dict):
+                return dict(spec)
+            if hasattr(spec, "__dict__"):
+                return dict(vars(spec))
+            return {"stage": spec}
+
+        def format_stage_value(value: Any) -> str:
+            # the manifest stores Stage fields through manifest._json_safe: scalars as they are,
+            # arrays as {"shape", "dtype", "values"}, objects (Proposal, ...) as their class name
+            if value is None:
+                return "None"
+            if isinstance(value, bool):
+                return str(value)
+            if isinstance(value, (int, np.integer)) and int(value) == sys.maxsize:
+                return "unbounded"
+            if isinstance(value, (float, np.floating)) and math.isinf(float(value)):
+                return "unbounded" if value > 0 else "-inf"
+            if isinstance(value, np.ndarray):
+                return np.array2string(value, threshold=20, edgeitems=3)
+            if isinstance(value, (dict, list, tuple)):
+                return json.dumps(value, default=str)
+            if isinstance(value, (str, int, float, np.generic)):
+                return str(value)
+            return type(value).__name__
+
+        def default_target_rate(proposal_type: Any) -> float | None:
+            # the proposal classes' own defaults (Stage.adaptive_target_rate docstring)
+            if proposal_type in ("Hamiltonian", "HamiltonianInfinite"):
+                return 0.8
+            if proposal_type in ("RWMH", "pCN"):
+                return 0.234
+            return None
+
+        # -- carry-over subsection of "5. Proposal Adaptation" (2026-09-21) ------------------
+        def param_label(index: int) -> str:
+            return par_names[index] if par_names and index < len(par_names) else f"p{index}"
+
+        def scalar_table(rows: list[tuple[str, Any]]) -> list[str]:
+            parts = ['            <table class="summary-table">',
+                     '                <tr><th>quantity</th><th>value</th></tr>']
+            for label, value in rows:
+                text = str(value) if isinstance(value, (int, np.integer)) else f"{float(value):.6g}"
+                parts.append(f'                <tr><td>{escape(label)}</td><td>{escape(text)}</td></tr>')
+            parts.append('            </table>')
+            return parts
+
+        def vector_table(header: str, values: np.ndarray) -> list[str]:
+            parts = ['            <table class="summary-table">',
+                     f'                <tr><th>parameter</th><th>{escape(header)}</th></tr>']
+            for i, v in enumerate(values):
+                parts.append(f'                <tr><td>{escape(param_label(i))}</td><td>{float(v):.4g}</td></tr>')
+            parts.append('            </table>')
+            return parts
+
+        def matrix_table(matrix: np.ndarray) -> list[str]:
+            d = matrix.shape[0]
+            labels = [param_label(i) for i in range(d)]
+            parts = ['            <table class="summary-table">',
+                     '                <tr><th></th>' + ''.join(f'<th>{escape(l)}</th>' for l in labels) + '</tr>']
+            for i in range(d):
+                cells = ''.join(f'<td>{float(matrix[i, j]):.4g}</td>' for j in range(d))
+                parts.append(f'                <tr><th>{escape(labels[i])}</th>{cells}</tr>')
+            parts.append('            </table>')
+            return parts
+
+        def carry_over_block(stage_idx: int, stage_name: str,
+                             carry: tuple[dict, dict] | None) -> list[str]:
+            """"Carried over to the next stage" subsection: the ``Proposal.carry_over()`` /
+            ``adapted_summary()`` pair ``modules.continuation.save_carry_over`` wrote for this
+            stage, or an explanatory sentence if the file does not exist. Shown for every
+            adaptive stage regardless of whether its ``adaptive_stats`` trace is present."""
+            parts: list[str] = []
+            if carry is None:
+                parts.append('            <p class="description" style="color: orange;">no carry_over file '
+                             '(the proposal of this stage did not adapt, or the run predates carry_over/)</p>')
+                return parts
+            carried_stage, summary = carry
+            next_stage_name = (self.stage_names[stage_idx + 1]
+                               if stage_idx + 1 < len(self.stage_names) else None)
+            if next_stage_name is not None:
+                consumer_sentence = f'consumed by stage {escape(next_stage_name)}.'
+            else:
+                consumer_sentence = 'this was the last stage; nothing consumed it.'
+            parts.append(f'            <p class="description"><b>Carried over to the next stage</b> '
+                         f'{consumer_sentence}</p>')
+            if "proposal_sd_or_cov" in carried_stage:
+                cov = np.asarray(carried_stage["proposal_sd_or_cov"], dtype=float)
+                d = cov.shape[0]
+                log_sigma = summary.get("log_sigma")
+                rows = []
+                if log_sigma is not None:
+                    rows.append(("log_sigma", log_sigma))
+                    rows.append(("scale factor sigma = exp(log_sigma)", float(np.exp(log_sigma))))
+                if "n_pooled" in summary:
+                    rows.append(("n_pooled", summary["n_pooled"]))
+                rows.append(("trace(sd_or_cov)/d", float(np.trace(cov)) / d))
+                parts.extend(scalar_table(rows))
+                sd = np.sqrt(np.diag(cov))
+                parts.append('            <p class="description">Proposal standard deviations:</p>')
+                parts.extend(vector_table("sd", sd))
+                if d <= 20:
+                    parts.append('            <p class="description">Full covariance matrix:</p>')
+                    parts.extend(matrix_table(cov))
+                    corr = cov / np.outer(sd, sd)
+                    parts.append('            <p class="description">Correlation matrix:</p>')
+                    parts.extend(matrix_table(corr))
+                else:
+                    corr = cov / np.outer(sd, sd)
+                    iu = np.triu_indices(d, k=1)
+                    order = np.argsort(-np.abs(corr[iu]))[:10]
+                    pair_rows = ['            <table class="summary-table">',
+                                 '                <tr><th>i</th><th>j</th><th>correlation</th></tr>']
+                    for idx in order:
+                        i, j = int(iu[0][idx]), int(iu[1][idx])
+                        pair_rows.append(f'                <tr><td>{escape(param_label(i))}</td>'
+                                         f'<td>{escape(param_label(j))}</td>'
+                                         f'<td>{corr[i, j]:.4g}</td></tr>')
+                    pair_rows.append('            </table>')
+                    parts.append(f'            <p class="description">d={d} &gt; 20: showing the standard '
+                                 'deviations and the 10 largest |correlations| only; the full '
+                                 f'covariance matrix is in sampling_output/carry_over/{escape(stage_name)}.npz.</p>')
+                    parts.extend(pair_rows)
+            elif "pcn_beta" in carried_stage:
+                parts.extend(scalar_table([("beta", carried_stage["pcn_beta"])]))
+            elif "hamiltonian_step_size" in carried_stage:
+                parts.extend(scalar_table([("step_size", carried_stage["hamiltonian_step_size"])]))
+            else:
+                # a proposal family added after this report code (forward compatibility):
+                # show whatever scalar-shaped items came back rather than nothing
+                parts.extend(scalar_table([(key, value) for key, value in carried_stage.items()
+                                          if np.asarray(value).ndim == 0]))
+            return parts
+
         manifest = dict(getattr(self.run_data, "manifest", None) or {})
+        stage_specs = [get_stage_items(spec) for spec in (stages or [])]
+        stages_source = "the stage list passed to this report"
+        if not stage_specs:
+            stage_specs = [dict(spec) for spec in (manifest.get("stages") or []) if isinstance(spec, dict)]
+            stages_source = "sampling_output/run_manifest.json"
         configuration_items = get_configuration_items(configuration)
         configuration_source = "the configuration object passed to this report"
         if not configuration_items:
@@ -214,7 +384,22 @@ class SamplesReports(SamplesPlots):
         html_parts.append('        h1 { color: #2c3e50; border-bottom: 3px solid #3498db; padding-bottom: 10px; }')
         html_parts.append('        h2 { color: #34495e; border-bottom: 2px solid #95a5a6; padding-bottom: 8px; margin-top: 40px; }')
         html_parts.append('        h3 { color: #7f8c8d; margin-top: 30px; }')
-        html_parts.append('        .section { background-color: white; padding: 20px; margin: 20px 0; border-radius: 5px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }')
+        html_parts.append('        .section { background-color: white; padding: 10px 20px; margin: 20px 0; border-radius: 5px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }')
+        html_parts.append('        details > summary { cursor: pointer; list-style: none; }')
+        html_parts.append('        details > summary::-webkit-details-marker { display: none; }')
+        html_parts.append('        details > summary::before { content: "\\25B8"; display: inline-block; width: 1.1em; color: #3498db; }')
+        html_parts.append('        details[open] > summary::before { content: "\\25BE"; }')
+        html_parts.append('        details.section > summary { padding: 10px 0; }')
+        html_parts.append('        details.section[open] > summary { border-bottom: 2px solid #95a5a6; margin-bottom: 15px; }')
+        html_parts.append('        details.section > summary h2 { display: inline; border-bottom: none; margin: 0; padding: 0; }')
+        html_parts.append('        details.stage { background-color: #fafafa; border-left: 3px solid #bdc3c7; padding: 6px 15px; margin: 15px 0; }')
+        html_parts.append('        details.stage > summary { padding: 6px 0; }')
+        html_parts.append('        details.stage > summary h3, details.stage > summary h4 { display: inline; margin: 0; color: #34495e; }')
+        html_parts.append('        details.toc > summary h2 { display: inline; border-bottom: none; margin: 0; padding: 0; }')
+        html_parts.append('        .controls { margin: 10px 0 20px 0; }')
+        html_parts.append('        .controls button { background-color: #3498db; color: white; border: none; border-radius: 3px; padding: 6px 12px; margin-right: 8px; cursor: pointer; }')
+        html_parts.append('        .controls button:hover { background-color: #2980b9; }')
+        html_parts.append('        .footer { text-align: center; color: #7f8c8d; margin-top: 40px; }')
         html_parts.append('        .description { color: #555; margin: 10px 0; line-height: 1.6; font-style: italic; }')
         html_parts.append('        table { border-collapse: collapse; width: 100%; margin: 20px 0; }')
         html_parts.append('        th, td { border: 1px solid #ddd; padding: 8px; text-align: right; }')
@@ -233,9 +418,11 @@ class SamplesReports(SamplesPlots):
         # Title
         html_parts.append('    <h1>Extended Sampling Report</h1>')
         html_parts.append('    <p class="description">This report contains comprehensive post-processing results including summary statistics, ')
-        html_parts.append('    visualizations, and detailed analysis for all stages of the sampling process.</p>')
-        html_parts.append('    <div class="section" id="configuration">')
-        html_parts.append('        <h2>Run Configuration</h2>')
+        html_parts.append('    visualizations, and detailed analysis for all stages of the sampling process. ')
+        html_parts.append('    Every section and every per-stage block is collapsed when the file is opened; click a heading to unfold it.</p>')
+        html_parts.append('    <div class="controls"><button type="button" data-toggle-all="open">Expand all</button> '
+                          '<button type="button" data-toggle-all="close">Collapse all</button></div>')
+        html_parts.extend(section_open("configuration", "Run Configuration"))
         html_parts.append(f'        <p class="description">Effective configuration of this sampling run, from '
                           f'{escape(configuration_source)}.</p>')
         if configuration_items:
@@ -256,41 +443,80 @@ class SamplesReports(SamplesPlots):
         else:
             html_parts.append('        <p class="description">None &mdash; this run used no option flagged as '
                               'unverified in its manifest.</p>')
-        html_parts.append('    </div>')
+        html_parts.append('    </details>')
+
+        # Sampling stages specification (2026-09-21): one column per stage of the RUN, one row
+        # per Stage field, in Stage's own field order; '*' marks the posterior-/acceptance-rate-
+        # affecting fields exactly as Stage.describe() does.
+        html_parts.extend(section_open("stages", "Sampling Stages"))
+        html_parts.append(f'        <p class="description">Effective settings of every stage of this run, from '
+                          f'{escape(stages_source)}. Fields marked with * change the sampled distribution or the '
+                          'acceptance rate; "unbounded" is a stopping condition that was not set. '
+                          'The last row says whether the stage is included in the analysis sections below.</p>')
+        if stage_specs:
+            stage_field_order = [field.name for field in fields(Stage)]
+            present_keys = {key for spec in stage_specs for key in spec}
+            stage_rows = [key for key in stage_field_order if key in present_keys] \
+                + sorted(key for key in present_keys if key not in stage_field_order)
+            stage_headers = []
+            for index, spec in enumerate(stage_specs):
+                name = spec.get("name") or (self.stage_names[index] if index < len(self.stage_names) else None)
+                stage_headers.append(f"stage {index}" if name is None else f"{index}: {name}")
+            html_parts.append('        <div style="overflow-x: auto;">')
+            html_parts.append('        <table class="summary-table stages-table">')
+            html_parts.append('            <tr><th>field</th>' + ''.join(f'<th>{escape(h)}</th>' for h in stage_headers) + '</tr>')
+            for key in stage_rows:
+                label = f"{key} *" if key in POSTERIOR_AFFECTING_FIELDS else key
+                cells = ''.join(f'<td>{escape(format_stage_value(spec.get(key)))}</td>' if key in spec else '<td></td>'
+                                for spec in stage_specs)
+                html_parts.append(f'            <tr><td>{escape(label)}</td>{cells}</tr>')
+            included = ''.join('<td>yes</td>' if index in stages_to_disp else '<td>no</td>'
+                               for index in range(len(stage_specs)))
+            html_parts.append(f'            <tr><td>included in this report</td>{included}</tr>')
+            html_parts.append('        </table>')
+            html_parts.append('        </div>')
+            if len(stage_specs) != self.no_stages:
+                html_parts.append(f'        <p class="description" style="color: orange;">The specification lists '
+                                  f'{len(stage_specs)} stage(s) but the output directory holds {self.no_stages}; '
+                                  'the columns above are matched to stage directories by position.</p>')
+        else:
+            html_parts.append('        <p class="description" style="color: orange;">No stage specification was '
+                              'recorded in the run manifest and none was passed to the report.</p>')
+        html_parts.append('    </details>')
 
         # Table of Contents
-        html_parts.append('    <div class="toc">')
-        html_parts.append('        <h2>Table of Contents</h2>')
+        html_parts.append('    <details class="toc" open>')
+        html_parts.append('        <summary><h2>Table of Contents</h2></summary>')
         html_parts.append('        <ul>')
         html_parts.append('            <li><a href="#configuration">Run Configuration</a></li>')
+        html_parts.append('            <li><a href="#stages">Sampling Stages</a></li>')
         html_parts.append('            <li><a href="#summary">1. Summary Statistics</a></li>')
         html_parts.append('            <li><a href="#overall">2. Overall Analysis (Combined Stages)</a></li>')
         html_parts.append('            <li><a href="#individual">3. Individual Stage Analysis</a></li>')
         html_parts.append('            <li><a href="#diagnostics">4. Convergence Diagnostics & Autocorrelation</a></li>')
-        html_parts.append('            <li><a href="#surrogate_quality">5. Surrogate Model Quality</a></li>')
+        html_parts.append('            <li><a href="#adaptation">5. Proposal Adaptation</a></li>')
+        html_parts.append('            <li><a href="#surrogate_quality">6. Surrogate Model Quality</a></li>')
         if no_observations > 0 and observation_data_available:
-            html_parts.append('            <li><a href="#observations">6. Observation Histograms</a></li>')
+            html_parts.append('            <li><a href="#observations">7. Observation Histograms</a></li>')
         if no_best_fits > 0:
             html_parts.append('            <li><a href="#best_fits">Best-fit analysis</a></li>')
         if field_statistics:
             html_parts.append('            <li><a href="#field_statistics">Posterior field statistics</a></li>')
         html_parts.append('        </ul>')
-        html_parts.append('    </div>')
+        html_parts.append('    </details>')
         
         # 1. SUMMARY STATISTICS
-        html_parts.append('    <div class="section" id="summary">')
-        html_parts.append('        <h2>1. Summary Statistics</h2>')
+        html_parts.extend(section_open("summary", "1. Summary Statistics"))
         html_parts.append('        <p class="description">This table summarizes the acceptance and rejection rates for all sampling stages. ')
         html_parts.append('        "Accepted" samples were accepted by the Metropolis-Hastings criterion, "rejected" samples were rejected, ')
         html_parts.append('        and "pre-rejected" samples (if any) were rejected by a surrogate model before evaluation. ')
         html_parts.append('        For DAMH stages, the table also includes the mean within-subchain surrogate acceptance rate, the fraction of subchains that produced a changed proposal, and the exact outer acceptance conditional on a changed proposal. ')
         html_parts.append('        These counters are whole-stage totals over every chain, also when the rest of the report is restricted to a subset of chains.</p>')
         html_parts.append(self.summary.to_html(classes='summary-table'))
-        html_parts.append('    </div>')
+        html_parts.append('    </details>')
 
         # 2. OVERALL ANALYSIS (COMBINED STAGES)
-        html_parts.append('    <div class="section" id="overall">')
-        html_parts.append('        <h2>2. Overall Analysis (Combined Stages)</h2>')
+        html_parts.extend(section_open("overall", "2. Overall Analysis (Combined Stages)"))
         html_parts.append(f'        <p class="description">This section presents aggregated results from all selected sampling stages combined.{chains_note}</p>')
         # 2.1 Mean and Covariance
         html_parts.append('        <h3>2.1 Posterior Mean and Covariance Matrix</h3>')
@@ -431,18 +657,17 @@ class SamplesReports(SamplesPlots):
             html_parts.append('        <p class="description">No posterior field statistics were supplied for this report.</p>')
         html_parts.append('        </div>')
         
-        html_parts.append('    </div>')
+        html_parts.append('    </details>')
         
         # 3. INDIVIDUAL STAGE ANALYSIS / 4. DIAGNOSTICS
         if include_expensive_sections:
-            html_parts.append('    <div class="section" id="individual">')
-            html_parts.append('        <h2>3. Individual Stage Analysis</h2>')
+            html_parts.extend(section_open("individual", "3. Individual Stage Analysis"))
             html_parts.append('        <p class="description">This section presents detailed analysis for each sampling stage separately. ')
             html_parts.append('        Different stages may use different proposal distributions or algorithm parameters.</p>')
 
             for stage_idx in stages_to_disp:
                 stage_name = self.stage_names[stage_idx]
-                html_parts.append(f'        <h3>Stage: {stage_name}</h3>')
+                html_parts.extend(stage_open(f"individual_{stage_name}", f"Stage: {stage_name}"))
                 html_parts.append(f'        <p class="description">Analysis results for sampling stage "{stage_name}".</p>')
 
                 html_parts.append('        <h4>Stage Summary:</h4>')
@@ -502,10 +727,10 @@ class SamplesReports(SamplesPlots):
                 )
                 img_base64 = fig_to_base64(fig)
                 html_parts.append(f'        <img src="data:image/png;base64,{img_base64}" alt="Stage {stage_name} Cumulative Averages">')
-            html_parts.append('    </div>')
+                html_parts.append(stage_close)
+            html_parts.append('    </details>')
 
-            html_parts.append('    <div class="section" id="diagnostics">')
-            html_parts.append('        <h2>4. Convergence Diagnostics & Autocorrelation Analysis</h2>')
+            html_parts.extend(section_open("diagnostics", "4. Convergence Diagnostics & Autocorrelation Analysis"))
             html_parts.append('        <p class="description">Diagnostic measures to assess mixing quality, convergence, and sampling efficiency. ')
             html_parts.append('        Lower autocorrelation times and higher effective sample sizes indicate better sampling efficiency.</p>')
 
@@ -589,7 +814,7 @@ class SamplesReports(SamplesPlots):
 
             for stage_idx in stages_to_disp:
                 stage_name = self.stage_names[stage_idx]
-                html_parts.append(f'        <h4>Stage: {stage_name}</h4>')
+                html_parts.extend(stage_open(f"autocorr_{stage_name}", f"Stage: {stage_name}", level="h4"))
 
                 html_parts.append('        <p class="description"><strong>Autocorrelation Function:</strong></p>')
                 try:
@@ -624,6 +849,7 @@ class SamplesReports(SamplesPlots):
                         html_parts.append('        </div>')
                 except Exception as e:
                     html_parts.append(f'        <p class="description" style="color: orange;">ESS calculation unavailable for {stage_name}: {str(e)}</p>')
+                html_parts.append(stage_close)
 
             html_parts.append('        <h3>4.6 Gelman-Rubin Convergence (R-hat)</h3>')
             html_parts.append('        <p class="description">R-hat compares within-chain and between-chain variance. ')
@@ -719,49 +945,115 @@ class SamplesReports(SamplesPlots):
                                    lambda v: f"{v:.4f}") + '\n')
             html_parts.append('            </pre>')
             html_parts.append('        </div>')
-            html_parts.append('    </div>')
+            html_parts.append('    </details>')
         else:
-            html_parts.append('    <div class="section" id="individual">')
-            html_parts.append('        <h2>3. Individual Stage Analysis</h2>')
+            html_parts.extend(section_open("individual", "3. Individual Stage Analysis"))
             html_parts.append('        <p class="description">Omitted in the lightweight report because per-stage plots and summaries are expensive for high-dimensional problems.</p>')
-            html_parts.append('    </div>')
+            html_parts.append('    </details>')
 
-            html_parts.append('    <div class="section" id="diagnostics">')
-            html_parts.append('        <h2>4. Convergence Diagnostics & Autocorrelation Analysis</h2>')
+            html_parts.extend(section_open("diagnostics", "4. Convergence Diagnostics & Autocorrelation Analysis"))
             html_parts.append('        <p class="description">Omitted in the lightweight report.</p>')
-            html_parts.append('    </div>')
+            html_parts.append('    </details>')
 
-        # 5. SURROGATE MODEL QUALITY
-        html_parts.append('    <div class="section" id="surrogate_quality">')
-        html_parts.append('        <h2>5. Surrogate Model Quality</h2>')
+        # 5. PROPOSAL ADAPTATION (2026-09-21): per adaptive stage, the per-period trace written to
+        # adaptive_stats/<stage>/rank%04d.csv (docs/outputs.md). Cheap (one row per period), so it
+        # is produced in the lightweight report too.
+        html_parts.extend(section_open("adaptation", "5. Proposal Adaptation"))
+        html_parts.append('        <p class="description">For every displayed stage whose proposal adapted, the per-period trace of the '
+                          'adaptation: the mean acceptance probability the proposal was fed in each period (top panel, with the target '
+                          'rate it drives towards as a dashed line) and every adapted parameter it logged, one line per chain, followed '
+                          'by the proposal actually CARRIED OVER to the next stage (the pooled covariance/beta/step size that stage '
+                          'started from). Random walk: log_sigma (Robbins-Monro log-scale), trace_C_over_d and shrinkage_delta of the '
+                          'installed covariance estimate (NaN before the warm-up count is reached); pCN: beta; Hamiltonian family: the '
+                          'leapfrog log_step_size and its dual-averaged log_step_size_bar. In a DAMH stage the random walk and pCN are '
+                          'fed the OVERALL outer acceptance probability (a pre-rejected iteration counts as 0), the Hamiltonian step '
+                          'size the sub-chain\'s own acceptance against the surrogate. Values are shown as logged, i.e. on the log scale '
+                          f'where the proposal adapts on the log scale.{escape(chains_note)}</p>')
+        adaptive_blocks = 0
+        for stage_idx in stages_to_disp:
+            stage_name = self.stage_names[stage_idx]
+            spec = stage_specs[stage_idx] if stage_idx < len(stage_specs) else {}
+            trace = self.adaptive_stats[stage_idx] if stage_idx < len(self.adaptive_stats) else None
+            has_trace = trace is not None and not trace.empty
+            carry = self.carry_over[stage_idx] if stage_idx < len(self.carry_over) else None
+            if not has_trace and not spec.get("adaptive", False) and carry is None:
+                continue
+            adaptive_blocks += 1
+            html_parts.extend(stage_open(f"adaptation_{stage_name}", f"Stage: {stage_name}"))
+            target_rate = spec.get("adaptive_target_rate")
+            target_source = "adaptive_target_rate"
+            if target_rate is None:
+                target_rate = default_target_rate(spec.get("proposal_type"))
+                target_source = "the proposal's default"
+            if not has_trace:
+                html_parts.append('            <p class="description" style="color: orange;">This stage is declared '
+                                  'adaptive=True but no adaptive_stats trace was found (save_to_file=False, or the run '
+                                  'predates the adaptive_stats file).</p>')
+            else:
+                parts = [f'proposal_type={format_stage_value(spec.get("proposal_type"))}' if "proposal_type" in spec else None,
+                         f'target rate {target_rate:g} ({target_source})' if target_rate is not None else 'target rate unknown',
+                         f'{len(trace)} logged period(s) over '
+                         f'{trace["rank_world"].nunique() if "rank_world" in trace.columns else 1} chain(s)']
+                html_parts.append('            <p class="description">' + escape('; '.join(p for p in parts if p)) + '</p>')
+                try:
+                    fig_adapt, _ = self.plot_adaptation(stage_idx, chains_to_disp=chains_to_disp, target_rate=target_rate)
+                    if fig_adapt is None:
+                        html_parts.append('            <p class="description" style="color: orange;">No adaptation trace '
+                                          'for the selected chain(s).</p>')
+                    else:
+                        img_base64 = fig_to_base64(fig_adapt)
+                        html_parts.append(f'            <img src="data:image/png;base64,{img_base64}" alt="Proposal adaptation {escape(stage_name)}">')
+                        # last logged period of every chain: the values the stage ended with
+                        counter = next((c for c in ("n", "m") if c in trace.columns), None)
+                        if "rank_world" in trace.columns:
+                            ranks = sorted(int(r) for r in trace["rank_world"].unique())
+                            chain_of_rank = {rank: position for position, rank in enumerate(ranks)}
+                            last_rows = trace.groupby("rank_world", sort=True).tail(1).copy()
+                            last_rows.insert(0, "chain", [chain_of_rank[int(r)] for r in last_rows["rank_world"]])
+                            last_rows = last_rows.drop(columns=["rank_world"]).set_index("chain")
+                            if chains_to_disp is not None:
+                                wanted = {int(c) for c in chains_to_disp}
+                                last_rows = last_rows.loc[[c for c in last_rows.index if c in wanted]]
+                            html_parts.append('            <p class="description">Last logged period of every chain'
+                                              + (f' (column {escape(counter)} = adaptation counter)' if counter else '') + ':</p>')
+                            html_parts.append(last_rows.to_html(classes='summary-table', float_format=lambda x: f"{x:.6g}"))
+                except Exception as e:
+                    html_parts.append(f'            <p class="description" style="color: orange;">Adaptation plot unavailable for {escape(stage_name)}: {escape(str(e))}</p>')
+            html_parts.extend(carry_over_block(stage_idx, stage_name, carry))
+            html_parts.append(stage_close)
+        if adaptive_blocks == 0:
+            html_parts.append('        <p class="description">No displayed stage used an adaptive proposal.</p>')
+        html_parts.append('    </details>')
+
+        # 6. SURROGATE MODEL QUALITY
+        html_parts.extend(section_open("surrogate_quality", "6. Surrogate Model Quality"))
         html_parts.append('        <p class="description">Out-of-sample quality metrics of the surrogate model, measured on newly arrived snapshots ')
         html_parts.append('        before they are added to the training set. Decreasing error indicates a surrogate model that improves as more data is collected.</p>')
         fig_sq, axes_sq = self.plot_surrogate_quality()
         img_base64 = fig_to_base64(fig_sq)
         html_parts.append(f'        <img src="data:image/png;base64,{img_base64}" alt="Surrogate Model Quality">')
-        html_parts.append('        <h3>5.1 Fixed Test Data Monitoring</h3>')
+        html_parts.append('        <h3>6.1 Fixed Test Data Monitoring</h3>')
         html_parts.append('        <p class="description">These diagnostics track the surrogate on a fixed test set generated before sampling. ')
         html_parts.append('        Because the test data are immutable and excluded from training, this view is useful for monitoring generalization across surrogate updates.</p>')
         fig_sq_test, _ = self.plot_surrogate_quality_test()
         img_base64 = fig_to_base64(fig_sq_test)
         html_parts.append(f'        <img src="data:image/png;base64,{img_base64}" alt="Surrogate Model Quality on Fixed Test Data">')
-        html_parts.append('        <h3>5.2 Posterior-Weighted Fixed Test Data Monitoring</h3>')
+        html_parts.append('        <h3>6.2 Posterior-Weighted Fixed Test Data Monitoring</h3>')
         html_parts.append('        <p class="description">These metrics weight each fixed test point by its posterior mass, emphasizing regions that are more relevant to the posterior distribution.</p>')
         fig_sq_test_weighted, _ = self.plot_surrogate_quality_test_weighted()
         img_base64 = fig_to_base64(fig_sq_test_weighted)
         html_parts.append(f'        <img src="data:image/png;base64,{img_base64}" alt="Posterior-Weighted Surrogate Model Quality on Fixed Test Data">')
-        html_parts.append('    </div>')
+        html_parts.append('    </details>')
         
-        # 6. OBSERVATION HISTOGRAMS (if available)
+        # 7. OBSERVATION HISTOGRAMS (if available)
         if include_expensive_sections and no_observations > 0 and observation_data_available:
-            html_parts.append('    <div class="section" id="observations">')
-            html_parts.append('        <h2>6. Observation Histograms</h2>')
+            html_parts.extend(section_open("observations", "7. Observation Histograms"))
             html_parts.append('        <p class="description">These histograms show the distribution of model outputs (observations) ')
             html_parts.append('        generated by the sampled parameters. If actual observations are provided, they are overlaid ')
             html_parts.append('        in red for comparison.</p>')
             
             # Overall observation histogram
-            html_parts.append('        <h3>6.1 Combined Stages</h3>')
+            html_parts.append('        <h3>7.1 Combined Stages</h3>')
             fig = self.hist_observations(no_observations=no_observations, chosen_observations=observations_to_disp,
                                         grid=grid, grid_interp=grid_interp, bins=bins, chains_to_disp=chains_to_disp,
                                         stages_to_disp=stages_to_disp, observations=observations, cmap=cmap)
@@ -769,34 +1061,49 @@ class SamplesReports(SamplesPlots):
             html_parts.append(f'        <img src="data:image/png;base64,{img_base64}" alt="Overall Observation Histogram">')
             
             # Per-stage observation histograms
-            html_parts.append('        <h3>6.2 Individual Stages</h3>')
+            html_parts.append('        <h3>7.2 Individual Stages</h3>')
             for stage_idx in stages_to_disp:
                 stage_name = self.stage_names[stage_idx]
-                html_parts.append(f'        <h4>Stage: {stage_name}</h4>')
+                html_parts.extend(stage_open(f"observations_{stage_name}", f"Stage: {stage_name}", level="h4"))
                 fig = self.hist_observations(no_observations=no_observations, chosen_observations=observations_to_disp,
                                             grid=grid, grid_interp=grid_interp, bins=bins, chains_to_disp=chains_to_disp,
                                             stages_to_disp=[stage_idx], observations=observations, cmap=cmap)
                 img_base64 = fig_to_base64(fig)
                 html_parts.append(f'        <img src="data:image/png;base64,{img_base64}" alt="Stage {stage_name} Observation Histogram">')
+                html_parts.append(stage_close)
             
-            html_parts.append('    </div>')
+            html_parts.append('    </details>')
         elif no_observations > 0:
-            html_parts.append('    <div class="section" id="observations">')
-            html_parts.append('        <h2>6. Observation Histograms</h2>')
+            html_parts.extend(section_open("observations", "7. Observation Histograms"))
             if include_expensive_sections:
                 html_parts.append('        <p class="description">Observation histograms are not available for this run because raw snapshots were not saved. ')
                 html_parts.append('        Enable <code>save_snapshots_to_file=True</code> in configuration to include this section.</p>')
             else:
                 html_parts.append('        <p class="description">Observation histograms were skipped in the lightweight report to keep generation time reasonable.</p>')
-            html_parts.append('    </div>')
+            html_parts.append('    </details>')
         
         # Footer
-        html_parts.append('    <div class="section">')
-        html_parts.append('        <p style="text-align: center; color: #7f8c8d; margin-top: 40px;">')
-        html_parts.append('        Report generated by surrDAMH post-processing module')
-        html_parts.append('        </p>')
-        html_parts.append('    </div>')
-        
+        html_parts.append('    <p class="footer">Report generated by surrDAMH post-processing module</p>')
+        # collapsible sections: open every <details> ancestor of a fragment target (table of
+        # contents links into collapsed sections), and the Expand all / Collapse all buttons
+        html_parts.append('    <script>')
+        html_parts.append('    (function () {')
+        html_parts.append('        function revealHash() {')
+        html_parts.append('            if (!location.hash) { return; }')
+        html_parts.append('            var target = document.getElementById(decodeURIComponent(location.hash.slice(1)));')
+        html_parts.append('            for (var el = target; el; el = el.parentElement) { if (el.tagName === "DETAILS") { el.open = true; } }')
+        html_parts.append('            if (target) { target.scrollIntoView(); }')
+        html_parts.append('        }')
+        html_parts.append('        window.addEventListener("hashchange", revealHash);')
+        html_parts.append('        revealHash();')
+        html_parts.append('        document.querySelectorAll("[data-toggle-all]").forEach(function (button) {')
+        html_parts.append('            button.addEventListener("click", function () {')
+        html_parts.append('                var open = button.getAttribute("data-toggle-all") === "open";')
+        html_parts.append('                document.querySelectorAll("details").forEach(function (d) { d.open = open; });')
+        html_parts.append('            });')
+        html_parts.append('        });')
+        html_parts.append('    })();')
+        html_parts.append('    </script>')
         html_parts.append('</body>')
         html_parts.append('</html>')
         

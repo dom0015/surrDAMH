@@ -41,7 +41,7 @@ from surrDAMH.modules import lhs_normal as lhs
 from surrDAMH.modules.algorithm_interfaces_local import (LocalEvaluatorProvider,
                                                          LocalSolverAdapter,
                                                          LocalSurrogateManager)
-from surrDAMH.modules.continuation import save_last_sample
+from surrDAMH.modules.continuation import save_carry_over, save_last_sample
 from surrDAMH.modules.manifest import (build_run_manifest, finalize_run_manifest,
                                        write_run_manifest)
 from surrDAMH.modules.proposal_builder import build_proposal
@@ -226,7 +226,11 @@ def run_local(conf: Configuration, prior: Distribution, likelihood: Distribution
         if stage.adaptive:
             buf = np.ascontiguousarray(proposal.adapted_state(), dtype=np.float64)
             proposal.set_pooled_state(buf[None, :])
-            carried.update(proposal.carry_over())
+            stage_carry_over = proposal.carry_over()
+            carried.update(stage_carry_over)
+            # same file as process_SAMPLER writes from sampler rank 0 (2026-09-21); a local
+            # run has exactly one chain, so there is no rank to pick among
+            save_carry_over(conf, stage.name, stage_carry_over, proposal.adapted_summary())
 
         # initial sample for the next stage (after a use_only_surrogate stage its surrogate
         # observations are dropped so that the next stage re-evaluates it exactly, finding A11):

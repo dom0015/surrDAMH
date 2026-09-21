@@ -9,7 +9,7 @@ rule. `list_of_stages` is run in order by every sampler rank (or by `run_local`)
 | `algorithm_type` | `"MH"\|"DAMH"` | `"MH"` | MH = plain Metropolis-Hastings; DAMH = delayed acceptance (see `docs/concepts.md`). | **yes** |
 | `proposal_type` | `"RWMH"\|"pCN"\|"Hamiltonian"\|"HamiltonianInfinite"\|"block"` | `"RWMH"` | Which `Proposal` `build_proposal` constructs. | **yes** |
 | `proposal` | `Proposal\|None` | `None` | **Never read.** `build_proposal` always constructs a fresh proposal from `proposal_type` and the fields below; setting this has no effect. | ignored |
-| `proposal_sd_or_cov` | `float\|ArrayLike\|None` | `None` | Proposal scale/covariance (RWMH, adaptive RWMH, Hamiltonian mass); `None` carries over the previous adaptive random-walk stage's covariance (RWMH stages only). A **Hamiltonian** stage with `None` gets the mass `1.0`, never the carried covariance: `16` §5 item 5 measured `M = Σ̂` as a poor mass (`M = Σ̂⁻¹` is the good one), and carrying the inverse needs the step size re-adapted at fixed integration time, which is an open decision — set the mass explicitly on a Hamiltonian stage. | **yes** |
+| `proposal_sd_or_cov` | `float\|ArrayLike\|None` | `None` | Proposal scale/covariance (RWMH, adaptive RWMH, Hamiltonian mass); `None` carries over the previous adaptive random-walk stage's covariance (RWMH stages only). With nothing to carry over, an **adaptive** RWMH stage starts from the prior covariance × `2.38²/d` (sd `1.0` + warning if the prior has no `get_covariance()`) — the adaptive random walk keeps its effective covariance continuous when its estimate replaces the start, so the start only shapes the warm-up (2026-09-21); a non-adaptive RWMH stage raises. A **Hamiltonian** stage with `None` gets the mass `1.0`, never the carried covariance: `16` §5 item 5 measured `M = Σ̂` as a poor mass (`M = Σ̂⁻¹` is the good one), and carrying the inverse needs the step size re-adapted at fixed integration time, which is an open decision — set the mass explicitly on a Hamiltonian stage. | **yes** |
 | `pcn_beta` | `float\|None` | `None` | pCN step size in `(0, 1)`. Only for `proposal_type="pCN"`. `None` (since 2026-09-20) = the β carried over from the last adaptive pCN stage of the run, else `0.5` — the former dataclass default, so no existing configuration changes value. | **yes** |
 | `hamiltonian_num_steps` | `int` | `10` | Leapfrog steps. Only for the two Hamiltonian proposal types. | **yes** |
 | `hamiltonian_step_size` | `float\|None` | `None` | Leapfrog step size. Only for the two Hamiltonian proposal types. `None` (since 2026-09-20) = the dual-averaged `ε̄` carried over from the last adaptive Hamiltonian stage of the run, else `0.1` — the former dataclass default, so no existing configuration changes value. | **yes** |
@@ -53,7 +53,7 @@ consumed by every later stage for the fields it leaves `None`:
 
 | proposal | pooled | carried field |
 |---|---|---|
-| `GaussRandomWalk_adaptive` | `(n, mean, M2)` of all chains' states (Chan et al. parallel combination) + mean `log σ` | `proposal_sd_or_cov` |
+| `GaussRandomWalk_adaptive` | `(n, mean, M2)` of all chains' states (Chan et al. parallel combination) + mean effective log-scale `log σ + ½ log tr(base_cov)` (converted back to `log σ` against the pooled base, 2026-09-21) | `proposal_sd_or_cov` |
 | `PCN_adaptive` | mean `logit β` | `pcn_beta` |
 | `Hamiltonian_adaptive` / `HamiltonianInfinite_adaptive` | mean `log ε̄` | `hamiltonian_step_size` |
 

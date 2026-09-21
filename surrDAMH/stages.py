@@ -67,6 +67,14 @@ class Stage:
     0.1" -- the values that were the dataclass defaults before 2026-09-20, so the effective
     value of every existing configuration is unchanged.
 
+    ``proposal_sd_or_cov=None`` on a random-walk stage means "the covariance carried over from
+    the last adaptive random-walk stage"; when there is none, an ``adaptive=True`` stage starts
+    from the prior covariance scaled by ``2.38^2 / d`` (unit sd if the prior has no
+    ``get_covariance()``, with a printed warning) and a non-adaptive stage raises in
+    ``build_proposal`` (2026-09-21). The adaptive random walk keeps its effective covariance
+    continuous when its own estimate replaces the starting one, so the start only shapes the
+    warm-up; no starting value has to be supplied.
+
     Currently ignored (accepted but not wired to any behaviour): ``proposal``
     (never read -- the proposal actually used is always constructed fresh by
     ``build_proposal`` from ``proposal_type`` and the other fields above).
@@ -212,6 +220,10 @@ class Stage:
         if self.pcn_beta is None or self.hamiltonian_step_size is None:
             notes.append("pcn_beta/hamiltonian_step_size None = carried from the last adaptive "
                          "stage of that type, else 0.5/0.1")
+        if self.proposal_sd_or_cov is None and self.proposal_type == "RWMH":
+            notes.append("proposal_sd_or_cov None = carried from the last adaptive RWMH stage, else "
+                         + ("prior covariance * 2.38^2/d (adaptive start)" if self.adaptive
+                            else "an error (set it or use adaptive=True)"))
         if self.proposal is not None:
             notes.append("the 'proposal' field is never read (build_proposal always builds a fresh one)")
         extra = [f"[note] {note}" for note in notes]

@@ -130,10 +130,17 @@ class Samples(SamplesReports):
         self.adaptive_stats = [pd.DataFrame() if stats is None else stats.copy()
                                for stats in self.run_data.adaptive_stats]
 
+    def load_carry_over(self):
+        """``carry_over[stage]``: ``(carry_over, summary)`` dict pair handed from this stage to
+        the next one (``modules.continuation.save_carry_over``/``load_carry_over``), ``None``
+        for a non-adaptive stage or one written before this file existed (2026-09-21)."""
+        self.carry_over = list(self.run_data.carry_over)
+
     def summarize(self):
         self.load_notes()
         self.load_subchain_stats()
         self.load_adaptive_stats()
+        self.load_carry_over()
         # create pandas data frame containing sums of dataframes in self.notes:
         summary = pd.DataFrame()
         for notes in self.notes:

@@ -438,6 +438,74 @@ without touching the adaptation rule:
 - Efficiency after the fix: see the §2.22 efficiency bullet / `RESULTS_EFFICIENCY.md` (rerun of the
   four Hamiltonian runs).
 
+**2.24 Adaptive random walk: effective covariance made continuous across a covariance install;
+starting `proposal_sd_or_cov` no longer required on an adaptive stage (2026-09-21, author-reported:
+a `proposal_sd_or_cov=0.001` adaptive stage "did not adapt to reasonable values").** Diagnosed and
+fixed by the manager directly (small diff). Suites after the change: non-MPI 454 passed + 1 skipped
+(unit and `tests/test_runner_local.py`; the validation suite passed in the same-day combined run), mpi 40 passed (`./run_tests.sh mpi`).
+- **Cause.** `log σ` of §2.22 is learned relative to `base_cov`. From sd 0.001 on a unit-scale
+  target the recursion raises `log σ` by ≈ ln 1000 during the warm-up; at `n = warmup` the empirical
+  estimate (≈ unit scale) replaced `base_cov` and `log σ` was kept, so `e^{2 log σ} base` jumped by
+  the trace ratio. Measured (d = 4 unit Gaussian, optimum sd ≈ 1.19, plain MH loop, 5000 steps):
+  start 0.001 → effective sd 0.81 at n = 99, **776** at n = 100, 92 at 500, 10 at 2000, 1.78 at 5000,
+  chain frozen meanwhile; start 0.01 → 1.03 → 121; mirror case start 1.0 on posterior sd 1e-3 →
+  3.7e-6 at n = 1000. A fixed "reasonable default" start would therefore not have fixed it (units
+  differ per problem) — the author's first idea, argued against and withdrawn.
+- **Fix.** `_install_covariance_from_statistics` shifts `log σ += ½ log(tr base_old / tr base_new)`,
+  so `tr(e^{2 log σ} base)` is unchanged by the install: shape update = shape only, scale stays with
+  Robbins–Monro. After the fix every start 0.001 … 100 ends at effective sd 1.37–1.41, acceptance
+  0.20–0.22 (target 0.234); the posterior-1e-3 mirror case ends at 1.42e-3 (optimum 1.19e-3).
+- **Hand-over consequence (caught by the existing pooling test).** With `log σ` base-relative, the
+  §2.22 "mean `log σ`" pooling gave each rank a different pooled proposal (each rescaled against its
+  own previous `base`). `adapted_state()`'s last entry is now the effective log-scale
+  `log σ + ½ log tr base` (same length → same `Allgather` buffers); `set_pooled_state` averages it and
+  converts back against the pooled base. Single-row pooling still keeps the chain's own state exactly
+  (`run_local` ≡ MPI chain 0 unchanged).
+- **Default start.** `build_proposal`: RWMH stage with `proposal_sd_or_cov=None` and nothing carried →
+  `adaptive=True`: prior covariance × `2.38²/d` (`Normal`, `PriorIndependentComponents` via
+  `get_covariance()`; 1-D returns are STANDARD DEVIATIONS, so scaled by `2.38/√d`), or sd 1.0 with a
+  printed warning for `FromScipy`/`GaussianMixture`; `adaptive=False`: `ValueError` naming the two
+  ways out (was a bare `AssertionError`). `Stage.describe()` prints the resolution as a `[note]`.
+  `toy_examples/template_experiment_manual_test.py` (adaptive first stage with `None`) now runs as
+  written; the template itself was not touched.
+- **Affected configurations.** Every `adaptive=True` random-walk stage and every later stage taking
+  its covariance from one: the warm-up trajectory differs; a start at the right scale sees only a
+  small shift (start 1.0: n = 100 effective sd 1.48 before → 1.33 after). Non-adaptive proposals
+  byte-identical (not touched). Tests: `tests/unit/test_proposals.py` (+8: continuity at the install,
+  exact trace invariant, recovery from 100× too large / mirror case, default start from `Normal` sd /
+  matrix / `PriorIndependentComponents`, `FromScipy` fallback + warning, carried beats default,
+  non-adaptive raises), `tests/test_runner_local.py` (+1 end-to-end `MH-adaptive(None) → DAMH(None)`).
+- **Not checked:** a multi-sampler MPI run with a deliberately wrong start (only the unit-level
+  pooling identity and the unchanged `tests/mpi` suite cover the hand-over).
+
+**2.25 The adaptive hand-over is persisted and reported (2026-09-21, author-requested: "report the
+resulting covariance matrix and other adapted parameters used by the subsequent stage").**
+Implemented by a sonnet agent from the manager's specification; diff reviewed line by line, two
+corrections by the manager (below). Not posterior-affecting: no sampling code path changed, one new
+file per adaptive stage.
+- **File.** `sampling_output/carry_over/<stage>.npz`, written once per adaptive stage by sampler rank 0
+  (every rank holds the identical pooled state) and by `run_local`; unconditional like `last_sample/`.
+  Keys `carry_over__*` = `Proposal.carry_over()` (exactly what `build_proposal` consumes:
+  `proposal_sd_or_cov` | `pcn_beta` | `hamiltonian_step_size`) and `summary__*` = new diagnostic-only
+  `Proposal.adapted_summary()` (RW: `base_cov`, `log_sigma`, `n_pooled`, `mean`; pCN: `beta`;
+  Hamiltonian: `step_size`). Each value keeps its own dtype (0-d arrays read back via `item()`).
+- **Readers.** `RunData.carry_over[stage]` / `Samples.carry_over[stage]` = `(carry_over, summary)` or
+  `None` (non-adaptive stage, or a run predating the file — never an error).
+- **Report.** Section 5 per adaptive stage, after the trace: "Carried over to the next stage, consumed
+  by stage <name>" (or "this was the last stage"); scalar table (`log_sigma`, `exp(log_sigma)`,
+  `n_pooled`, `tr/d`), proposal sd vector, and for d ≤ 20 the full covariance and correlation matrices;
+  for d > 20 the sd vector and the 10 largest |correlations| with a pointer to the npz. Shown even when
+  the `adaptive_stats` trace is missing. Verified on a real `run_local` MH-adaptive → DAMH report.
+- **Manager corrections.** (i) The missing-file notice blamed `save_to_file=False`, which cannot be the
+  cause (the write is unconditional) — reworded. (ii) Scalars were saved as float64 and re-typed by an
+  `is_integer()` heuristic (`beta == 1.0` would have come back as `int`) — replaced by dtype-preserving
+  save + `item()`; round-trip test extended with an integral-valued float.
+- **Tests.** +4 unit (`adapted_summary`), +3 loader round-trip / `read_run`, +3 report (section present,
+  last-stage sentence, missing-file notice), +1 `run_local` end-to-end (file for stage 0 only, SPD,
+  `base_cov·e^{2 log σ} ≈ proposal_sd_or_cov`). Suites: non-MPI 480 passed + 1 skipped, mpi 40 passed.
+- **Not covered:** no MPI test asserts on the new file (the MPI suite only proves nothing broke; the
+  rank-0 write path is exercised by every adaptive MPI test but its content is not checked there).
+
 ## 3. Pre-existing bugs the new tests pin but do not fix — [bug] / [decide]
 
 Each test asserts *today's* behaviour with a docstring citing the finding; flip the assertion

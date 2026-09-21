@@ -173,6 +173,18 @@ class Proposal:
         self.log_likelihood_gradient = log_likelihood_gradient_function
         self.log_prior_gradient = log_prior_gradient_function
 
+    def adapted_summary(self) -> dict:
+        """
+        Diagnostic snapshot of this proposal's adapted state, for the carry-over report
+        (2026-09-21); ``{}`` unless overridden. Unlike :meth:`carry_over`, this is NEVER
+        consumed by ``build_proposal`` -- it exists only so ``continuation.save_carry_over``
+        and the HTML report can show what the pooled adaptation actually looked like (e.g. the
+        random walk's ``base_cov``/``log_sigma`` separately from the combined ``sd_or_cov``
+        ``carry_over`` hands on). Must be called after ``set_pooled_state`` so the values are
+        the pooled ones, and must return only numpy-savable values (floats, ints, arrays).
+        """
+        return {}
+
 
 class GaussRandomWalk(Proposal):  # initiated by SAMPLERs
     """Symmetric Gaussian random-walk proposal (no prior assumption): ``x' = x + N(0, sd_or_cov)``."""
@@ -426,6 +438,16 @@ class GaussRandomWalk_adaptive(GaussRandomWalk):  # initiated by SAMPLERs
     def _install_covariance_from_statistics(self, n: int, scatter: npt.NDArray) -> bool:
         """``base_cov`` from ``(n, M2)``: shrinkage towards ``(tr C / d) I`` plus a relative ridge.
 
+        The scale recursion learns ``log_sigma`` RELATIVE to ``base_cov``, so replacing
+        ``base_cov`` by an estimate of a different magnitude would apply the learned scale to the
+        wrong base and make the effective covariance ``exp(2 log_sigma) * base_cov`` jump by the
+        ratio of the two traces (2026-09-21: from an initial sd of 0.001 on a unit-scale target the
+        effective sd jumped 0.8 -> 776 at ``n = warmup`` and the chain froze for thousands of
+        iterations). ``log_sigma`` is therefore shifted so that the trace of the effective
+        covariance is continuous across the install: the shape update changes only the shape and
+        the scale stays with the Robbins-Monro recursion. The starting ``sd_or_cov`` then matters
+        only during the warm-up.
+
         Returns ``True`` iff a new ``base_cov`` was installed (so the caller knows whether the
         Cholesky factor has to be recomputed)."""
         d = self.no_parameters
@@ -439,19 +461,32 @@ class GaussRandomWalk_adaptive(GaussRandomWalk):  # initiated by SAMPLERs
             return False
         delta = min(1.0, 2.0 * d / n)
         C = (1.0 - delta) * C + delta * trace_over_d * np.eye(d)
+        previous_trace = float(np.trace(self.base_cov))
         self.base_cov = self.scale_factor * (C + 1e-6 * trace_over_d * np.eye(d))
+        # keep exp(2 log_sigma) * tr(base_cov) unchanged (see the docstring)
+        self.log_sigma += 0.5 * np.log(previous_trace / float(np.trace(self.base_cov)))
         self._trace_over_d = trace_over_d
         self._shrinkage_delta = delta
         return True
 
     # -- cross-rank hand-over -----------------------------------------------------------
+    def _effective_log_scale(self) -> float:
+        """``log_sigma + 0.5 log tr(base_cov)`` = half the log of the effective trace
+        ``tr(sd_or_cov)``; the base-independent quantity the ranks agree on (2026-09-21)."""
+        return float(self.log_sigma + 0.5 * np.log(float(np.trace(self.base_cov))))
+
     def adapted_state(self) -> npt.NDArray:
-        """``[n, mean (d), M2 (d*d), log_sigma]`` -- fixed length, same on every rank."""
+        """``[n, mean (d), M2 (d*d), effective log-scale]`` -- fixed length, same on every rank.
+
+        The last entry is ``log_sigma + 0.5 log tr(base_cov)`` rather than ``log_sigma`` itself
+        (2026-09-21): ``log_sigma`` is only meaningful relative to this rank's own ``base_cov``,
+        which differs between ranks at the end of an adaptive stage, so averaging it would give
+        the pooled proposal a rank-dependent scale once the pooled covariance is installed."""
         return np.concatenate((
             np.array([float(self.n)]),
             self.mean.astype(np.float64).ravel(),
             self.M2.astype(np.float64).ravel(),
-            np.array([float(self.log_sigma)]),
+            np.array([self._effective_log_scale()]),
         ))
 
     def set_pooled_state(self, states: npt.NDArray) -> None:
@@ -459,7 +494,11 @@ class GaussRandomWalk_adaptive(GaussRandomWalk):  # initiated by SAMPLERs
         Combine the ``adapted_state()`` rows of all chains into this proposal.
 
         ``(n_r, mean_r, M2_r)`` are combined by the Chan-Golub-LeVeque parallel formula, which
-        gives exactly the statistics of the concatenated chains; ``log_sigma`` is averaged.
+        gives exactly the statistics of the concatenated chains; the effective log-scale
+        ``log_sigma + 0.5 log tr(base_cov)`` is averaged and, once the pooled covariance is
+        installed, converted back to the ``log_sigma`` that reproduces that effective scale with
+        the pooled base -- so every rank ends with the same ``sd_or_cov`` whatever its own
+        ``base_cov`` was before (2026-09-21).
         Pooling the SAMPLES (rather than averaging per-rank covariances) is what Craiu et al.
         (2009) / Solonen et al. (2012) recommend and what removes the 6-17x rank disagreement
         the 2026-09-18 study measured.
@@ -488,15 +527,27 @@ class GaussRandomWalk_adaptive(GaussRandomWalk):  # initiated by SAMPLERs
             self.n = int(round(total))
             self.mean = pooled_mean
             self.M2 = pooled_scatter
-        self.log_sigma = float(states[:, -1].mean())
-
-        if states.shape[0] > 1 and self.n >= self.warmup:
-            self._install_covariance_from_statistics(self.n, self.M2)
+        if states.shape[0] > 1:
+            if self.n >= self.warmup:
+                # the install shifts log_sigma against THIS rank's previous base_cov; the
+                # assignment below overrides that with the rank-independent pooled scale
+                self._install_covariance_from_statistics(self.n, self.M2)
+            pooled_effective_log_scale = float(states[:, -1].mean())
+            self.log_sigma = pooled_effective_log_scale - 0.5 * np.log(float(np.trace(self.base_cov)))
+        # single row: this chain's own state, log_sigma and base_cov are kept exactly as they are
         self._refactor()
 
     def carry_over(self) -> dict:
         """Stage fields this adapted proposal hands to the following stages."""
         return {"proposal_sd_or_cov": self.sd_or_cov}
+
+    def adapted_summary(self) -> dict:
+        """Diagnostic-only snapshot (see ``Proposal.adapted_summary``): the pooled shape
+        (``base_cov``) and scale (``log_sigma``) separately, plus ``n_pooled`` (the pooled
+        chain-iteration count) and the pooled ``mean`` -- everything ``carry_over``'s single
+        ``proposal_sd_or_cov = exp(2 log_sigma) * base_cov`` folds together."""
+        return {"base_cov": self.base_cov, "log_sigma": float(self.log_sigma),
+                "n_pooled": int(self.n), "mean": self.mean}
 
 
 class PCN_adaptive(PCN):
@@ -571,6 +622,10 @@ class PCN_adaptive(PCN):
 
     def carry_over(self) -> dict:
         return {"pcn_beta": self.beta}
+
+    def adapted_summary(self) -> dict:
+        """Diagnostic-only snapshot (see ``Proposal.adapted_summary``)."""
+        return {"beta": float(self.beta)}
 
 
 class Hamiltonian(Proposal):
@@ -893,6 +948,12 @@ class _DualAveragingStepSize:
 
     def carry_over(self) -> dict:
         return {"hamiltonian_step_size": float(np.exp(self.log_eps_bar))}
+
+    def adapted_summary(self) -> dict:
+        """Diagnostic-only snapshot (see ``Proposal.adapted_summary``): the same frozen,
+        dual-averaged step size ``carry_over`` hands on, under a shorter, proposal-family
+        agnostic key."""
+        return {"step_size": float(np.exp(self.log_eps_bar))}
 
 
 class Hamiltonian_adaptive(_DualAveragingStepSize, Hamiltonian):

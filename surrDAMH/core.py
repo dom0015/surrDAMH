@@ -56,13 +56,14 @@ def _insert_best_fit_visualization_note(html_file_path: str, pool_mode_note: str
                          for name in image_filenames)
     else:
         body = '        <p class="description">No best-fit solver visualization was generated for this report.</p>'
+    # a collapsed <details> block like every other section of the report (2026-09-21)
     section = (
-        '    <div class="section" id="best_fit_visualization">\n'
-        '        <h3>Best-fit Solver Visualization</h3>\n'
+        '    <details class="section" id="best_fit_visualization">\n'
+        '        <summary><h2>Best-fit Solver Visualization</h2></summary>\n'
         '        <p class="description">Solver-produced visualization(s) of the best-fit sample '
         '(see Best-fit Analysis above), from Solver.visualize_solution().</p>\n'
         f'{body}\n'
-        '    </div>\n'
+        '    </details>\n'
     )
     with open(html_file_path, "r") as f:
         html = f.read()
@@ -570,6 +571,7 @@ class SamplingFramework:
             cmap=cmap,
             chains_to_disp=chains_to_disp,
             pool_mode_note=pool_mode_note,
+            stages=self.list_of_stages,  # the "Sampling Stages" section (else the manifest copy)
         )
 
         # Finding 2.7: best-fit solver visualization figures are saved as separate PNG

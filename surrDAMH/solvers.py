@@ -74,7 +74,7 @@ class Solver:
         """
         return []
 
-    def __call__(self, parameters: npt.ArrayLike) -> npt.NDArray:
+    def __call__(self, parameters: npt.NDArray) -> npt.NDArray:
         """Equivalent to ``set_parameters_and_get_observations(parameters)``; used by ``calculate_artificial_observations`` and wherever a plain callable is more convenient than the two-step contract."""
         self.set_parameters(parameters)
         return self.get_observations()
@@ -104,7 +104,8 @@ def get_solver_from_spec(solver_spec: SolverSpec, solver_id: int = 0, solver_out
     return solver_instance
 
 
-def calculate_artificial_observations(parameters: npt.ArrayLike,
+
+def calculate_artificial_observations(parameters: npt.NDArray,
                                       solver_instance: Solver | None = None,
                                       solver_spec: SolverSpec | None = None) -> npt.NDArray:
     if solver_instance is None:

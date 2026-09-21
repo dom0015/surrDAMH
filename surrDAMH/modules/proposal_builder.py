@@ -20,6 +20,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import numpy as np
+
 from surrDAMH.distributions.independent_components import PriorIndependentComponents
 from surrDAMH.distributions.normal import Normal
 from surrDAMH.distributions.parent import Distribution
@@ -49,6 +51,34 @@ def _prior_is_gaussian(prior: Distribution) -> bool:
     return isinstance(prior, (Normal, PriorIndependentComponents))
 
 
+def _default_adaptive_random_walk_covariance(prior: Distribution, no_parameters: int,
+                                              stage_index: int | None):
+    """
+    Starting covariance of an adaptive random walk whose stage left ``proposal_sd_or_cov=None``
+    and that has nothing to carry over (2026-09-21).
+
+    ``GaussRandomWalk_adaptive`` learns both scale and shape and keeps the effective covariance
+    continuous when its covariance estimate replaces the starting one, so the starting point
+    only shapes the warm-up. The textbook start is the prior covariance scaled by ``2.38^2 / d``
+    (Gelman-Roberts-Gilks), which has the units of the problem; it is used whenever the prior
+    implements ``get_covariance()`` (``Normal``, ``PriorIndependentComponents``). Any other
+    prior (``FromScipy``, ``GaussianMixture``) falls back to the unit sd ``1.0`` with a printed
+    warning, since nothing tells its scale from the outside.
+    """
+    scale_factor = 2.38 ** 2 / no_parameters
+    try:
+        prior_sd_or_cov = np.asarray(prior.get_covariance(), dtype=float)
+    except NotImplementedError:
+        print(f"Warning: stage {stage_index}: proposal_sd_or_cov is None and the prior of type "
+              f"'{type(prior).__name__}' has no get_covariance(); the adaptive random walk starts "
+              "from sd 1.0 (only the warm-up depends on this starting point)")
+        return 1.0
+    if prior_sd_or_cov.ndim == 2:
+        return scale_factor * prior_sd_or_cov  # covariance matrix
+    # scalar or vector of STANDARD DEVIATIONS (the Distribution.get_covariance() contract)
+    return np.sqrt(scale_factor) * prior_sd_or_cov
+
+
 def build_proposal(stage: Stage, conf: "Configuration", prior: Distribution, seed: int,
                    carried: dict | None = None, stage_index: int | None = None) -> Proposal:
     """
@@ -57,7 +87,8 @@ def build_proposal(stage: Stage, conf: "Configuration", prior: Distribution, see
     Args:
         stage: the stage whose proposal is constructed.
         conf: configuration (only ``no_parameters`` and ``use_surrogate_gradients`` are used).
-        prior: prior distribution (only used by the pCN proposal).
+        prior: prior distribution (used by the pCN proposal, and for the starting covariance of
+            an adaptive random walk that has no ``proposal_sd_or_cov`` and nothing to carry over).
         seed: seed of the proposal's random generator.
         carried: merged carry-over of every previous adaptive stage of this run
             (``Proposal.carry_over()`` keyed by ``Stage`` field name, 2026-09-20). It supplies
@@ -65,7 +96,10 @@ def build_proposal(stage: Stage, conf: "Configuration", prior: Distribution, see
             ``proposal_sd_or_cov`` (from an adaptive random walk), ``pcn_beta`` (from an
             adaptive pCN stage, default 0.5) and ``hamiltonian_step_size`` (the dual-averaged
             step size of an adaptive Hamiltonian stage, default 0.1). Replaces the former
-            ``prev_cov`` argument.
+            ``prev_cov`` argument. A random-walk stage with ``proposal_sd_or_cov=None`` and
+            nothing to carry over starts from the prior-derived default of
+            ``_default_adaptive_random_walk_covariance`` when ``adaptive=True`` and raises
+            ``ValueError`` otherwise (2026-09-21).
         stage_index: index of the stage in the list of stages (only used in error messages).
 
     Returns:
@@ -146,12 +180,18 @@ def build_proposal(stage: Stage, conf: "Configuration", prior: Distribution, see
                                                          **adaptive_kwargs)
         else:
             my_Prop = proposals.GaussRandomWalk(no_parameters=conf.no_parameters, seed=seed)
-        if stage.proposal_sd_or_cov is None:
-            prev_cov = carried.get("proposal_sd_or_cov")
-            assert prev_cov is not None, f"proposal sd/cov not specified for stage {stage_index}"
-            my_Prop.set_covariance(sd_or_cov=prev_cov)
-        else:
-            my_Prop.set_covariance(sd_or_cov=stage.proposal_sd_or_cov)
+        sd_or_cov = stage.proposal_sd_or_cov
+        if sd_or_cov is None:
+            sd_or_cov = carried.get("proposal_sd_or_cov")
+        if sd_or_cov is None:
+            if not stage.adaptive:
+                raise ValueError(
+                    f"stage {stage_index}: proposal_sd_or_cov is None, no earlier adaptive stage "
+                    "provides a covariance to carry over, and a non-adaptive random walk cannot "
+                    "recover from a wrong scale: set proposal_sd_or_cov or use adaptive=True"
+                )
+            sd_or_cov = _default_adaptive_random_walk_covariance(prior, conf.no_parameters, stage_index)
+        my_Prop.set_covariance(sd_or_cov=sd_or_cov)
 
     # Generalises the former Hamiltonian-only / HamiltonianInfinite-only asserts (B3) to any
     # proposal that needs gradients, including a BlockProposal whose sub-proposals include a

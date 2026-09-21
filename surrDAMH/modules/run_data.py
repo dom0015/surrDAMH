@@ -33,6 +33,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from surrDAMH.modules.continuation import load_carry_over
 from surrDAMH.modules.manifest import (FORMAT_VERSION, RunFormatError,
                                        raw_data_columns, samples_columns)
 
@@ -56,6 +57,8 @@ class RunData:
       when ``read_run(..., load_raw_data=False)`` skipped it);
     * ``subchain_stats[i] is None`` for a non-DAMH stage;
     * ``adaptive_stats[i] is None`` for a stage whose proposal did not adapt;
+    * ``carry_over[i] is None`` for a non-adaptive stage, and for an adaptive one whose
+      ``sampling_output/carry_over/<stage>.npz`` is missing (a run that predates it);
     * ``notes[i]`` is an empty ``DataFrame`` for a stage that wrote no notes.
     """
 
@@ -69,6 +72,7 @@ class RunData:
     notes: list[pd.DataFrame]                   # [stage] -> one row per chain
     subchain_stats: list[pd.DataFrame | None]   # [stage] -> None for non-DAMH stages
     adaptive_stats: list[pd.DataFrame | None]   # [stage] -> None for non-adaptive stages
+    carry_over: list[tuple[dict, dict] | None]  # [stage] -> (carry_over, summary) or None
     raw_data_columns: list[str]                 # ["state_type", "par_0", ..., "log_prior"]
     raw_data: list[list[pd.DataFrame] | None]   # [stage][chain]; None if not saved/not loaded
     last_sample: dict[str, np.ndarray]          # stage_name -> (no_chains, p) float64
@@ -252,6 +256,7 @@ def read_run(output_dir: str, load_raw_data: bool = True) -> RunData:
     notes: list[pd.DataFrame] = []
     subchain_stats: list[pd.DataFrame | None] = []
     adaptive_stats: list[pd.DataFrame | None] = []
+    carry_over: list[tuple[dict, dict] | None] = []
     raw_data: list[list[pd.DataFrame] | None] = []
     last_sample: dict[str, np.ndarray] = {}
 
@@ -271,6 +276,10 @@ def read_run(output_dir: str, load_raw_data: bool = True) -> RunData:
         # stage and for every run produced before adaptive_stats existed -> None, not an error
         adaptation = _concat_rank_csvs(os.path.join(sampling_dir, "adaptive_stats", stage_name))
         adaptive_stats.append(None if adaptation.empty else adaptation)
+
+        # written only by sampler rank 0 / run_local, once per adaptive stage (2026-09-21);
+        # None for a non-adaptive stage or a run that predates carry_over/ -- never an error
+        carry_over.append(load_carry_over(output_dir, stage_name))
 
         raw_dir = os.path.join(sampling_dir, "raw_data", stage_name)
         if not load_raw_data or not os.path.isdir(raw_dir):
@@ -293,6 +302,7 @@ def read_run(output_dir: str, load_raw_data: bool = True) -> RunData:
         notes=notes,
         subchain_stats=subchain_stats,
         adaptive_stats=adaptive_stats,
+        carry_over=carry_over,
         raw_data_columns=expected_raw_data_columns,
         raw_data=raw_data,
         last_sample=last_sample,

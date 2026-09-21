@@ -678,6 +678,88 @@ class SamplesPlots(SamplesStatistics):
 
         return fig
 
+    #: columns of ``adaptive_stats`` that are not adapted proposal parameters
+    ADAPTATION_NON_PARAMETER_COLUMNS = ("n", "m", "mean_acceptance_probability", "rank_world")
+
+    def plot_adaptation(self, stage: int | str, chains_to_disp: Iterable | None = None,
+                        target_rate: float | None = None):
+        """
+        Per-period trace of an adaptive proposal: the acceptance probability it was fed and
+        every adapted parameter it logged, one line per chain (2026-09-21).
+
+        Reads ``self.adaptive_stats[stage]`` (``adaptive_stats/<stage>/rank%04d.csv``, one row
+        per completed adaptation period, see ``docs/outputs.md``). The first panel is
+        ``mean_acceptance_probability`` with ``target_rate`` as a dashed line when given; the
+        remaining panels are the proposal's own columns (``log_sigma``, ``trace_C_over_d``,
+        ``shrinkage_delta`` for the adaptive random walk; ``beta`` for adaptive pCN;
+        ``log_step_size``, ``log_step_size_bar`` for the Hamiltonian family). The x axis is the
+        proposal's own counter, ``n`` (``adapt()`` calls) or ``m`` (sub-chain steps). Columns are
+        plotted as logged -- ``log_sigma`` stays on the log scale, nothing is transformed.
+
+        Args:
+            stage: stage index or stage name (resolved by ``_resolve_stages``).
+            chains_to_disp: chain positions to include, in the same sense as everywhere else in
+                the report (the i-th ``rank%04d`` file of the stage; the files are named by
+                ``rank_world`` and sorted, so position i is the i-th smallest ``rank_world`` in
+                the trace). ``None`` = every chain that wrote a file. A stage with
+                ``save_to_file=False`` writes no trace and cannot be shown.
+            target_rate: acceptance rate the adaptation drives towards, drawn as a reference
+                line in the acceptance panel; ``None`` draws none.
+
+        Returns:
+            ``(fig, axes)``; ``(None, None)`` when the stage has no adaptation trace (a
+            non-adaptive stage, a stage with ``save_to_file=False``, or ``chains_to_disp``
+            excluding every chain). The caller owns the figure and must close it.
+        """
+        stage_idx = self._resolve_stages([stage])[0]
+        stats = self.adaptive_stats[stage_idx]
+        if stats is None or stats.empty:
+            return None, None
+        stats = stats.copy()
+        if "rank_world" not in stats.columns:
+            stats["rank_world"] = 0
+        ranks = sorted(int(r) for r in stats["rank_world"].unique())
+        chain_of_rank = {rank: position for position, rank in enumerate(ranks)}
+        if chains_to_disp is not None:
+            wanted = {ranks[int(c)] for c in chains_to_disp if 0 <= int(c) < len(ranks)}
+            stats = stats[stats["rank_world"].isin(wanted)]
+            if stats.empty:
+                return None, None
+        counter = next((c for c in ("n", "m") if c in stats.columns), None)
+        parameter_columns = [c for c in stats.columns if c not in self.ADAPTATION_NON_PARAMETER_COLUMNS]
+        panels = (["mean_acceptance_probability"] if "mean_acceptance_probability" in stats.columns else []) \
+            + parameter_columns
+        if not panels:
+            return None, None
+
+        stage_label = self.stage_names[stage_idx]
+        fig, axes = plt.subplots(len(panels), 1, figsize=(10, 2.6 * len(panels) + 0.8),
+                                 sharex=True, squeeze=False)
+        axes = axes[:, 0]
+        try:
+            for ax, column in zip(axes, panels):
+                for rank, group in stats.groupby("rank_world", sort=True):
+                    x = group[counter].to_numpy() if counter else np.arange(1, len(group) + 1)
+                    ax.plot(x, group[column].to_numpy(), marker=".", markersize=3, linewidth=1,
+                            label=f"chain {chain_of_rank[int(rank)]}")
+                if column == "mean_acceptance_probability":
+                    ax.set_ylabel("acceptance prob.\n(period mean)")
+                    ax.set_ylim(-0.02, 1.02)
+                    if target_rate is not None:
+                        ax.axhline(target_rate, color="green", linestyle="--", linewidth=1.5,
+                                   label=f"target {target_rate:g}")
+                else:
+                    ax.set_ylabel(column)
+                ax.grid(True, alpha=0.3)
+            axes[0].set_title(f"Proposal adaptation -- stage {stage_label}", fontsize=13, fontweight="bold")
+            axes[0].legend(loc="best", fontsize=8, ncol=2)
+            axes[-1].set_xlabel(f"{counter} (adaptation counter)" if counter else "adaptation period")
+            fig.tight_layout()
+        except BaseException:
+            plt.close(fig)  # P8: a failed plot must not leak its figure
+            raise
+        return fig, axes
+
     def plot_parameter_correlation_heatmap(self, stages_to_disp: Iterable | None = None,
                                            par_names: List[str] | None = None,
                                            burn_in: List[List[int]] | None = None,

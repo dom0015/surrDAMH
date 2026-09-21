@@ -20,6 +20,7 @@ sampling_output/
   notes/<stage.name>/rank%04d.csv          accepted, rejected, pre-rejected, sum, seed                  (header row)
   subchain_stats/<stage.name>/rank%04d.csv iteration, subchain_max_length, subchain_accepted, subchain_acceptance_rate, correction_log_ratio, outer_proposed_changed, outer_accepted, rank_world   (header row; DAMH stages only)
   adaptive_stats/<stage.name>/rank%04d.csv  one row per adaptation period                                (header row; adaptive=True stages only)
+  carry_over/<stage.name>.npz              carry_over__*, summary__*                                    (one file per adaptive stage, no rank suffix; written once by sampler rank 0 / run_local)
   last_sample/<stage.name>/rank%04d.npz    parameters (float64), no_parameters                          (one file per chain, written after each stage)
   surrogate_quality.csv                    snapshots_total, batch_size, rmse, max_abs_error             (header row; collector only)
   surrogate_quality_test.csv               update_index, snapshots_total, n_test, max_log_posterior, rmse, max_abs_error, weighted_rmse, weighted_mean_abs_error, weighted_ess   (header row; collector only; weighted_ess added 2026-09-18, finding S10 -- effective sample size of the posterior weights, Kish's formula; equals n_test when no weights are supplied)
@@ -138,6 +139,26 @@ No file is written for a stage whose proposal does not adapt, and none for a sta
 (`Samples.adaptive_stats[stage]` an empty `DataFrame`). A run produced before this file existed
 reads back the same way, so the reader is backwards compatible here.
 
+### `carry_over/<stage>.npz` (`adaptive=True` stages only)
+
+Written once (new 2026-09-21, no `rank%04d` suffix -- every rank already pooled to the
+identical state, see `GaussRandomWalk_adaptive.set_pooled_state`) at the end of an adaptive
+stage, by sampler rank 0 in the MPI runner and unconditionally by `run_local`: the same
+cross-rank hand-over that is printed to stdout as `Stage ... carry-over ...:`, so a report can
+show the proposal the *next* stage actually started from. Unlike `save_last_sample`, this is
+not guarded by `Stage.save_to_file` -- there is no separate switch for it.
+
+Two groups of keys, each value stored as a numpy array of its own dtype (a scalar as a 0-d array, read back as a Python `int`/`float`):
+
+- `carry_over__<key>`: `Proposal.carry_over()`, i.e. exactly what `build_proposal` consumes
+  for the next stage (`proposal_sd_or_cov`, `pcn_beta`, or `hamiltonian_step_size`).
+- `summary__<key>`: `Proposal.adapted_summary()`, diagnostic-only (never consumed by
+  `build_proposal`) -- for `GaussRandomWalk_adaptive`: `base_cov`, `log_sigma`, `n_pooled`,
+  `mean`; for `PCN_adaptive`: `beta`; for the Hamiltonian family: `step_size`.
+
+No file is written for a non-adaptive stage; `read_run` then reports `carry_over[stage] is
+None`, same as for a run produced before this file existed.
+
 ### `last_sample/<stage>/rank%04d.npz`
 
 Written by both the MPI sampler and `run_local` after every stage (regardless of
@@ -178,6 +199,7 @@ exact_only = snapshots[snapshots["state_type"] != "prerejected"]
 run.notes[0]                                  # DataFrame, one row per chain
 run.subchain_stats[1]                         # DataFrame for a DAMH stage, None for MH
 run.adaptive_stats[0]                         # DataFrame for an adaptive stage, None otherwise
+run.carry_over[0]                             # (carry_over, summary) dict pair, None otherwise
 run.last_sample["alg0001_DAMH-SMU"]           # (no_chains, p) float64
 run.surrogate_quality, run.surrogate_quality_test   # DataFrames or None
 ```
@@ -190,7 +212,8 @@ Per-stage lists are always `len(stage_names)` long and in stage-index order. A s
 wrote nothing for a category carries an empty entry: `samples[i] == []` for
 `Stage.save_to_file=False`, `raw_data[i] is None` when snapshots were not saved,
 `subchain_stats[i] is None` for a non-DAMH stage, `adaptive_stats[i] is None` for a stage whose
-proposal did not adapt.
+proposal did not adapt, `carry_over[i] is None` for a stage whose proposal did not adapt or
+whose `carry_over/<stage>.npz` is missing (a run that predates it).
 
 `surrDAMH.post_processing.Samples(no_parameters, output_dir)` is a facade on top of
 `read_run` and keeps the plotting/statistics API used by
@@ -218,7 +241,23 @@ from surrDAMH.post_processing import (Samples, StageSamples, read_run, RunData,
 `report_extended.html` opens with a **Run Configuration** section: the effective
 configuration (from `run_manifest.json`, unless a configuration object is passed to
 `html_report_extended`), the run provenance, and the run's `unverified_options` — the
-options the manifest flags as not covered by the library's verification.
+options the manifest flags as not covered by the library's verification. It is followed by
+**Sampling Stages** (2026-09-21): one column per stage of the run, one row per `Stage` field
+(`*` = posterior-/acceptance-rate-affecting, as in `Stage.describe()`; `unbounded` = a
+stopping condition that was not set), from the `stages=` argument of `html_report_extended`
+or, by default, the manifest's `stages` list, with a last row saying which stages the report
+analyses.
+
+Every section and every per-stage block of the report is a collapsible `<details>` element,
+**collapsed when the file is opened** (2026-09-21); use the "Expand all" / "Collapse all"
+buttons under the title, or the table-of-contents links, which unfold the section they point
+into. Section **5. Proposal Adaptation** plots, for every displayed stage with an adaptive
+proposal, the `adaptive_stats/<stage>/rank%04d.csv` trace described above
+(`Samples.plot_adaptation(stage, chains_to_disp=None, target_rate=None)`): the per-period
+`mean_acceptance_probability` with the target rate as a dashed line, then every adapted
+parameter column as logged (`log_sigma` stays on the log scale), one line per chain, plus a
+table of the last logged period of every chain. Surrogate quality and observation histograms
+are sections 6 and 7 since then.
 
 ### Refusal of pre-v2 directories
 

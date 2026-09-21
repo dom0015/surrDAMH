@@ -25,7 +25,7 @@ from surrDAMH.modules.seeds import initial_sample_seed, stage_seed0
 from surrDAMH.solvers import Solver
 from surrDAMH.stages import Stage, stage_name
 from surrDAMH.surrogates.parent import Evaluator
-from surrDAMH.modules.continuation import save_last_sample
+from surrDAMH.modules.continuation import save_carry_over, save_last_sample
 
 
 def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distribution, list_of_stages: List[Stage],
@@ -168,6 +168,10 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
                 print('Stage', alg_instance.stage.name, 'at MPI rank', rank_world,
                       'carry-over', key + ':',
                       np.asarray(value, dtype=float).ravel().tolist(), flush=True)
+            # persisted once, by sampler rank 0 -- every rank pooled to the identical state
+            # (2026-09-21), so a per-rank file would only duplicate it
+            if comm_sampler.Get_rank() == 0:
+                save_carry_over(conf, alg_instance.stage.name, stage_carry_over, my_Prop.adapted_summary())
 
         # set initial sample for next stage (after a use_only_surrogate stage its surrogate
         # observations are dropped so that the next stage re-evaluates it exactly, finding A11):
