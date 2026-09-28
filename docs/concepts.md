@@ -27,6 +27,14 @@ understand. Concretely, `Distribution` is the function composition
   `Solver.set_parameters`/`Evaluator.__call__` (when `Configuration.transform_before_surrogate=True`)
   and written to `samples/*.csv` (when `Configuration.transform_before_saving=True`, the default).
 
+Since 2026-09-22 the internal prior is the standard normal `N(0, I)` for **every** shipped
+prior. A `Normal(mean, sd|cov)` prior is standardized automatically by `SamplingFramework`,
+`run_local` and `TestData` (`distributions.StandardizedNormal`: the chain samples
+`z ~ N(0, I)` and `transform(z) = mean + L z` with `L L^T = cov`), so proposal scales,
+`lhs_scale`, `initial_samples_distribution` and pCN all refer to the same standardized
+coordinates whatever the prior. Used as a *likelihood*, `Normal` keeps its physical
+meaning (`logpdf` on observations); only the prior role is standardized.
+
 For `PriorIndependentComponents`, the internal prior is *exactly* the standard normal
 `N(0, I)` by construction: `logpdf(sample) == -0.5 * sample @ sample`, with **no
 Jacobian/change-of-variables term** for the (possibly nonlinear) `transform`. This is a
@@ -53,7 +61,7 @@ one exact forward-model evaluation.
 DAMH (`Algorithm_DAMH.run`) replaces most exact evaluations with a cheap surrogate `L~`,
 and only confirms the result with the exact model occasionally. Per outer iteration:
 
-1. Run a **sub-chain** of up to `Stage.subchain_max_length` MH steps that use *only* the
+1. Run a **sub-chain** of up to `Stage.subchain_length` MH steps that use *only* the
    surrogate, starting from the current exact state `x`. This inner MH kernel is
    reversible with respect to the surrogate posterior `π~`, so its transition density
    satisfies `Q(y→x)/Q(x→y) = π~(y)/π~(x) = [L~(y)·prior(y)] / [L~(x)·prior(x)]`.
@@ -68,7 +76,7 @@ and only confirms the result with the exact model occasionally. Per outer iterat
    with no exact evaluation at all — this is DAMH's speed-up.
 
 The telescoping in step 2 is only exact if the surrogate is the *same* `L~` throughout
-the sub-chain. `subchain_max_length=1` makes DAMH degenerate to a fixed-surrogate
+the sub-chain. `subchain_length=1` makes DAMH degenerate to a fixed-surrogate
 delayed-acceptance scheme with one sub-chain step per outer iteration.
 
 ## DAMH-SMU (surrogate model updates during sampling)
@@ -84,10 +92,10 @@ iteration). This is what makes `correction_log_ratio` telescope to
 derivation comment in `Algorithm_DAMH.run` and
 `library_notes/10_manual_review_notes.md` §2.5 for the regression test and the
 before/after sample-stream comparison (the freeze changed DAMH-SMU streams for
-`subchain_max_length > 1`; `subchain_max_length=1` is unaffected).
+`subchain_length > 1`; `subchain_length=1` is unaffected).
 
 Since WS7 (2026-09-18) the same field also opts an **MH** stage with a gradient-based proposal
-(`Hamiltonian`/`HamiltonianInfinite`, or a `block` proposal containing one) into refreshing its
+(a `Hamiltonian` proposal, bare or inside a `Block`) into refreshing its
 surrogate: it then polls once per iteration and re-installs the proposal's gradient functions
 when a newer evaluator arrives. There is no telescoping constraint to respect here, because an
 MH stage's accept/reject test uses the exact model only — the surrogate enters through the
@@ -102,7 +110,7 @@ re-centred on the outer chain's current state — e.g. the removed
 `Configuration.state_dependent_approximation`, which used `observations_approx + G(x₀) − G~(x₀)`
 instead of the surrogate values directly — makes `pi~` a different density at every outer step,
 so that identity (and with it the DAMH acceptance ratio) no longer holds. This is true already at
-`subchain_max_length = 1`, not only for `> 1` as this document previously claimed; the option was
+`subchain_length = 1`, not only for `> 1` as this document previously claimed; the option was
 therefore removed on 2026-09-18 rather than fixed (`library_notes/06_findings_consolidated.md`
 finding 1.1).
 

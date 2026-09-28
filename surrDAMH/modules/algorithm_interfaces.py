@@ -159,6 +159,14 @@ class EvaluatorProvider(Protocol):
         """Notify the backend that the algorithm is ready for an evaluator update."""
         ...
 
+    def announce_waiting(self) -> None:
+        """
+        Called right before a blocking ``get_evaluator()`` for the FIRST evaluator of a run
+        (2026-09-22). The MPI provider forwards it to the collector, which then knows the sampler
+        can produce no more snapshots until served; local providers do nothing.
+        """
+        ...
+
     def evaluator_is_available(self) -> bool:
         """Return ``True`` if an updated evaluator can be obtained immediately."""
         ...

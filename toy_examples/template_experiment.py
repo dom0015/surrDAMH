@@ -18,6 +18,7 @@ all, run one chain via surrDAMH.runner_local.run_local(...).
 import solver_examples.solver_spec_examples as solver_spec_examples
 
 import surrDAMH
+from surrDAMH.proposals import RandomWalk
 from surrDAMH.stages import Stage
 
 # --- 2. forward model -------------------------------------------------------
@@ -60,26 +61,27 @@ updater = surrDAMH.surrogates.PolynomialSklearnUpdater(
 #     neighbors=20, kernel="thin_plate_spline")
 # updater = surrDAMH.surrogates.KDTreeUpdater(
 #     no_parameters=conf.no_parameters, no_observations=conf.no_observations, no_nearest_neighbors=5)
-# updater = surrDAMH.surrogates.NeuralNetworkUpdaterMinibatches(
+# updater = surrDAMH.surrogates.NeuralNetworkUpdater(
 #     no_parameters=conf.no_parameters, no_observations=conf.no_observations,
 #     hidden_layer_sizes=(32, 32), solver="adamw")
 
 # --- 6. sampling stages --------------------------------------------------------
 list_of_stages = [
     # MH: no surrogate involved yet; also produces the first snapshots for it.
-    Stage(algorithm_type="MH", proposal_sd_or_cov=0.5,
-          max_evaluations=80,           # stop after this many full-model evaluations (also: time_limit in seconds)
-          adaptive=False),              # if True, proposal_sd_or_cov is adapted online (see Stage docstring)
+    Stage(algorithm="MH",
+          proposal=RandomWalk(scale=0.5, adaptive=False),  # fixed step; drop adaptive (or set True) to
+                                                             # tune it online instead (see proposals.RandomWalk)
+          max_evaluations=80),          # stop after this many full-model evaluations (also: time_limit in seconds)
     # DAMH-SMU: delayed-acceptance, surrogate is retrained while sampling.
-    Stage(algorithm_type="DAMH", proposal_sd_or_cov=0.5,
+    Stage(algorithm="DAMH", proposal=RandomWalk(scale=0.5),
           max_evaluations=80,
           surrogate_model_updates=True,  # only meaningful for DAMH: surrogate keeps learning during this stage
-          subchain_max_length=5),        # length of the cheap surrogate-only sub-chain between full-model checks
+          subchain_length=5),            # length of the cheap surrogate-only sub-chain between full-model checks
     # DAMH with a frozen surrogate: cheapest stage, used for the final posterior.
-    Stage(algorithm_type="DAMH", proposal_sd_or_cov=0.5,
+    Stage(algorithm="DAMH", proposal=RandomWalk(scale=0.5),
           max_evaluations=80,
           surrogate_model_updates=False,
-          subchain_max_length=5),
+          subchain_length=5),
 ]
 
 # --- 7. run --------------------------------------------------------------------

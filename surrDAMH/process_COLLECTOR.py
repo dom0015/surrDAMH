@@ -297,7 +297,28 @@ def run_COLLECTOR(conf: Configuration, surrogate_updater: Updater, surrogate_del
             list_new_snapshots = [np.empty((0, conf.no_parameters)), np.empty((0, conf.no_observations)), np.empty((0, 1))]
         # create initial evaluator or update:
         cond_init = no_snapshots_used == 0 and no_snapshots_total >= conf.min_snapshots_initial  # initial surrogate model
-        cond_update = no_snapshots_used > 0 and no_snapshots_total - no_snapshots_used >= conf.min_snapshots_to_update
+        if no_snapshots_used == 0 and not cond_init and num_new_snapshots == 0:
+            # 2026-09-22: a surrogate stage that starts before min_snapshots_initial snapshots exist
+            # used to deadlock -- every sampler blocked in get_evaluator(), the collector waiting for
+            # snapshots that only those samplers could produce. A blocked sampler announces itself
+            # (TAG_EVALUATOR_NEEDED); once every active sampler has, train on what there is.
+            active = [i for i in range(conf.no_samplers) if needs_evaluator[i]]
+            blocked = [comms_evaluators[i].sampler_is_blocked() for i in active]
+            if active and all(blocked):
+                if no_snapshots_total == 0:
+                    raise RuntimeError(
+                        "every sampler is waiting for a surrogate but no snapshot has ever been collected, so "
+                        "none can be trained: the stage that needs the surrogate must be preceded by a stage "
+                        "with send_snapshots_to_collector=True, or pass surrogate_initial_training_data / "
+                        "surrogate_restart to SamplingFramework")
+                print(f"collector: every sampler is waiting for the first surrogate but only {no_snapshots_total} "
+                      f"snapshots exist (< min_snapshots_initial={conf.min_snapshots_initial}); training the initial "
+                      "surrogate on them now instead of deadlocking -- lower min_snapshots_initial or lengthen the "
+                      "preceding stage to avoid this", flush=True)
+                cond_init = True
+        new_snapshots = no_snapshots_total - no_snapshots_used
+        cond_update = (no_snapshots_used > 0 and new_snapshots >= conf.min_snapshots_to_update
+                       and surrogate_updater.needs_retraining(new_snapshots))  # 2026-09-23: no identical refits
         if (cond_init or cond_update):
             did_something = True
             surrogate_updater.train()

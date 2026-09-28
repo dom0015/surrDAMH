@@ -82,97 +82,208 @@ def normalize_for_comparison(value: Any, _depth: int = 0) -> Any:
         return _qualified_type_name(value)
 
 
+# Maintainer notes (moved out of the Configuration docstring on 2026-09-21):
+#
+# Cross-rank consistency check: since 2026-09-18 (finding 2.9), SamplingFramework.run()
+# broadcasts rank 0's *requested* values of POSTERIOR_AFFECTING_FIELDS and every rank
+# asserts equality, so a script that builds a different Configuration per rank fails at
+# start-up instead of silently sampling a different posterior per chain
+# (modules.communication.check_configuration_consistency). Fields outside that set are
+# not compared. __post_init__ derives the MPI role layout (no_samplers, rank_collector,
+# rank_solvers_pool) from MPI.COMM_WORLD's size and the two topology flags
+# (use_collector, use_solvers_pool); see docs/running.md for the process-count table and
+# docs/configuration.md for the full field reference (generated from this dataclass).
+#
+# Posterior-, acceptance-rate- or reproducibility-affecting fields (see
+# POSTERIOR_AFFECTING_FIELDS): transform_before_surrogate (which space the surrogate is
+# trained on); min_snapshots_initial/min_snapshots_to_update/max_collected_snapshots_per_loop
+# (control exactly when the surrogate is (re)trained, hence the DAMH-SMU accept/reject
+# sequence for runs that use a collector); use_surrogate_gradients (may be silently
+# disabled by SamplingFramework for an incompatible surrogate, see run_manifest.json's
+# use_surrogate_gradients_requested); initial_sample_type (every type is reproducible
+# since G4, 2026-09-17: "prior"/"user_specified" draw from
+# np.random.default_rng(10*no_stages*rank_world + 3), see surrDAMH.modules.seeds); and
+# everything under "invalid combinations" below. transform_before_saving and
+# save_snapshots_to_file affect only what is written to disk, not the posterior itself;
+# torch_threads is a performance-only knob (intra-op CPU thread count for torch) and does
+# not affect the posterior, acceptance rate or surrogate accuracy.
+#
+# Ineffective for spawned children: paths_to_append is appended to sys.path in the
+# process that constructs this Configuration only -- it does NOT reach solver-pool
+# children spawned by MPI.Comm.Spawn, which unpickle conf without running __post_init__
+# (finding M18). It is kept for the ranks that do run in this process, but a solver
+# module must be reachable without it: since WS5, SolverSpec resolves
+# solver_module_path to an absolute path on the launching rank, so the spawned children
+# receive an absolute path (see docs/writing_a_solver.md). A solver module whose own
+# *imports* need paths_to_append still fails in the child -- put those on PYTHONPATH
+# instead.
+#
+# Removed field (2026-09-17, decision 5 / WS8): pickled_observations. Passing it now
+# raises TypeError: Configuration.__init__() got an unexpected keyword argument
+# 'pickled_observations' -- just delete the argument, there is no replacement.
+# Observations always travel from the spawned solver child to the solvers pool and on to
+# the sampler as a pickled [observations, solver_tag] payload, so the solver's status
+# code never becomes an MPI tag (this removes finding 2.4/M6: a negative solver_tag used
+# to be an invalid MPI tag, and the raw path's fixed-size/dtype buffer hazards of finding
+# 2.3).
+#
+# Removed field (2026-09-21, author decision): solver_returns_tag. Passing it raises TypeError;
+# no replacement needed -- a Solver.get_observations() may return either the observations or an
+# (observations, tag) tuple, and both the sampler (algorithms.py) and the spawned child
+# (process_CHILD.py) detect the tuple with isinstance.
+#
+# Removed field (2026-09-18, finding 1.1): state_dependent_approximation. Passing it now
+# raises TypeError: Configuration.__init__() got an unexpected keyword argument
+# 'state_dependent_approximation' -- just delete the argument, there is no replacement.
+# The DAMH sub-chain always uses the surrogate posterior directly (no shift by the
+# model-vs-surrogate error at the current state): the delayed-acceptance correction is
+# only valid for a surrogate that is a fixed, state-independent density, so the shifted
+# variant was unsound at every Stage.subchain_length, not only for > 1 as previously
+# documented.
+#
+# Invalid combinations that raise (at Stage/proposal construction, i.e. at
+# SamplingFramework.run() time, not eagerly at Configuration() time): an unknown
+# Stage.algorithm; a DAMH or Hamiltonian-family first stage with no evaluator
+# available yet (no surrogate_updater/preloaded snapshots when use_collector=True, or no
+# fixed surrogate_evaluator when use_collector=False -- see use_collector below); a pCN
+# stage with a non-Gaussian internal prior (FromScipy, GaussianMixture); a Hamiltonian
+# proposal without use_surrogate_gradients=True in effect; a Block proposal with an
+# explicit Stage.adaptive=True (adaptation is not defined for block proposals; the default
+# adaptive=None resolves to False there and to True for every other proposal type).
 @dataclass
 class Configuration:
     """
-    Run-wide configuration, identical on every MPI rank. Since 2026-09-18 (finding 2.9) this is
-    checked: ``SamplingFramework.run()`` broadcasts rank 0's *requested* values of
-    ``POSTERIOR_AFFECTING_FIELDS`` and every rank asserts equality, so a script that builds a
-    different ``Configuration`` per rank fails at start-up instead of sampling a different
-    posterior per chain (``modules.communication.check_configuration_consistency``). Fields
-    outside that set are not compared. ``__post_init__`` derives
-    the MPI role layout (``no_samplers``, ``rank_collector``, ``rank_solvers_pool``)
-    from ``MPI.COMM_WORLD``'s size and the two topology flags below; see
-    ``docs/running.md`` for the process-count table and ``docs/configuration.md`` for
-    the full field reference (generated from this dataclass).
+    Run-wide sampling configuration: one ``Configuration`` object, built identically on
+    every MPI rank (e.g. the same ``Configuration(...)`` call in the launch script run by
+    every rank). ``use_solvers_pool`` and ``use_collector`` together decide which process
+    role each rank plays (sampler, collector, solvers pool) -- see ``docs/running.md`` for
+    the resulting process-count table. Fields whose description below ends with
+    "(posterior-affecting)" can change the sampled posterior, the acceptance rate, or the
+    run's reproducibility; changing them changes your results, not just performance or
+    output layout. See ``docs/configuration.md`` for the full field reference.
 
-    Posterior-, acceptance-rate- or reproducibility-affecting fields: ``transform_before_surrogate``
-    (which space the surrogate is trained on),
-    ``min_snapshots_initial``/``min_snapshots_to_update``/``max_collected_snapshots_per_loop``
-    (control exactly when the surrogate is (re)trained, hence the DAMH-SMU accept/reject
-    sequence for runs that use a collector), ``use_surrogate_gradients`` (may be silently
-    disabled by ``SamplingFramework`` for an incompatible surrogate, see
-    ``run_manifest.json``'s ``use_surrogate_gradients_requested``), ``initial_sample_type``
-    (every type is reproducible since G4, 2026-09-17: ``"prior"``/``"user_specified"`` draw
-    from ``np.random.default_rng(10*no_stages*rank_world + 3)``, see
-    ``surrDAMH.modules.seeds``), and everything under "invalid combinations" below.
-    ``transform_before_saving`` and ``save_snapshots_to_file`` affect only what is
-    written to disk, not the posterior itself; ``torch_threads`` is a performance-only
-    knob (intra-op CPU thread count for torch) and does not affect the posterior,
-    acceptance rate or surrogate accuracy.
+    Args:
+        no_parameters: Number of unknown parameters of the forward model (the dimension
+            of the parameter space). Required. (posterior-affecting)
+        no_observations: Number of observed values (the dimension of the observation
+            space). Required. (posterior-affecting)
+        output_dir: Root directory where samples and other outputs are written. Required.
+        use_solvers_pool: ``True``: one MPI rank runs a solvers pool that spawns
+            ``no_solvers`` child processes, each importing and constructing the solver from a
+            ``SolverSpec`` -- so ``SamplingFramework`` must get ``solver_spec=``; a ready
+            ``solver_instance`` cannot be used (it cannot be shipped to a spawned process).
+            ``False``: the solver runs inside every sampler process; ``solver_instance=`` or
+            ``solver_spec=`` both work. Default: ``True``.
+        no_solvers: Number of child solver processes spawned by the solvers pool. Ignored
+            when ``use_solvers_pool=False``. Default: ``2``.
+        solver_maxprocs: Number of MPI processes used by each spawned solver. Ignored when
+            ``use_solvers_pool=False``. Default: ``1``.
+        use_collector: If ``False``, no surrogate model is trained during the run -- an
+            ``Updater`` only ever runs on the collector rank. DAMH and Hamiltonian-family
+            stages then need a pre-trained, fixed ``surrogate_evaluator`` passed to
+            ``SamplingFramework`` instead of a ``surrogate_updater`` (no in-run updates,
+            no DAMH-SMU). MH-only stages work with any combination of ``use_collector``
+            and ``use_solvers_pool``. Default: ``True``. (posterior-affecting)
+        paths_to_append: Directories appended to ``sys.path`` in the process that builds
+            this ``Configuration`` only; spawned solver processes do not see them. For those,
+            set the ``PYTHONPATH`` environment variable of the launching command, e.g.
+            ``PYTHONPATH=/path/to/my_models mpiexec -n 4 python3 -m mpi4py script.py`` (with
+            Open MPI across several nodes add ``-x PYTHONPATH``); spawned children inherit
+            that environment. The solver module itself needs no path: ``SolverSpec`` stores
+            its absolute file location. Only the module's own imports of other local code
+            need ``PYTHONPATH``. Default: ``None``.
+        initial_sample_type: How the first sample of each chain is drawn: ``"lhs"``,
+            ``"prior"``, ``"user_specified"``, or ``"continued"``. Default: ``"prior"``. (posterior-affecting)
+        initial_samples_distribution: Distribution to draw the initial sample from, in the
+            INTERNAL (standardized) coordinates of the prior; used only when
+            ``initial_sample_type="user_specified"``. Default: ``None``. (posterior-affecting)
+        continued_from_dir: Directory of a previous run to continue from, used only when
+            ``initial_sample_type="continued"``. Default: ``None``. (posterior-affecting)
+        lhs_scale: Spread of the Latin-hypercube design in the INTERNAL (standardized)
+            coordinates of the prior, i.e. in prior standard deviations; used only when
+            ``initial_sample_type="lhs"``. Default: ``1.0``. (posterior-affecting)
+        min_snapshots_initial: Minimum number of snapshots collected before the first
+            surrogate model is trained. Default: ``1``. (posterior-affecting)
+        min_snapshots_to_update: New snapshots that must have arrived since the last
+            retraining before the surrogate is retrained again. With the default ``0`` the
+            collector retrains whenever the updater says another pass would change the
+            surrogate (``Updater.needs_retraining``): the neural network then trains
+            continuously on the otherwise idle collector rank, while the polynomial, RBF and
+            k-d-tree updaters are refitted only after new snapshots arrived, never on identical
+            data. Raise it to retrain less often. Default: ``0``. (posterior-affecting)
+        transform_before_surrogate: If ``False``, the surrogate is trained and evaluated
+            on the internal (standardized) parameters the chain works with; if ``True``, on
+            the physical parameters the solver receives. Default: ``False``. (posterior-affecting)
+        use_surrogate_gradients: Whether Hamiltonian-family proposals may use surrogate
+            autograd. May be silently disabled by ``SamplingFramework`` if the surrogate
+            is incompatible -- check ``run_manifest.json`` for the effective value.
+            Default: ``True``. (posterior-affecting)
+        save_snapshots_to_file: If ``True``, write every exact-model evaluation -- the
+            proposed parameters, the observations, the solver tag, the surrogate's prediction
+            where one existed, log-likelihood and log-prior, and whether the proposal was
+            accepted, rejected or pre-rejected -- to
+            ``sampling_output/raw_data/<stage>/rank%04d.csv``, one file per chain. Default: ``False``.
+        transform_before_saving: If ``False``, ``samples/*.csv`` stores internal-space
+            samples instead of prior-transformed ones. Default: ``True``.
+        max_collected_snapshots_per_loop: Maximum number of snapshots the collector
+            gathers in one poll loop; also bounds how often the surrogate can be
+            retrained. Default: ``1000``. (posterior-affecting)
+        max_sampler_isend_requests: Size of the buffer for ``isend`` requests used to
+            send snapshots from samplers to the collector (performance/buffering only). Default: ``100``.
+        max_buffer_size: Size in bytes of the buffer pre-allocated to receive a pickled
+            surrogate evaluator from the collector; raise it for a large surrogate
+            (performance/buffering only). Default: ``1 << 30`` (1 GiB).
+        torch_threads: Torch CPU threads per rank; only matters with ``NeuralNetworkUpdater``
+            (the collector trains it, the samplers evaluate it). ``None`` leaves torch's own
+            default (all cores per process), which oversubscribes the node once several ranks
+            use the network. Default: ``1``.
+        debug: If ``True``, the collector rank prints extra diagnostics about surrogate
+            updates. No effect on the other ranks. Default: ``False``.
 
-    Ineffective for spawned children: ``paths_to_append`` is appended to ``sys.path``
-    in the process that constructs this ``Configuration`` only -- it does NOT reach
-    solver-pool children spawned by ``MPI.Comm.Spawn``, which unpickle ``conf`` without
-    running ``__post_init__`` (finding M18). It is kept for the ranks that do run in this
-    process, but a solver module must be reachable without it: since WS5,
-    ``SolverSpec`` resolves ``solver_module_path`` to an absolute path on the launching
-    rank, so the spawned children receive an absolute path (see
-    ``docs/writing_a_solver.md``). A solver module whose own *imports* need
-    ``paths_to_append`` still fails in the child -- put those on ``PYTHONPATH`` instead.
-
-    Removed field (2026-09-17, decision 5 / WS8): ``pickled_observations``. Passing it now
-    raises ``TypeError: Configuration.__init__() got an unexpected keyword argument
-    'pickled_observations'`` -- just delete the argument, there is no replacement. Observations
-    always travel from the spawned solver child to the solvers pool and on to the sampler as a
-    pickled ``[observations, solver_tag]`` payload, so the solver's status code never becomes an
-    MPI tag (this removes finding 2.4/M6: a negative ``solver_tag`` used to be an invalid MPI
-    tag, and the raw path's fixed-size/dtype buffer hazards of finding 2.3).
-
-    Removed field (2026-09-18, finding 1.1): ``state_dependent_approximation``. Passing it now
-    raises ``TypeError: Configuration.__init__() got an unexpected keyword argument
-    'state_dependent_approximation'`` -- just delete the argument, there is no replacement.
-    The DAMH sub-chain always uses the surrogate posterior directly (no shift by the
-    model-vs-surrogate error at the current state): the delayed-acceptance correction is only
-    valid for a surrogate that is a fixed, state-independent density, so the shifted variant was
-    unsound at every ``Stage.subchain_max_length``, not only for ``> 1`` as previously documented.
-
-    Invalid combinations that raise (at ``Stage``/proposal construction, i.e. at
-    ``SamplingFramework.run()`` time, not eagerly at ``Configuration()`` time):
-    an unknown ``Stage.algorithm_type``; a DAMH or Hamiltonian-family first stage with
-    no evaluator available yet (no ``surrogate_updater``/preloaded snapshots when
-    ``use_collector=True``, or no fixed ``surrogate_evaluator`` when
-    ``use_collector=False`` -- see ``use_collector`` below); a pCN stage with a
-    non-Gaussian internal prior (``FromScipy``, ``GaussianMixture``); a Hamiltonian
-    proposal without ``use_surrogate_gradients=True`` in effect; ``Stage.adaptive=True``
-    together with ``proposal_type="pCN"`` is not an error but is silently forced back to
-    ``adaptive=False`` by ``Stage.__post_init__`` (a printed warning, not an exception).
+    Some field combinations are only checked when a run actually starts (at
+    ``SamplingFramework.run()`` time, not when ``Configuration()`` is constructed) and
+    raise there: an unknown stage algorithm type, a DAMH/Hamiltonian first stage with no
+    surrogate available yet, a pCN stage with a non-Gaussian internal prior, or a
+    Hamiltonian proposal without ``use_surrogate_gradients`` in effect. See
+    ``docs/configuration.md`` for the details.
     """
 
-    no_parameters: int  # number of unknowns (i.e. parameters of the forward model)
-    no_observations: int  # number of observed values (i.e. outputs of the forward model)
-    output_dir: str  # directory where samples and other outputs will be saved
-    use_solvers_pool: bool = True  # if False, the solver runs locally on each sampler process
-    no_solvers: int = 2  # number of child solvers spawned by solvers pool
-    solver_maxprocs: int = 1  # processes used by each spawned solver
-    solver_returns_tag: bool = False  # if True, solver returns Tuple(observations, tag:int), negative tag indicates solver error
-    use_collector: bool = True  # if False, no surrogate model is trained during the run: an Updater only ever runs on the collector rank, so DAMH/Hamiltonian stages then need a pre-trained, fixed surrogate_evaluator= passed to SamplingFramework (no in-run updates/DAMH-SMU); MH-only stages work with any combination of use_collector/use_solvers_pool
-    save_snapshots_to_file: bool = False  # save all obtained snapshots to file
-    transform_before_saving: bool = True  # if False, save samples based on internal distribution
-    transform_before_surrogate: bool = False  # if False, construct surrogate on internal distribution; posterior-affecting: changes what the surrogate is trained/evaluated on
-    initial_sample_type: Literal["lhs", "prior", "user_specified", "continued"] = "prior"  # specifies how to generate initial samples; all four are reproducible - "prior"/"user_specified" draw from a per-rank np.random.default_rng seeded from modules.seeds.initial_sample_seed (G4)
-    initial_samples_distribution: Distribution | None = None  # only if initial_sample_type == "user_specified"
-    continued_from_dir: str | None = None  # experiment directory to continue from (only if initial_sample_type == "continued")
-    lhs_scale: float | npt.NDArray = 1.0  # only if initial_sample_type == "lhs"
-    min_snapshots_initial: int = 1  # minimal number of snapshots for the construction of initial surrogate model; posterior-affecting for DAMH-SMU (controls when the first surrogate is trained)
-    min_snapshots_to_update: int = 1  # how many snapshots (at least) have to be added to update the surrogate model; posterior-affecting for DAMH-SMU (controls when later retrains happen)
-    max_collected_snapshots_per_loop: int = 1000  # maximal number of snapshots to be collected in one loop (collector-side batching/performance knob)
-    max_sampler_isend_requests: int = 100  # size of the buffer for isend requests (sending snapshots from samplers to collector; performance/buffering knob)
-    use_surrogate_gradients: bool = True  # whether to allow autograd in pytorch surrogate; may be silently forced to False by SamplingFramework if the surrogate/settings are incompatible (see run_manifest.json)
-    paths_to_append: list[str] | None = None  # appended to sys.path in this process only; does NOT reach spawned solver-pool children (M18) -- ineffective for them, and no longer needed to find the solver module itself (SolverSpec stores an absolute path since WS5)
-    max_buffer_size: int = 1 << 30  # size (bytes) of the pre-allocated irecv buffer used to receive a pickled Evaluator from the collector; performance/buffering knob, not posterior-affecting
-    debug: bool = False  # collector-side: print extra diagnostics; not posterior-affecting
-    torch_threads: int | None = 1  # number of torch intra-op CPU threads set on every rank that has torch loaded (samplers evaluating the NN surrogate; the collector when it trains on CPU -- irrelevant on GPU); None = leave torch's default (all cores per process), which oversubscribes the node when several ranks evaluate the NN
+    # --- problem ---
+    no_parameters: int
+    no_observations: int
+    output_dir: str
+
+    # --- MPI layout ---
+    use_solvers_pool: bool = True
+    no_solvers: int = 2
+    solver_maxprocs: int = 1
+    use_collector: bool = True
+
+    # --- solver ---
+    paths_to_append: list[str] | None = None
+
+    # --- initial sample ---
+    initial_sample_type: Literal["lhs", "prior", "user_specified", "continued"] = "prior"
+    initial_samples_distribution: Distribution | None = None
+    continued_from_dir: str | None = None
+    lhs_scale: float | npt.NDArray = 1.0
+
+    # --- surrogate training ---
+    min_snapshots_initial: int = 1
+    min_snapshots_to_update: int = 0
+    transform_before_surrogate: bool = False
+    use_surrogate_gradients: bool = True
+
+    # --- outputs ---
+    save_snapshots_to_file: bool = False
+    transform_before_saving: bool = True
+
+    # --- performance / advanced ---
+    max_collected_snapshots_per_loop: int = 1000
+    max_sampler_isend_requests: int = 100
+    max_buffer_size: int = 1 << 30
+    torch_threads: int | None = 1
+    debug: bool = False
 
     def __post_init__(self) -> None:
         # Requested (as-passed-in) values of the posterior-affecting fields, captured before

@@ -96,7 +96,9 @@ class Samples(SamplesReports):
     """
 
     def __init__(self, no_parameters: int, samples_dir: str,
-                 decompress_samples: bool = True, load_posterior: bool = False):
+                 decompress_samples: bool = True, load_posterior: bool = False,
+                 debug: bool = False):
+        self.debug = debug
         self.run_data = read_run(samples_dir, load_raw_data=False)
         if int(no_parameters) != self.run_data.no_parameters:
             raise ValueError(

@@ -204,6 +204,9 @@ class LocalEvaluatorProvider(EvaluatorProvider):
     def request_evaluator(self) -> None:
         self._request_pending = True
 
+    def announce_waiting(self) -> None:  # no collector to inform (2026-09-22)
+        return None
+
     def evaluator_is_available(self) -> bool:
         """
         Return ``True`` only if a *new* (not yet picked up) evaluator is pending.
@@ -288,6 +291,9 @@ class LocalSurrogateManager(SnapshotCollector, EvaluatorProvider):
     def request_evaluator(self) -> None:
         self._request_pending = True
 
+    def announce_waiting(self) -> None:  # no collector to inform (2026-09-22)
+        return None
+
     def evaluator_is_available(self) -> bool:
         """
         Return ``True`` only if a *newly trained* evaluator is waiting to be picked up.
@@ -304,10 +310,23 @@ class LocalSurrogateManager(SnapshotCollector, EvaluatorProvider):
             self.evaluator = self._pending_evaluator
             self._pending_evaluator = None
         if self.evaluator is None:
-            raise RuntimeError(
-                "No surrogate evaluator is available yet. "
-                "Collect more snapshots or lower the initialization threshold."
-            )
+            # same rule as the MPI collector (2026-09-22): a surrogate stage that starts before
+            # min_snapshots_initial snapshots exist trains on what there is, with a warning
+            if self.no_snapshots_total > 0 and self.no_snapshots_used == 0:
+                print(f"local surrogate manager: a surrogate stage starts with only {self.no_snapshots_total} "
+                      f"snapshots (< min_snapshots_initial={self.min_snapshots_initial}); training the initial "
+                      "surrogate on them now -- lower min_snapshots_initial or lengthen the preceding stage to "
+                      "avoid this", flush=True)
+                self.updater.train()
+                self.no_snapshots_used = self.no_snapshots_total
+                self.evaluator = self.updater.get_evaluator()
+                self.snapshot_count_since_last_update = 0
+            else:
+                raise RuntimeError(
+                    "No surrogate evaluator is available and no snapshot has been collected: the stage that "
+                    "needs the surrogate must be preceded by a stage with send_snapshots_to_collector=True, "
+                    "or pass an updater with initial training data / a surrogate_restart."
+                )
         self._request_pending = False
         return self.evaluator
 
@@ -324,9 +343,11 @@ class LocalSurrogateManager(SnapshotCollector, EvaluatorProvider):
 
     def _maybe_update_evaluator(self) -> None:
         cond_init = self.no_snapshots_used == 0 and self.no_snapshots_total >= self.min_snapshots_initial
+        new_snapshots = self.no_snapshots_total - self.no_snapshots_used
         cond_update = (
             self.no_snapshots_used > 0
-            and self.no_snapshots_total - self.no_snapshots_used >= self.min_snapshots_to_update
+            and new_snapshots >= self.min_snapshots_to_update
+            and self.updater.needs_retraining(new_snapshots)  # 2026-09-23: no identical refits
         )
 
         if cond_init or cond_update:

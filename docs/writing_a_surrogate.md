@@ -15,7 +15,7 @@ optionally, to provide gradients for Hamiltonian-family proposals). Two roles:
 ## The contract (WS6, implemented)
 
 Every shipped updater (`PolynomialSklearnUpdater`, `RBFInterpolationUpdater`,
-`KDTreeUpdater`, `NeuralNetworkUpdaterMinibatches`) obeys the following; a custom one is
+`KDTreeUpdater`, `NeuralNetworkUpdater`) obeys the following; a custom one is
 expected to as well. The file:line-referenced conformance table is
 `library_notes/12_evaluator_contract_spec.md`.
 
@@ -39,6 +39,7 @@ result into the `(q,)` a `Solver` must return.
 |---|---|
 | `add_data(parameters, observations, multiplicity=None)` | `(n, no_parameters)`, `(n, no_observations)`, `(n, 1)`. |
 | `train()` | Called periodically by the collector, regardless of whether new data arrived. Updaters that refit inside `get_evaluator()` leave it a no-op. |
+| `needs_retraining(new_snapshots)` | Asked before every retraining (2026-09-23). Default `new_snapshots > 0`: a fit on identical data is the identical model, so the collector neither refits nor re-sends it. Return `True` (as `NeuralNetworkUpdater` does) if another `train()` improves the model on unchanged data; with `Configuration.min_snapshots_to_update=0` (the default) such an updater then trains continuously on the collector rank. |
 | `get_evaluator()` | Returns a **picklable** `Evaluator`. Called whenever a sampler's request is served after enough new data arrived. |
 | `supports_sample_weights` | Class attribute: whether the fit honours per-row weights. |
 | `set_output_normalization(mean, scale)` | Optional hook, see below. |
@@ -63,11 +64,11 @@ hands the weights to its fit. The collector logs the chosen policy at start-up.
 | Updater | `supports_sample_weights` | How `"multiplicity"` reaches the fit |
 |---|---|---|
 | `PolynomialSklearnUpdater` | `True` | `pipeline.fit(..., ridge__sample_weight=...)` |
-| `NeuralNetworkUpdaterMinibatches` | `True` | per-sample weighted loss (`_weighted_loss`) |
+| `NeuralNetworkUpdater` | `True` | per-sample weighted loss (`_weighted_loss`) |
 | `RBFInterpolationUpdater` | `False` | interpolant — zero-multiplicity rows are dropped, the rest count once |
 | `KDTreeUpdater` | `False` | interpolant — same |
 
-### Output normalization (`NeuralNetworkUpdaterMinibatches`)
+### Output normalization (`NeuralNetworkUpdater`)
 
 `output_normalization: Literal["identity", "likelihood", "manual"] = "likelihood"`:
 
@@ -89,7 +90,7 @@ manifest's `surrogate` block.
 ## Minimal custom `Updater`
 
 ```python
-class MyUpdater(surrDAMH.surrogates.parent.Updater):
+class MyUpdater(surrDAMH.surrogates.Updater):
     def __init__(self, no_parameters, no_observations, weighting="uniform"):
         super().__init__(no_parameters, no_observations, weighting=weighting)
         self.par = np.empty((0, no_parameters))
@@ -121,14 +122,14 @@ Every updater additionally accepts `weighting="uniform" | "multiplicity"`.
 | `PolynomialSklearnUpdater(no_parameters, no_observations, max_degree=5, alpha=1e-6)` | `StandardScaler → PolynomialFeatures → Ridge(alpha)`; the degree grows automatically as snapshots accumulate but never past the point where the polynomial has as many terms as there are snapshots (one snapshot ⇒ constant fit); supports sample weights. |
 | `RBFInterpolationUpdater(no_parameters, no_observations, neighbors=None, max_neighbors=50, dedup_tolerance=0.0, smoothing=0.0, kernel="thin_plate_spline", epsilon=None, degree=None, verbose=False)` | Forwarded to `scipy.interpolate.RBFInterpolator`; refits from scratch every call. Duplicated snapshot locations (which DAMH produces routinely) are collapsed before the fit, with their observations averaged; above `max_neighbors` snapshots the global O(N³) solve is replaced by a local fit over the nearest `max_neighbors` centres (`max_neighbors=None` keeps the global one at every size, `neighbors=` overrides both). |
 | `KDTreeUpdater(no_parameters, no_observations, no_nearest_neighbors)` | Inverse-distance-weighted average of `no_nearest_neighbors` (`1` = plain nearest-neighbor). |
-| `NeuralNetworkUpdaterMinibatches(no_parameters, no_observations, hidden_layer_sizes=(100,), solver="adamw", activation="silu", learning_rate=1e-3, iterations_batch=100, batch_size=None, replay_ratio=1.0, train_on_added_data=False, output_normalization="likelihood", output_mean=None, output_scale=None, seed=None, ...)` | Minibatch training with a replay buffer (`replay_ratio` mixes in old snapshots); registered for checkpoint reuse (`surrogates.reuse.SurrogateReused`); the only updater that normalizes its targets. |
+| `NeuralNetworkUpdater(no_parameters, no_observations, hidden_layer_sizes=(100,), solver="adamw", activation="silu", learning_rate=1e-3, iterations_batch=100, batch_size=None, replay_ratio=1.0, train_on_added_data=False, output_normalization="likelihood", output_mean=None, output_scale=None, seed=None, ...)` | Minibatch training with a replay buffer (`replay_ratio` mixes in old snapshots); registered for checkpoint reuse (`surrogates.reuse.SurrogateReused`); the only updater that normalizes its targets. |
 
 `NeuralNetworkUpdaterBasic` was **deleted** in WS6 (decision 4). Its full-batch L-BFGS
 behaviour is available as a preset of the Minibatches updater, which is what
 `toy_examples/neural_network_surrogate.py` and `toy_examples/sampling_TSX.py` now use:
 
 ```python
-surrDAMH.surrogates.NeuralNetworkUpdaterMinibatches(
+surrDAMH.surrogates.NeuralNetworkUpdater(
     no_parameters=..., no_observations=...,
     solver="lbfgs",             # one batch = the whole available subset
     batch_size=None,
@@ -143,7 +144,7 @@ surrDAMH.surrogates.NeuralNetworkUpdaterMinibatches(
 updater from `sampling_output/surrogate_checkpoint.pt` +
 `surrogate_training_data.npz`, using the hyperparameters stored at save time (override
 any of them via keyword arguments). All four shipped updaters are registered, but only
-`NeuralNetworkUpdaterMinibatches` implements the persistence itself
+`NeuralNetworkUpdater` implements the persistence itself
 (`supports_state_persistence()` / `supports_training_data_persistence()` report which).
 Checkpoints are read with `torch.load(..., weights_only=True)`, so nothing but tensors,
 scalars, strings and plain containers may be stored in them.

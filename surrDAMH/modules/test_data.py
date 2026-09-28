@@ -5,6 +5,7 @@ import os
 import numpy as np
 
 from surrDAMH.configuration import Configuration
+from surrDAMH.distributions.normal import standardize_prior
 from surrDAMH.distributions.parent import Distribution
 from surrDAMH.solver_specification import SolverSpec
 from surrDAMH.solvers import Solver, get_solver_from_spec
@@ -66,6 +67,7 @@ class TestData:
             A new ``TestData`` with ``log_posterior``/``weights`` already populated.
         """
         solver = resolve_solver(solver)
+        prior = standardize_prior(prior)  # the sampler's internal space (2026-09-22)
         # WS4, 2026-09-18: an owned generator instead of save/restore-the-global-seed. Both are
         # deterministic for a given seed and don't disturb unrelated code; this one also matches
         # the generator=-based seeding the rest of the library uses since G4 (modules/seeds.py).
@@ -137,6 +139,7 @@ class TestData:
         max) / sum``, or uniform weights if the sum is not finite/positive). Mutates
         ``self`` in place; required before ``as_surrogate_test_data()``.
         """
+        prior = standardize_prior(prior)  # self.parameters are internal-space coordinates
         log_posterior = np.zeros((self.parameters.shape[0], 1), dtype=float)
         for i, (parameters, obs) in enumerate(zip(self.parameters, self.observations)):
             log_posterior[i, 0] = prior.logpdf(parameters) + likelihood.logpdf(obs)

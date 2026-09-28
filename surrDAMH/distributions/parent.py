@@ -23,9 +23,10 @@ def rvs_with_generator(distribution, generator: "np.random.Generator | None"):
 
 class Distribution:
     """
-    Parent class for prior distributions and likelihoods (also used for observation
-    noise on the likelihood side). See ``docs/concepts.md`` for the internal-vs-physical
-    space design this class formalises.
+    Parent class of priors and likelihoods. Ready-made classes live in
+    ``surrDAMH.distributions``: ``Normal``, ``PriorIndependentComponents`` (per-parameter
+    Normal/Uniform/Lognormal/Beta components), ``GaussianMixture``, ``FromScipy``.
+    See ``docs/concepts.md`` for the internal-vs-physical space design.
 
     A prior is the function composition ``transform ∘ internal_prior``: ``rvs()``/
     ``logpdf()``/``grad_logpdf()`` operate on the INTERNAL sample (what the MCMC chain

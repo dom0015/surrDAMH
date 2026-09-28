@@ -9,6 +9,8 @@ Created on Wed Jan 22 10:15:50 2020
 import time
 import warnings
 
+from typing import Literal
+
 import numpy as np
 import numpy.typing as npt
 from scipy.interpolate import RBFInterpolator
@@ -100,68 +102,77 @@ class RBFInterpolationEvaluator(Evaluator):
         return results_interpolated
 
 
+#: Kernels accepted by ``scipy.interpolate.RBFInterpolator``.
+RBFKernel = Literal["linear", "thin_plate_spline", "cubic", "quintic", "multiquadric",
+                    "inverse_multiquadric", "inverse_quadratic", "gaussian"]
+
+
+# Maintainer notes (moved out of the class docstring on 2026-09-22):
+# - get_evaluator() refits from scratch on the full accumulated dataset every call. Duplicate
+#   snapshot locations -- which DAMH produces routinely -- are collapsed before the fit
+#   (deduplicate_snapshots) instead of being handed to RBFInterpolator, where they made the
+#   interpolation matrix exactly singular. The old fallback (refit on par stacked with par+1,
+#   par+2, ... carrying the SAME observations, kernel="linear") imposed the false constraint
+#   f(x) = f(x + k*1) and is gone; a small-smoothing retry ladder (SMOOTHING_LADDER) remains for
+#   the residual near-duplicate case.
+# - max_neighbors (finding 3.3): while the de-duplicated snapshot count is <= max_neighbors the
+#   fit is the GLOBAL one (neighbors=None), bit-identical to the pre-cap behaviour; above it,
+#   scipy switches to a local fit over the max_neighbors nearest centres, replacing one dense
+#   O(N^3)/O(N^2) solve by many small ones. 50 is a practical compromise: far more centres than
+#   the polynomial part needs in this library's parameter dimensions, while 50x50 solves stay
+#   negligible. An explicit neighbors= disables the cap.
+# - Weighting: supports_sample_weights = False (an interpolant has no per-row weight);
+#   "multiplicity" only drops zero-multiplicity snapshots, "uniform" interpolates every snapshot.
 @register_updater
 class RBFInterpolationUpdater(Updater):  # initiated by COLLECTOR
     """
-    Radial basis function (RBF) interpolation.
-    Using scipy.interpolate.RBFInterpolator.
+    Radial-basis-function interpolation surrogate (``scipy.interpolate.RBFInterpolator``): passes
+    exactly through the snapshots, no training loop, no gradients::
 
-    Weighting: ``supports_sample_weights = False`` -- this is an interpolant, there is no
-    per-row weight to give ``scipy.interpolate.RBFInterpolator``. With
-    ``weighting="multiplicity"`` the zero-multiplicity snapshots (rejected proposals) are
-    dropped and every remaining snapshot is interpolated once; the default
-    ``weighting="uniform"`` interpolates every snapshot.
+        updater = surrDAMH.surrogates.RBFInterpolationUpdater(
+            no_parameters=conf.no_parameters, no_observations=conf.no_observations)
+
+    Args:
+        no_parameters: number of parameters.
+        no_observations: number of observations.
+
+        kernel: radial basis function; ``"thin_plate_spline"`` (default) needs no ``epsilon``.
+        smoothing: ``0`` = exact interpolation; larger values smooth over noisy snapshots.
+        epsilon: shape parameter of the scale-dependent kernels (``"multiquadric"``,
+            ``"gaussian"``, ...); ``None`` = scipy's default.
+        degree: degree of the added polynomial term; ``None`` = scipy's default for the kernel.
+
+        max_neighbors: above this many snapshots the fit becomes local (only the nearest
+            ``max_neighbors`` snapshots per query), keeping large runs fast; ``None`` = always
+            global.
+        neighbors: fix the local neighbour count explicitly (overrides ``max_neighbors``);
+            ``None`` (default) = let ``max_neighbors`` decide.
+
+        dedup_tolerance: snapshots closer than this are merged before the fit; ``0`` = exact
+            duplicates only.
+        weighting: ``"uniform"`` interpolates every snapshot; ``"multiplicity"`` drops rejected
+            proposals first.
+
+        verbose: print fit timing and sizes on every refit.
     """
 
     supports_sample_weights = False
 
     def __init__(self, no_parameters: int, no_observations: int,
-                 neighbors: int | None = None,
-                 max_neighbors: int | None = 50,
-                 dedup_tolerance: float = 0.0,
+                 # --- model ---
+                 kernel: RBFKernel = "thin_plate_spline",
                  smoothing: float = 0.0,
-                 kernel: str = "thin_plate_spline",
                  epsilon: float | None = None,
                  degree: int | None = None,
-                 verbose: bool = False,
-                 weighting: WeightingPolicy = "uniform"):
-        """
-        Args, forwarded to ``scipy.interpolate.RBFInterpolator`` at fit time (see its
-        docs for exact semantics): ``neighbors`` (local RBF using only the ``neighbors``
-        nearest points if given, global otherwise), ``smoothing``, ``kernel``,
-        ``epsilon``, ``degree``.
-
-        Args:
-            no_parameters: dimension of the parameter space.
-            no_observations: dimension of the observation space.
-            neighbors: explicit ``scipy`` ``neighbors`` value. ``None`` (default) lets
-                ``max_neighbors`` decide; any other value is used as given, whatever the
-                snapshot count, and disables ``max_neighbors``.
-            max_neighbors: automatic cap on the neighbor count (finding 3.3). While the
-                de-duplicated snapshot count is ``<= max_neighbors`` the fit is the **global**
-                one (``neighbors=None``), i.e. bit-identical to the pre-cap behaviour; above
-                it, ``scipy`` switches to a local fit over the ``max_neighbors`` nearest
-                centres, which replaces one dense ``O(N^3)``/``O(N^2)`` solve by many small
-                ones. ``None`` disables the cap and keeps the global fit at every size.
-                The default 50 is a practical compromise: a thin-plate-spline patch over 50
-                centres is far more than the polynomial part needs in the parameter
-                dimensions this library is used in, while 50x50 solves stay negligible.
-            dedup_tolerance: passed to ``deduplicate_snapshots`` (0.0 = exact duplicates only).
-            smoothing: ``scipy`` smoothing; 0.0 (default) means exact interpolation.
-            verbose: print fit timing/shape on every ``get_evaluator()`` call.
-            weighting: snapshot-weighting policy, see ``Updater``.
-
-        Notes:
-            ``get_evaluator()`` refits from scratch on the full accumulated dataset every
-            call. Duplicate snapshot locations -- which DAMH produces routinely -- are
-            collapsed before the fit (``deduplicate_snapshots``) instead of being handed to
-            ``RBFInterpolator``, where they made the interpolation matrix exactly singular.
-            The old fallback for that case (refit on ``par`` stacked with ``par+1, par+2, ...``
-            carrying the *same* observations, ``kernel="linear"``) imposed the false
-            constraint ``f(x) = f(x + k*1)`` on the surrogate and is gone; what is left is a
-            small-smoothing retry ladder (``SMOOTHING_LADDER``) for the residual
-            near-duplicate case, which only relaxes exact interpolation.
-        """
+                 # --- locality / speed ---
+                 max_neighbors: int | None = 50,
+                 neighbors: int | None = None,
+                 # --- data ---
+                 dedup_tolerance: float = 0.0,
+                 weighting: WeightingPolicy = "uniform",
+                 # --- runtime ---
+                 verbose: bool = False) -> None:
+        """See the class docstring for every argument."""
         super().__init__(no_parameters, no_observations, weighting=weighting)
         self.neighbors = neighbors
         self.max_neighbors = max_neighbors

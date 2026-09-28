@@ -9,7 +9,7 @@ is that every dataclass field is shown with the value that is actually in effect
 moment -- after ``__post_init__`` corrections (e.g. ``adaptive`` forced off for pCN,
 ``surrogate_model_updates`` resolved from ``None`` / refused for a gradient-free MH stage)
 and after ``SamplingFramework`` may have
-disabled ``use_surrogate_gradients``. An ignored setting like the ``adaptive_target_rate``
+disabled ``use_surrogate_gradients``. An ignored setting like the ``target_rate``
 of finding G1 is then visible in the log instead of silently doing nothing.
 
 Fields are wrapped into a few dense lines rather than one line each, so a three-stage run
@@ -18,6 +18,7 @@ stays well under 40 lines of output.
 
 from __future__ import annotations
 
+import dataclasses
 import sys
 import textwrap
 from dataclasses import fields
@@ -38,6 +39,10 @@ def short_repr(value, max_len: int = 44) -> str:
     ``sys.maxsize`` (the "no limit" default of ``Stage.max_samples``/``max_evaluations``)
     becomes ``maxsize``.
     """
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        # proposal specs: their dataclass repr, allowed to be longer than a scalar
+        text = repr(value)
+        return text if len(text) <= 110 else text[:107] + "..."
     if isinstance(value, bool) or value is None:
         text = repr(value)
     elif isinstance(value, int) and value == sys.maxsize:

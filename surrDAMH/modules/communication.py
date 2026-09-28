@@ -21,6 +21,7 @@ TAG_UPDATE = 3  # signal that sampler wants new evaluator if available
 TAG_EVALUATOR_OBJECT = 4  # this message contains evaluator object (or None if sampler terminated)
 TAG_STOP_UPDATING = 5  # when sampler knows that it will not want new evaluator later
 TAG_INITIAL_SURROGATE = 6  # collector -> sampler, once at start-up: can an evaluator be provided?
+TAG_EVALUATOR_NEEDED = 7  # sampler -> collector: I am blocked waiting for my FIRST evaluator (2026-09-22)
 TAG_FIRST_SNAPSHOT = 10
 
 # Seconds to wait between printing a fatal traceback and calling MPI_Abort. MPI_Abort makes the
@@ -293,6 +294,17 @@ class CommEvaluator_sampler:
         """
         return self.request_irecv.get_status()
 
+    def announce_waiting(self) -> None:
+        """
+        Tell the collector that this sampler is about to block in ``get_evaluator()`` for its
+        first evaluator (2026-09-22). The collector uses it to break the deadlock of a surrogate
+        stage that starts before ``min_snapshots_initial`` snapshots exist: once every active
+        sampler has announced, it trains the initial surrogate on the snapshots it has. One int,
+        sent eagerly; the collector always has a matching ``TAG_EVALUATOR_NEEDED`` ``Irecv`` posted.
+        """
+        buf = np.array([self.idx], dtype=int)
+        self.comm_world.Send(buf=buf, dest=self.rank_collector, tag=TAG_EVALUATOR_NEEDED)
+
     def get_evaluator(self) -> Evaluator:
         """
         Waits for current evaluator.
@@ -347,7 +359,29 @@ class CommEvaluator_collector():
         self.request_update_signal = self.comm_world.Irecv(buf=self.recv_buffer_update, source=self.rank_sampler, tag=TAG_UPDATE)
         self.recv_buffer_stop = np.zeros(shape=(1,), dtype=int)
         self.request_stop_signal = self.comm_world.Irecv(buf=self.recv_buffer_stop, source=self.rank_sampler, tag=TAG_STOP_UPDATING)
+        self.recv_buffer_needed = np.zeros(shape=(1,), dtype=int)
+        self.request_needed_signal = self.comm_world.Irecv(buf=self.recv_buffer_needed, source=self.rank_sampler, tag=TAG_EVALUATOR_NEEDED)
+        self.blocked_waiting_for_first_evaluator = False
         self.isend_request = None
+
+    def sampler_is_blocked(self) -> bool:
+        """
+        True once the sampler announced (``TAG_EVALUATOR_NEEDED``) that it is blocked waiting for
+        its first evaluator; stays True until ``send_evaluator`` serves it (2026-09-22).
+        """
+        if not self.blocked_waiting_for_first_evaluator and self.request_needed_signal is not None \
+                and self.request_needed_signal.Get_status():
+            self.request_needed_signal.Wait()
+            self.request_needed_signal = self.comm_world.Irecv(buf=self.recv_buffer_needed, source=self.rank_sampler,
+                                                               tag=TAG_EVALUATOR_NEEDED)
+            self.blocked_waiting_for_first_evaluator = True
+        return self.blocked_waiting_for_first_evaluator
+
+    def _cancel_needed_signal(self) -> None:
+        if self.request_needed_signal is not None:
+            self.request_needed_signal.Cancel()
+            self.request_needed_signal.Wait()
+            self.request_needed_signal = None
 
     def sampler_requests_evaluator(self) -> bool:
         """
@@ -370,6 +404,7 @@ class CommEvaluator_collector():
             self.request_stop_signal.Wait()
             self.max_idx = self.recv_buffer_stop[0]
             self.active = False
+            self._cancel_needed_signal()
             return True
         return False
 
@@ -380,6 +415,8 @@ class CommEvaluator_collector():
         if self.isend_request is not None:
             self.isend_request.wait()
         self.isend_request = self.comm_world.isend(obj=evaluator, dest=self.rank_sampler, tag=TAG_EVALUATOR_OBJECT)
+        if evaluator is not None:
+            self.blocked_waiting_for_first_evaluator = False
 
     def terminate(self, last_evaluator: Evaluator | None) -> None:
         """
@@ -400,6 +437,7 @@ class CommEvaluator_collector():
         else:
             self.comm_world.send(obj=last_evaluator, dest=self.rank_sampler, tag=TAG_EVALUATOR_OBJECT)
             self.request_update_signal.Wait()
+        self._cancel_needed_signal()
         self.request_update_signal = None
         self.request_stop_signal = None
         self.isend_request = None

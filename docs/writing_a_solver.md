@@ -8,24 +8,33 @@ A solver wraps the forward model `G`: parameters in, observations out. Subclass
 ```python
 class MySolver(surrDAMH.solvers.Solver):
     def __init__(self, solver_id=0, output_dir=None, **your_params):
+        super().__init__(solver_id, output_dir, no_parameters=..., no_observations=...)
         ...
-    def set_parameters(self, parameters):
-        self.parameters = parameters
     def get_observations(self):
-        ...  # run the model, return an (no_observations,) array
+        ...  # run the model on self.parameters, return an (no_observations,) array
 ```
+
+`set_parameters` has a working default since 2026-09-21: it stores the array in
+`self.parameters` and raises `ValueError` if its size differs from `no_parameters` (when
+that attribute is set). Override it only if the model needs the parameters in another form.
+`no_parameters`/`no_observations` are *declared* on `Solver` as `int` but not assigned, so a
+type checker (Pylance/pyright) knows every solver has them as plain `int` — `Configuration(
+no_parameters=my_solver.no_parameters, ...)` type-checks. Set them via `super().__init__(...)`
+or by plain assignment; a solver that sets neither raises `AttributeError` at the attribute the
+first time anything reads it, instead of silently reporting `None`.
 
 - `__init__(solver_id, output_dir, **kwargs)`: `solver_id` identifies this instance
   (e.g. the spawned child's rank, or the sampler rank running it locally) — key any
   scratch files by it if you write to disk, since the same class may be instantiated
-  concurrently by several processes. `output_dir`, if given, is already created for you.
+  concurrently by several processes. `output_dir`, if given, is created the first time you read `self.output_dir` (2026-09-22; it used to be created eagerly, leaving an empty directory per solver that never wrote anything).
 - `set_parameters(parameters)` / `get_observations() -> (no_observations,)`: the two-step
   contract; `__call__` and `set_parameters_and_get_observations` compose them. A solver
   instance is called repeatedly with different parameters — it must not depend on
   anything from a previous call beyond what `set_parameters` just set.
-- `solver_tag`: if `Configuration.solver_returns_tag=True`, return
-  `(observations, tag)` from `get_observations()` instead; `tag < 0` marks a failed
-  solve (the solvers pool then substitutes zeros and forwards the negative tag).
+- `solver_tag`: a model that can fail may return `(observations, tag)` from
+  `get_observations()` instead of the bare array; the tuple is detected automatically
+  (the former `Configuration.solver_returns_tag` flag was removed on 2026-09-21). `tag < 0`
+  marks a failed solve (the solvers pool then substitutes zeros and forwards the negative tag).
   `tag = -2` is **reserved by the library** and must not be returned by a solver: it
   marks a proposal that was not finite and therefore never reached the solver at all
   (`surrDAMH.modules.algorithms.SOLVER_TAG_NONFINITE_PROPOSAL`, 2026-09-20). Like any

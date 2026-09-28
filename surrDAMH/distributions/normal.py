@@ -9,25 +9,31 @@ from surrDAMH.distributions.parent import Distribution
 
 class Normal(Distribution):
     """
-    Normal distribution:
-    - univariate N(mean, sd)
-    - multivariate with independent components N(mean, sd)
-    - multivariate correlated N(mean, cov)
+    Gaussian distribution N(mean, sd) or N(mean, cov), usable as prior or likelihood.
+
+    - prior: ``Normal(mean=0, sd=1, dim=no_parameters)``. The sampler standardizes it: the
+      chain runs in ``z ~ N(0, I)`` and ``transform(z) = mean + L z`` gives the physical
+      parameters (``StandardizedNormal``, applied automatically), so every prior is sampled
+      in the same standard-normal internal space.
+    - likelihood: ``Normal(mean=observed_data, sd=noise_sd)``, i.e. the data are the mean
+      and ``sd`` is the noise level (scalar or one value per observation).
+    - correlated: ``Normal(mean=m, cov=C)``.
     """
 
     def __init__(self, mean: npt.ArrayLike | float = 0.0, cov: npt.NDArray | None = None,
-                 sd: float | npt.NDArray = 1.0, d: int | None = None):
+                 sd: float | npt.NDArray = 1.0, dim: int | None = None):
         """
         Args:
-            mean (float | np.ndarray): mean vector (can be scalar, in that case, d has to be given)
-            cov (np.ndarray): covariance matrix (optional)
-            sd (float | np.ndarray): standard deviation (scalar or vector) (optional, only if cov is None)
-            d (int): number of variables (optional)
+            mean: mean vector; a scalar is broadcast to ``dim`` components (``dim`` needed then).
+                For a likelihood this is the vector of observed data.
+            cov: covariance matrix; if given, ``sd`` is ignored.
+            sd: standard deviation, scalar or one value per component (used when ``cov`` is None).
+            dim: number of components when ``mean`` is a scalar.
         """
         if np.isscalar(mean):
-            if d is None:
-                d = 1
-            self.mean = np.full((d,), mean)
+            if dim is None:
+                dim = 1
+            self.mean = np.full((dim,), mean)
         else:
             self.mean = np.array(mean)
         self.n = len(self.mean)
@@ -90,3 +96,65 @@ class Normal(Distribution):
         if generator is not None:
             return generator.multivariate_normal(self.mean, self.cov)
         return np.random.multivariate_normal(self.mean, self.cov)
+
+
+class StandardizedNormal(Distribution):
+    """
+    Internal-space view of a ``Normal`` prior: the chain samples ``z ~ N(0, I)`` and
+    ``transform(z) = mean + L z`` (``L L^T = cov``, or ``L = diag(sd)``) gives the physical
+    parameters. Built automatically by ``SamplingFramework``, ``run_local`` and ``TestData``
+    for every ``Normal`` prior (2026-09-22, author decision), so all priors share the standard
+    normal internal space that ``PriorIndependentComponents`` already used: proposal scales,
+    pCN and the dimension-robust Hamiltonian proposal then mean the same thing for every prior.
+
+    ``mean`` and ``get_covariance()`` describe the INTERNAL distribution (zeros, ones); the
+    physical Gaussian is ``physical``.
+    """
+
+    def __init__(self, normal: Normal) -> None:
+        self.physical = normal
+        self.n = int(normal.n)
+        self.no_parameters = self.n
+        self.mean = np.zeros(self.n)
+        cov = np.asarray(normal.get_covariance(), dtype=float)
+        if cov.ndim == 2:
+            self._L: npt.NDArray | None = np.linalg.cholesky(cov)
+            self._sd = None
+        else:
+            self._L = None
+            self._sd = cov
+
+    def transform(self, sample: npt.NDArray) -> npt.NDArray:
+        z = np.asarray(sample, dtype=float)
+        if self._L is not None:
+            return self.physical.mean + self._L @ z
+        return self.physical.mean + self._sd * z
+
+    def logpdf(self, sample: npt.NDArray) -> float:
+        """Standard-normal log-density of the INTERNAL sample, up to an additive constant."""
+        z = np.asarray(sample, dtype=float)
+        return -0.5 * float(np.dot(z, z))
+
+    def grad_logpdf(self, sample: npt.NDArray) -> npt.NDArray:
+        return -np.asarray(sample, dtype=float)
+
+    def get_covariance(self) -> npt.NDArray:
+        """Vector of internal standard deviations (ones)."""
+        return np.ones(self.n)
+
+    def rvs(self, generator: np.random.Generator | None = None) -> npt.NDArray:
+        if generator is not None:
+            return generator.standard_normal(self.n)
+        return np.random.randn(self.n)
+
+
+def standardize_prior(prior: Distribution) -> Distribution:
+    """
+    The internal-space prior the sampler works with: a ``Normal`` becomes a
+    ``StandardizedNormal``; every other distribution (already internal-space by design, e.g.
+    ``PriorIndependentComponents``, or an already standardized one) is returned unchanged.
+    Called by ``SamplingFramework.__init__``, ``run_local`` and ``TestData``.
+    """
+    if isinstance(prior, Normal):
+        return StandardizedNormal(prior)
+    return prior

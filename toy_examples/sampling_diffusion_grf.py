@@ -22,8 +22,9 @@ from mpi4py import MPI
 import surrDAMH
 from surrDAMH.modules.surrogate_restart import SurrogateRestart
 from surrDAMH.modules.test_data import TestData
+from surrDAMH.proposals import Hamiltonian, PCN
 from surrDAMH.stages import Stage
-from surrDAMH.surrogates.torch_perceptron_minibatches import NeuralNetworkUpdaterMinibatches as NNUpdater
+from surrDAMH.surrogates.torch_perceptron_minibatches import NeuralNetworkUpdater as NNUpdater
 
 # --- 1. knobs ----------------------------------------------------------------
 output_dir = "out_diffusion_grf3"
@@ -108,11 +109,11 @@ if rank_world == conf.rank_collector:
 # --- 7. sampling stages -------------------------------------------------------------
 list_of_stages = [
     # pCN warm-up on the full model; produces the first snapshots for the surrogate.
-    Stage(algorithm_type="MH", proposal_type="pCN", pcn_beta=0.2, time_limit=60,
+    Stage(algorithm="MH", proposal=PCN(beta=0.2), time_limit=60,
           surrogate_model_updates=True, is_excluded=False),
     # DAMH with a gradient-based proposal on the surrogate (surrogate keeps learning).
-    Stage(algorithm_type="DAMH", proposal_type="HamiltonianInfinite", time_limit=60,
-          hamiltonian_num_steps=100, hamiltonian_step_size=0.05, subchain_max_length=1,
+    Stage(algorithm="DAMH", proposal=Hamiltonian(step_size=0.05, num_steps=100, integrator="dimension_robust"),
+          time_limit=60, subchain_length=1,
           surrogate_model_updates=True, is_excluded=True),
 ]
 

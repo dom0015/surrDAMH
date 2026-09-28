@@ -74,7 +74,7 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
     print("Sampler at rank", rank_world, "- initial sample:", initial_sample.parameters, flush=True)
 
     # Merged carry-over of every adaptive stage so far, keyed by Stage field name
-    # ("proposal_sd_or_cov", "pcn_beta", "hamiltonian_step_size"); consumed by build_proposal
+    # ("scale", "beta", "step_size" -- the spec step fields); consumed by build_proposal
     # for every stage field left None (2026-09-20).
     carried: dict = {}
     # A30: True once a previous stage has written this chain's current state to its samples
@@ -82,7 +82,7 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
     initial_sample_is_carried_over = False
 
     first_stage = list_of_stages[0]
-    first_stage_needs_surrogate = (first_stage.algorithm_type == "DAMH"
+    first_stage_needs_surrogate = (first_stage.algorithm == "DAMH"
                                    or first_stage.proposal_needs_gradients())
     if conf.use_collector:
         # start-up handshake (WS8, finding 2.2), counterpart of the send in process_COLLECTOR:
@@ -110,7 +110,7 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
             commSnapshot_stage = commSnapshot
         else:
             commSnapshot_stage = None
-        if stage.algorithm_type == 'DAMH':  # or stage.use_only_surrogate:
+        if stage.algorithm == 'DAMH':  # or stage.use_only_surrogate:
             # the stage evaluates surrogate model
             # assert i > 0, "initial stage cannot use surrogate model"
             assert commEvaluator is not None
@@ -131,9 +131,9 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
         else:
             commSolver_stage = commSolver
 
-        # choice of algorithm for this stage (stage_name raises for an unknown algorithm_type):
+        # choice of algorithm for this stage (stage_name raises for an unknown algorithm):
         stage.name = stage_name(stage, i)
-        alg_class = alg.Algorithm_MH if stage.algorithm_type == 'MH' else alg.Algorithm_DAMH
+        alg_class = alg.Algorithm_MH if stage.algorithm == 'MH' else alg.Algorithm_DAMH
 
         # run sampling algorithm:
         alg_instance = alg_class(proposal=my_Prop,
@@ -164,10 +164,11 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
             my_Prop.set_pooled_state(all_states)
             stage_carry_over = my_Prop.carry_over()
             carried.update(stage_carry_over)
-            for key, value in sorted(stage_carry_over.items()):
-                print('Stage', alg_instance.stage.name, 'at MPI rank', rank_world,
-                      'carry-over', key + ':',
-                      np.asarray(value, dtype=float).ravel().tolist(), flush=True)
+            if conf.debug:
+                for key, value in sorted(stage_carry_over.items()):
+                    print('Stage', alg_instance.stage.name, 'at MPI rank', rank_world,
+                          'carry-over', key + ':',
+                          np.asarray(value, dtype=float).ravel().tolist(), flush=True)
             # persisted once, by sampler rank 0 -- every rank pooled to the identical state
             # (2026-09-21), so a per-rank file would only duplicate it
             if comm_sampler.Get_rank() == 0:
@@ -185,7 +186,7 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
         save_last_sample(conf, stage.name, rank_world, alg_instance.current.parameters)
 
         # terminate communicators between sampler and collector if they will not be used later:
-        following_DAMH = [list_of_stages[j].algorithm_type == "DAMH" for j in range(i+1, no_stages)]
+        following_DAMH = [list_of_stages[j].algorithm == "DAMH" for j in range(i+1, no_stages)]
         following_onlySurr = [list_of_stages[j].use_only_surrogate for j in range(i+1, no_stages)]
         following_hamiltonian = [list_of_stages[j].proposal_needs_gradients() for j in range(i+1, no_stages)]
         stages_will_use_surrogate = any(following_DAMH) or any(following_onlySurr) or any(following_hamiltonian)

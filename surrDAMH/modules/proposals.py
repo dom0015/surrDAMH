@@ -231,7 +231,7 @@ class PCN(Proposal):  # preconditioned Crank-Nicolson proposal
     prior (whose internal prior is standard normal by design), see
     ``proposal_builder.py:_prior_is_gaussian``. Constructing this class directly with a
     non-Gaussian prior silently produces an incorrect chain; go through
-    ``build_proposal``/``Stage(proposal_type="pCN")`` instead of instantiating it by hand.
+    ``build_proposal``/``Stage(proposal=surrDAMH.proposals.PCN(...))`` instead of instantiating it by hand.
     """
 
     def __init__(self, no_parameters: int, beta: float, prior_mean: npt.NDArray,
@@ -320,8 +320,8 @@ class GaussRandomWalk_adaptive(GaussRandomWalk):  # initiated by SAMPLERs
     ``-inf`` (probability 0) on a pre-rejected iteration. The rate driven to ``target_rate`` is
     therefore the *overall* acceptance of an outer iteration; scoring only the moved iterations
     feeds back the conditional second-stage rate, which tends to 1 and makes the scale diverge
-    (`16` §2 item 1, §4.2). For ``subchain_max_length > 1`` the whole multi-step move is scored,
-    so the per-step scale ends above its own optimum -- prefer ``subchain_max_length=1`` when
+    (`16` §2 item 1, §4.2). For ``subchain_length > 1`` the whole multi-step move is scored,
+    so the per-step scale ends above its own optimum -- prefer ``subchain_length=1`` when
     adapting.
 
     Cross-rank hand-over: ``adapted_state()`` / ``set_pooled_state()`` / ``carry_over()`` pool the
@@ -342,7 +342,7 @@ class GaussRandomWalk_adaptive(GaussRandomWalk):  # initiated by SAMPLERs
                 Only the starting point of the recursion -- both scale and shape are learned.
             seed: seed of this proposal's random generator.
             target_rate: target acceptance rate of the Robbins-Monro scale recursion
-                (``Stage.adaptive_target_rate``; 0.234 is the high-dimensional RWM optimum).
+                (``RandomWalk.target_rate``; 0.234 is the high-dimensional RWM optimum).
             period: re-estimate the covariance every ``period`` ``adapt()`` calls.
             warmup: no covariance is installed before ``n >= warmup`` (the scale recursion runs
                 from the first call).
@@ -539,13 +539,13 @@ class GaussRandomWalk_adaptive(GaussRandomWalk):  # initiated by SAMPLERs
 
     def carry_over(self) -> dict:
         """Stage fields this adapted proposal hands to the following stages."""
-        return {"proposal_sd_or_cov": self.sd_or_cov}
+        return {"scale": self.sd_or_cov}  # key = RandomWalk.scale (2026-09-21)
 
     def adapted_summary(self) -> dict:
         """Diagnostic-only snapshot (see ``Proposal.adapted_summary``): the pooled shape
         (``base_cov``) and scale (``log_sigma``) separately, plus ``n_pooled`` (the pooled
         chain-iteration count) and the pooled ``mean`` -- everything ``carry_over``'s single
-        ``proposal_sd_or_cov = exp(2 log_sigma) * base_cov`` folds together."""
+        ``scale = exp(2 log_sigma) * base_cov`` (the carried covariance) folds together."""
         return {"base_cov": self.base_cov, "log_sigma": float(self.log_sigma),
                 "n_pooled": int(self.n), "mean": self.mean}
 
@@ -621,7 +621,7 @@ class PCN_adaptive(PCN):
         self._set_beta_from_logit()
 
     def carry_over(self) -> dict:
-        return {"pcn_beta": self.beta}
+        return {"beta": self.beta}  # key = PCN.beta (2026-09-21)
 
     def adapted_summary(self) -> dict:
         """Diagnostic-only snapshot (see ``Proposal.adapted_summary``)."""
@@ -751,7 +751,7 @@ class HamiltonianInfinite(Hamiltonian):
     Hamiltonian proposal whose free flow is the exact solution of the harmonic oscillator
     H(q, p) = 0.5 q^T q + 0.5 p^T M^{-1} p (a rotation in phase space, ``M = diag(sd^2)``
     or the full matrix passed as ``sd_or_cov``), so that only the likelihood gradient is
-    integrated numerically (split integrator).
+    integrated numerically (the "dimension_robust" splitting integrator).
 
     ``sd_or_cov`` is permanently the MASS matrix, not the prior covariance (decision 8,
     `library_notes/09_improvement_plan.md` §3 — kept, not reinterpreted: the rotation's
@@ -947,7 +947,7 @@ class _DualAveragingStepSize:
         self.set_step_size(np.exp(self.log_eps_bar))
 
     def carry_over(self) -> dict:
-        return {"hamiltonian_step_size": float(np.exp(self.log_eps_bar))}
+        return {"step_size": float(np.exp(self.log_eps_bar))}  # key = Hamiltonian.step_size (2026-09-21)
 
     def adapted_summary(self) -> dict:
         """Diagnostic-only snapshot (see ``Proposal.adapted_summary``): the same frozen,
@@ -961,7 +961,7 @@ class Hamiltonian_adaptive(_DualAveragingStepSize, Hamiltonian):
 
 
 class HamiltonianInfinite_adaptive(_DualAveragingStepSize, HamiltonianInfinite):
-    """``HamiltonianInfinite`` with a dual-averaged leapfrog step size (the split integrator's
+    """``HamiltonianInfinite`` with a dual-averaged leapfrog step size (the dimension_robust splitting integrator's
     rotation angles are recomputed from ``step_size`` on every call, so they are never stale)."""
 
 

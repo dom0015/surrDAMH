@@ -13,69 +13,135 @@ from surrDAMH.solver_specification import SolverSpec
 
 class Solver:
     """
-    Parent class / contract for the forward model. Subclass and override
-    ``set_parameters``/``get_observations`` (or ``__call__`` in full) to plug a model
-    into the library; see ``docs/writing_a_solver.md``.
+    Base class for the forward model ``G``: parameters in, observations out.
 
-    Called from three places with different lifetimes: directly by ``run_local()``
-    (one instance, one process); once per spawned child process by the solvers pool
-    (``get_solver_from_spec``, one instance per child, reused for every request that
-    child receives); once per sampler rank when ``use_solvers_pool=False`` (one
-    instance per rank). A solver must therefore be safe to call repeatedly with
-    different ``parameters`` and must not assume anything about which parameters were
-    passed before.
+    To plug in your own model, subclass this and implement ``get_observations``; keep the
+    default ``set_parameters`` (it stores the array in ``self.parameters`` and checks its
+    size) unless you need to preprocess the parameters. Set ``no_parameters`` and
+    ``no_observations``, e.g. via ``super().__init__``; ``Configuration``, the prior and the
+    likelihood must use the same two numbers::
 
-    Optional duck-typed attributes, read via ``getattr``/``hasattr`` where used, not
-    part of the required contract: ``par_names`` (list of parameter names, used by
-    ``SamplingFramework.write_report``), ``field_builder``/``coords``/
-    ``measurement_points`` (enable the posterior-field-statistics section of the HTML
-    report, all three required together).
+        class MySolver(surrDAMH.Solver):
+            def __init__(self, solver_id=0, output_dir=None, my_option=1.0):
+                super().__init__(solver_id, output_dir, no_parameters=3, no_observations=2)
+                ...
+            def get_observations(self):
+                return G(self.parameters)          # array of shape (no_observations,)
+
+    Keep the ``solver_id``/``output_dir`` keyword arguments in ``__init__``: the library
+    passes them whenever it constructs the solver itself (from a ``SolverSpec``).
+
+    Three ways to hand the model to ``SamplingFramework``:
+
+    - ``solver_instance=MySolver(...)``: simplest; requires
+      ``Configuration.use_solvers_pool=False`` (the solver then runs inside every sampler
+      process). Every sampler rank runs the script and builds its own instance, so keep the
+      constructor deterministic (seed any random data).
+    - ``solver_spec=SolverSpec(...)`` naming the ``.py`` file and class: required with
+      ``use_solvers_pool=True`` (spawned solver processes import the file themselves), also
+      fine without the pool. See ``surrDAMH.solver_specification.SolverSpec``.
+    - a ready-made example from ``toy_examples/solver_examples/solver_spec_examples.py``.
+
+    If the solver module imports code from other directories, add them to ``PYTHONPATH``;
+    ``Configuration.paths_to_append`` reaches only the launching process, not spawned solver
+    processes.
+
+    Parameters arrive in physical space (after ``prior.transform``). An instance is called
+    many times with different parameters and must not keep state between calls beyond what
+    ``set_parameters`` sets. Optional extras picked up by ``SamplingFramework.write_report``:
+    ``visualize_solution()`` (figures of the best fit) and a ``par_names`` attribute (parameter
+    names). Full contract: ``docs/writing_a_solver.md``.
     """
 
-    def __init__(self, solver_id: int = 0, output_dir: str | None = None) -> None:
+    #: Number of parameters the model takes. Declared, not assigned: a type checker therefore
+    #: knows every solver has it as an ``int``, and a solver that forgets to set it fails with a
+    #: plain ``AttributeError`` at the attribute instead of passing ``None`` on to the sampler.
+    no_parameters: int
+    #: Number of values ``get_observations`` returns. Declared, not assigned (see ``no_parameters``).
+    no_observations: int
+
+    def __init__(self, solver_id: int = 0, output_dir: str | None = None,
+                 no_parameters: int | None = None, no_observations: int | None = None) -> None:
         """
         Args:
-            solver_id: identifies this solver instance (e.g. MPI rank of the spawned
-                child or of the sampler running it locally); solvers that write scratch
-                files should key them by ``solver_id`` to avoid collisions between
-                concurrently running instances.
-            output_dir: directory the solver may use for scratch/output files, already
-                created by the caller when given (e.g. ``solver_output/rank<k>/``).
+            solver_id: identifies this instance (MPI rank of the spawned child, or of the
+                sampler running it locally); key any scratch files by it, several instances
+                may run concurrently.
+            output_dir: directory this instance may write scratch/output files to, e.g.
+                ``<output_dir>/solver_output/rank<k>/``. Created the first time
+                ``self.output_dir`` is read, so a solver that never uses it leaves nothing behind.
+            no_parameters: number of parameters; sets the attribute when given. Leave it out
+                only if the subclass assigns ``self.no_parameters`` itself.
+            no_observations: number of observations; same.
         """
-        pass
+        self.solver_id = solver_id
+        self.output_dir = output_dir  # stored via the property setter; created on first read
+        if no_parameters is not None:
+            self.no_parameters = no_parameters
+        if no_observations is not None:
+            self.no_observations = no_observations
 
-    def set_parameters(self, parameters: npt.NDArray):
-        """Stores ``parameters`` (physical space, i.e. after ``prior.transform``) for the next ``get_observations()`` call."""
+    @property
+    def output_dir(self) -> str | None:
+        """
+        Directory this solver may write to, or ``None`` if none was given. The directory is
+        created on the first read (2026-09-22), not when the solver is constructed: the library
+        hands every spawned or per-rank solver its own ``solver_output/rank<k>/`` path, and a
+        solver that never writes should not leave an empty directory behind.
+        """
+        path = getattr(self, "_output_dir", None)
+        if path is not None and not getattr(self, "_output_dir_created", False):
+            os.makedirs(path, exist_ok=True)
+            self._output_dir_created = True
+        return path
+
+    @output_dir.setter
+    def output_dir(self, path: str | None) -> None:
+        self._output_dir = path
+        self._output_dir_created = False
+
+    def set_parameters(self, parameters: npt.NDArray) -> None:
+        """
+        Store ``parameters`` (physical space, i.e. after ``prior.transform``) in
+        ``self.parameters`` for the next ``get_observations()`` call. If ``no_parameters``
+        is set, a size mismatch raises ``ValueError``. Override only if the model needs the
+        parameters in another form.
+        """
+        parameters = np.asarray(parameters)
+        # getattr, because no_parameters is declared but not assigned on the base class: a solver
+        # that never set it simply gets no size check here (it fails later at the attribute itself)
+        no_parameters = getattr(self, "no_parameters", None)
+        if no_parameters is not None and parameters.size != no_parameters:
+            raise ValueError(f"{type(self).__name__}.set_parameters: expected {no_parameters} "
+                             f"parameters, got an array of shape {parameters.shape}")
         self.parameters = parameters
 
     def get_observations(self) -> npt.NDArray:
         """
-        Runs the forward model on the last ``set_parameters`` call and returns the
-        simulated observations.
+        Run the model for the parameters given to the last ``set_parameters`` call.
 
         Returns:
-            ``(no_observations,)`` array, matching ``Configuration.no_observations``. If
-            ``conf.solver_returns_tag=True``, return ``(observations, tag)`` instead,
-            where ``tag < 0`` signals a failed solve (the caller then treats
-            ``observations`` as invalid and, in the solvers pool, sends zeros in its
-            place); ``tag`` is otherwise unused. Not implemented by the base class.
+            Array of shape ``(no_observations,)``. A model that can fail may return
+            ``(observations, tag)`` instead (detected automatically); ``tag < 0`` marks a
+            failed solve (the sample then gets zero likelihood), ``tag = -2`` is reserved.
         """
         raise NotImplementedError
 
     def set_parameters_and_get_observations(self, parameters: npt.NDArray):
+        """``set_parameters(parameters)`` followed by ``get_observations()``."""
         self.set_parameters(parameters)
         return self.get_observations()
 
     def visualize_solution(self, show: bool = False) -> list[tuple[Any, Any]]:
         """
-        Optional hook, called by ``SamplingFramework.write_report`` on the best-fit
-        sample. Return a list of ``(figure, axes)`` matplotlib pairs; the caller saves
-        and closes each figure. Default: no visualizations.
+        Optional: figures of the current solution, shown in the HTML report for the
+        best-fit sample. Return a list of matplotlib ``(figure, axes)`` pairs; the caller
+        saves and closes them. Default: none.
         """
         return []
 
     def __call__(self, parameters: npt.NDArray) -> npt.NDArray:
-        """Equivalent to ``set_parameters_and_get_observations(parameters)``; used by ``calculate_artificial_observations`` and wherever a plain callable is more convenient than the two-step contract."""
+        """Same as ``set_parameters_and_get_observations(parameters)``."""
         self.set_parameters(parameters)
         return self.get_observations()
 
@@ -105,12 +171,28 @@ def get_solver_from_spec(solver_spec: SolverSpec, solver_id: int = 0, solver_out
 
 
 
-def calculate_artificial_observations(parameters: npt.NDArray,
+def calculate_artificial_observations(parameters: npt.ArrayLike,
                                       solver_instance: Solver | None = None,
                                       solver_spec: SolverSpec | None = None) -> npt.NDArray:
+    """
+    Observations of the exact model at ``parameters``, to build a likelihood from (synthetic
+    data)::
+
+        observations = surrDAMH.solvers.calculate_artificial_observations(
+            solver_instance=my_solver, parameters=[-2, 2])
+        likelihood = surrDAMH.distributions.Normal(mean=observations, sd=1.0)
+
+    Args:
+        parameters: physical-space parameters; anything array-like, e.g. a list.
+        solver_instance: a ready solver, or
+        solver_spec: a spec to build one from (exactly one of the two).
+
+    Returns:
+        Flat ``(no_observations,)`` array, also for a solver returning a scalar.
+    """
     if solver_instance is None:
         assert solver_spec is not None, "to calculate artificial observations, solver must be given"
         solver_instance = get_solver_from_spec(solver_spec)
-    solver_instance.set_parameters(parameters)
+    solver_instance.set_parameters(np.asarray(parameters))
     observations = solver_instance.get_observations()
-    return np.array(observations.ravel())
+    return np.asarray(observations).ravel()

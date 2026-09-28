@@ -199,114 +199,114 @@ class PyTorchNNEvaluator(Evaluator):
         self.use_gradients = enabled
 
 
+# Maintainer notes (moved out of the class docstring on 2026-09-22):
+# - Training: persistent optimizer state over minibatches drawn from ALL accumulated snapshots,
+#   with a replay mechanism so old data is not forgotten as new snapshots arrive
+#   (_get_replay_indices / _iter_minibatches).
+# - Weighting: supports_sample_weights = True. weighting="multiplicity" drops zero-multiplicity
+#   snapshots (rejected proposals) on arrival and weights the remaining rows by multiplicity in
+#   _weighted_loss; the default "uniform" trains on every snapshot with weight 1, rejected
+#   proposals included (WS6 decision 3; before WS6 this updater always behaved like
+#   "multiplicity").
+# - Output normalization: "likelihood" (default) centres the targets on the observed data and
+#   scales by the per-observation noise sd, both taken from the likelihood via
+#   Updater.set_output_normalization (called once by SamplingFramework / run_local); "manual"
+#   uses output_mean/output_scale; "identity" = no normalization (the pre-WS6 default).
+# - Full-batch L-BFGS preset (replaces the deleted NeuralNetworkUpdaterBasic):
+#   NeuralNetworkUpdater(..., solver="lbfgs", batch_size=None, replay_ratio=0.0,
+#   train_on_added_data=False). solver="lbfgs" also forces _infer_batch_size to use the whole
+#   available subset as one batch (library_notes/12_evaluator_contract_spec.md §3).
+# - Registered with surrogates.reuse.register_updater (surrogate_type = "NeuralNetworkUpdater";
+#   checkpoints written as "NeuralNetworkUpdaterMinibatches" still load), so checkpoints
+#   round-trip through SurrogateReused.
 @register_updater
-class NeuralNetworkUpdaterMinibatches(Updater):
+class NeuralNetworkUpdater(Updater):
     """
-    Torch MLP surrogate trained with persistent optimizer state over minibatches drawn
-    from all accumulated snapshots, with a replay mechanism so old data is not
-    forgotten as new snapshots arrive (see ``_get_replay_indices``/``_iter_minibatches``).
-    Registered with ``surrogates.reuse.register_updater`` (``surrogate_type =
-    "NeuralNetworkUpdaterMinibatches"``), so checkpoints round-trip through
-    ``SurrogateReused``.
+    Neural-network surrogate (torch multilayer perceptron), the only shipped surrogate that
+    provides gradients, hence the one to use with a ``Hamiltonian`` proposal::
 
-    Weighting: ``supports_sample_weights = True`` -- with ``weighting="multiplicity"``,
-    zero-multiplicity snapshots (rejected proposals) are dropped on arrival and the
-    remaining rows enter ``_weighted_loss`` weighted by their multiplicity. The default
-    ``weighting="uniform"`` trains on **every** snapshot with weight 1, rejected proposals
-    included (WS6 decision 3; before WS6 this updater always behaved like
-    ``"multiplicity"``).
+        updater = surrDAMH.surrogates.NeuralNetworkUpdater(
+            no_parameters=conf.no_parameters, no_observations=conf.no_observations,
+            hidden_layer_sizes=(64, 64))
 
-    Output normalization: ``output_normalization="likelihood"`` (the default) centres the
-    training targets on the observed data and scales them by the per-observation noise
-    standard deviation, both taken from the likelihood via
-    ``Updater.set_output_normalization`` (called once by ``SamplingFramework``/
-    ``run_local``). ``"manual"`` uses the explicit ``output_mean``/``output_scale``
-    arguments, ``"identity"`` does not normalize at all (the pre-WS6 default).
+    It keeps learning during the run: every retraining continues from the current weights on
+    minibatches drawn from all snapshots so far, mixing in old ones (replay) so nothing is
+    forgotten. Targets are normalized with the likelihood's data and noise level by default.
 
-    Full-batch L-BFGS preset (replaces the deleted ``NeuralNetworkUpdaterBasic``)::
+    Args:
+        no_parameters: number of parameters (inputs of the network).
+        no_observations: number of observations (outputs of the network).
 
-        NeuralNetworkUpdaterMinibatches(..., solver="lbfgs", batch_size=None,
-                                        replay_ratio=0.0, train_on_added_data=False)
+        hidden_layer_sizes: widths of the hidden layers, e.g. ``(64, 64)``.
+        activation: hidden-layer activation function.
+        seed: seeds the weight initialisation and the minibatch/replay sampling; ``None`` =
+            not reproducible.
+
+        solver: optimizer; ``"lbfgs"`` trains full-batch and ignores ``batch_size``.
+        learning_rate: optimizer step size.
+        iterations_batch: optimizer steps per retraining (per ``train()`` call).
+        loss_target: stop a retraining early once the training loss falls below this.
+        batch_size: minibatch size; ``None`` picks one from the current data size (the whole
+            set below 100 snapshots, else 64 or 256).
+        weight_decay: L2 penalty of Adam/AdamW.
+        gradient_clip_norm: clip the gradient norm to this value before each step; ``None`` =
+            no clipping.
+        shuffle_batches: shuffle the sample order within each retraining.
+
+        weighting: ``"uniform"`` trains on every snapshot with weight 1; ``"multiplicity"``
+            drops rejected proposals and weights each state by how long the chain stayed there.
+        replay_ratio: how many old snapshots to mix into a retraining, relative to the number
+            of new ones; ``0`` = new data only.
+        replay_max_old_samples: upper bound on the old snapshots added by ``replay_ratio``.
+        train_on_added_data: also retrain immediately whenever snapshots arrive, in addition
+            to the collector's periodic retraining.
+        output_normalization: ``"likelihood"`` (default): targets centred on the observed data
+            and scaled by the noise sd, taken from the likelihood automatically; ``"manual"``:
+            use ``output_mean``/``output_scale``; ``"identity"``: no normalization.
+        output_mean: per-observation centre for ``"manual"``, shape ``(no_observations,)``.
+        output_scale: per-observation scale for ``"manual"``, shape ``(no_observations,)``.
+
+        device: ``"cpu"`` or ``"cuda"``.
+        verbose: print fit diagnostics.
+
+    Raises:
+        ValueError: unknown ``weighting``/``output_normalization``; ``output_mean``/
+            ``output_scale`` given with ``"identity"``, non-finite, or a zero scale;
+            ``replay_ratio < 0``; ``batch_size <= 0``.
     """
 
     supports_sample_weights = True
 
     def __init__(
         self,
-        no_parameters,
-        no_observations,
-        hidden_layer_sizes=(100,),
-        solver: Literal["adamw", "adam", "lbfgs"] = "adamw",
+        no_parameters: int,
+        no_observations: int,
+        # --- model ---
+        hidden_layer_sizes: tuple[int, ...] = (100,),
         activation: Literal["silu", "relu", "tanh", "gelu", "elu", "leaky_relu", "identity"] = "silu",
-        learning_rate=1e-3,
-        iterations_batch=100,
-        loss_target=1e-5,
-        device: Literal["cpu", "cuda"] = "cpu",
-        verbose: bool = False,
         seed: int | None = None,
-        weighting: WeightingPolicy = "uniform",
-        output_normalization: OutputNormalization = "likelihood",
-        output_mean: np.ndarray | None = None,
-        output_scale: np.ndarray | None = None,
+        # --- training ---
+        solver: Literal["adamw", "adam", "lbfgs"] = "adamw",
+        learning_rate: float = 1e-3,
+        iterations_batch: int = 100,
+        loss_target: float = 1e-5,
         batch_size: int | None = None,
+        weight_decay: float = 1e-4,
+        gradient_clip_norm: float | None = None,
+        shuffle_batches: bool = True,
+        # --- data ---
+        weighting: WeightingPolicy = "uniform",
         replay_ratio: float = 1.0,
         replay_max_old_samples: int | None = None,
         train_on_added_data: bool = False,
-        shuffle_batches: bool = True,
-        gradient_clip_norm: float | None = None,
-        weight_decay: float = 1e-4,
+        output_normalization: OutputNormalization = "likelihood",
+        output_mean: np.ndarray | None = None,
+        output_scale: np.ndarray | None = None,
+        # --- runtime ---
+        device: Literal["cpu", "cuda"] = "cpu",
+        verbose: bool = False,
     ) -> None:
-        """
-        Args:
-            no_parameters: dimension of the parameter space.
-            no_observations: dimension of the observation space.
-            hidden_layer_sizes: tuple of hidden layer widths.
-            solver: torch optimizer; ``"lbfgs"`` also forces
-                ``_infer_batch_size`` to use the whole available subset as one batch
-                (full-batch behaviour, see ``library_notes/12_evaluator_contract_spec.md``
-                §3 for the resulting "Basic-equivalent" preset).
-            activation: hidden-layer activation.
-            learning_rate: optimizer learning rate.
-            iterations_batch: optimizer **steps** (not epochs) run per ``train()`` call.
-            loss_target: early-stopping threshold on the training loss.
-            device: ``"cpu"`` or ``"cuda"``.
-            verbose: print extra fit diagnostics.
-            seed: seeds both the torch model init and this updater's own
-                ``numpy.random.default_rng`` (minibatch/replay sampling).
-            weighting: snapshot-weighting policy, see ``Updater`` (default ``"uniform"``).
-            output_normalization: where the per-observation normalization statistics come
-                from. ``"likelihood"`` (default): observed data / noise sd, supplied by
-                ``set_output_normalization``. ``"manual"``: the ``output_mean``/
-                ``output_scale`` arguments. ``"identity"``: no normalization (mean 0,
-                scale 1); ``output_mean``/``output_scale`` must then be ``None``.
-            output_mean, output_scale: explicit per-observation normalization statistics,
-                applied before the loss and undone in ``denormalize_outputs``. Required
-                shape ``(no_observations,)``. Only meaningful for
-                ``output_normalization="manual"`` (and accepted for ``"likelihood"``, where
-                they act as already-resolved statistics -- this is how a checkpoint is
-                restored).
-            batch_size: fixed minibatch size; ``None`` picks a size from the current
-                subset size (``_infer_batch_size``: whole subset if `<100`, else 64 or
-                256), ignored when ``solver="lbfgs"``.
-            replay_ratio: fraction of *old* (previously seen) snapshots mixed into each
-                training call alongside the newly added ones, relative to the number of
-                new snapshots; ``0`` trains on new data only.
-            replay_max_old_samples: caps how many old snapshots ``replay_ratio`` may add.
-            train_on_added_data: if True, ``add_data`` itself triggers a training pass
-                (in addition to the collector's periodic ``train()`` calls); can be
-                overridden per call via ``add_data(..., train_on_added_data=...)``.
-            shuffle_batches: shuffle sample order within each training call.
-            gradient_clip_norm: if given, clip the gradient norm to this value before
-                each optimizer step.
-            weight_decay: AdamW/Adam weight decay.
-
-        Raises:
-            ValueError: for an unknown ``weighting``/``output_normalization``, if
-                ``output_mean``/``output_scale`` are given with
-                ``output_normalization="identity"``, if they are non-finite or
-                ``output_scale`` contains zeros, if ``replay_ratio < 0``, or if
-                ``batch_size <= 0`` when given.
-        """
+        """See the class docstring for every argument (grouped: size, model, training, data, runtime)."""
         # Configuration.torch_threads (WS4/2026-09-18): see PyTorchNNEvaluator.__init__.
         apply_desired_torch_threads_lazy()
         super().__init__(no_parameters, no_observations, weighting=weighting)
@@ -820,6 +820,12 @@ class NeuralNetworkUpdaterMinibatches(Updater):
         if self.verbose:
             print(f"Training loss: {self.last_loss:.4e}, steps: {self.iterations_batch}", flush=True)
 
+    def needs_retraining(self, new_snapshots: int) -> bool:
+        """``True``: every ``train()`` adds ``iterations_batch`` optimizer steps, so the network keeps
+        improving on unchanged data (the GRF scheme study, note 18 §3.1: 67 -> 646 retrainings took the
+        test RMSE from 0.0039 to 0.0012). Retraining is gated only by ``min_snapshots_to_update``."""
+        return self.no_snapshots > 0
+
     def get_evaluator(self):
         return PyTorchNNEvaluator(
             self.no_parameters,
@@ -863,7 +869,9 @@ class NeuralNetworkUpdaterMinibatches(Updater):
         # weights_only=True (S22): the checkpoint holds only tensors, scalars, strings and
         # plain containers, so nothing has to be unpickled as arbitrary Python objects.
         checkpoint = torch.load(path, map_location=map_location, weights_only=True)
-        if checkpoint.get("surrogate_type") != type(self).__name__:
+        from surrDAMH.surrogates.reuse import LEGACY_SURROGATE_TYPE_NAMES
+        recorded = checkpoint.get("surrogate_type")
+        if LEGACY_SURROGATE_TYPE_NAMES.get(recorded, recorded) != type(self).__name__:
             raise ValueError(
                 f"Checkpoint surrogate type {checkpoint.get('surrogate_type')!r} is incompatible with {type(self).__name__}"
             )

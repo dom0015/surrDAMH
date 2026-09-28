@@ -17,12 +17,12 @@ conf = surrDAMH.Configuration( # TODO: comments not shown
     use_collector=False, # TODO: when surrogate in not specified, this must be set manually; at least prepare good error messages
 )
 
-prior = surrDAMH.distributions.Normal(mean=0, sd=1, d=no_parameters) # TODO: rename d, sd
+prior = surrDAMH.distributions.Normal(mean=0, sd=1, dim=no_parameters)sd
 likelihood = surrDAMH.distributions.Normal(mean=ref_observations, sd=0.1)
 
 list_of_stages = []
 list_of_stages.append(surrDAMH.stages.Stage(
-    proposal_sd_or_cov=0.1, # TODO: rename proposal_sd_or_cov
+    proposal=surrDAMH.proposals.RandomWalk(scale=0.1),
     time_limit=10,
 ))
 
@@ -31,7 +31,7 @@ sf = surrDAMH.SamplingFramework(conf, prior, likelihood, list_of_stages,
 )
 """
                                 surrogate_updater=surrogate_updater, # TODO: either surrogate_updater or surrogate_evaluator must be provided
-                                initial_snapshots=initial_snapshots, 
+                                surrogate_initial_training_data=initial_snapshots, 
                                 surrogate_test_data=surrogate_test_data)
                                 """
 

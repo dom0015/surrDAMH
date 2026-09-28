@@ -19,6 +19,7 @@ from mpi4py import MPI
 
 import surrDAMH
 from surrDAMH.modules.tools import ensure_dir
+from surrDAMH.proposals import RandomWalk
 from surrDAMH.stages import Stage
 
 # solver example, takes 2 parameters, returns 1 observation:
@@ -42,11 +43,11 @@ likelihood = surrDAMH.distributions.Normal(mean=observations, sd=0.01)
 # sampling process stages:
 list_of_stages = []
 # during MH stage, initial surrogate model is constructed:
-list_of_stages.append(Stage(algorithm_type="MH", proposal_sd_or_cov=0.5, max_evaluations=400))
+list_of_stages.append(Stage(algorithm="MH", proposal=RandomWalk(scale=0.5), max_evaluations=400))
 # during DAMH-SMU stage, surrogate model is further updated:
-list_of_stages.append(Stage(algorithm_type="DAMH", proposal_sd_or_cov=1.0, time_limit=20, surrogate_model_updates=True))
+list_of_stages.append(Stage(algorithm="DAMH", proposal=RandomWalk(scale=1.0), time_limit=20, surrogate_model_updates=True))
 # during DAMH stage, surrogate model is used but not updated:
-list_of_stages.append(Stage(algorithm_type="DAMH", proposal_sd_or_cov=1.0, time_limit=20, surrogate_model_updates=False))
+list_of_stages.append(Stage(algorithm="DAMH", proposal=RandomWalk(scale=1.0), time_limit=20, surrogate_model_updates=False))
 
 sam = surrDAMH.SamplingFramework(conf, surrogate_updater=updater, prior=prior, likelihood=likelihood,
                                  list_of_stages=list_of_stages, solver_spec=solver_spec)

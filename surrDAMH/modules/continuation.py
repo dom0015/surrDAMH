@@ -73,6 +73,10 @@ def load_carry_over(output_dir: str, stage_name: str) -> tuple[dict, dict] | Non
         return None
     carry_over: dict = {}
     summary: dict = {}
+    # TODO: remove this legacy mapping, ignore old format
+    # files written before the proposal-spec redesign (2026-09-21) used the old Stage field
+    # names as keys; map them so old runs still render in the report
+    legacy_keys = {"proposal_sd_or_cov": "scale", "pcn_beta": "beta", "hamiltonian_step_size": "step_size"}
     with np.load(path) as loaded:
         for key in loaded.files:
             if key.startswith("carry_over__"):
@@ -82,6 +86,8 @@ def load_carry_over(output_dir: str, stage_name: str) -> tuple[dict, dict] | Non
             else:
                 continue  # forward compatibility: ignore a key this reader does not know
             value = loaded[key]
+            if target is carry_over:
+                short = legacy_keys.get(short, short)
             target[short] = value.item() if value.ndim == 0 else value
     return carry_over, summary
 

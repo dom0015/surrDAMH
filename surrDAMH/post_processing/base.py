@@ -51,6 +51,7 @@ class SamplesBase:
     sampling_output_dir: str
     samples_dir: str
     run_data: "RunData"
+    debug: bool
     summary: pd.DataFrame
     notes: List[pd.DataFrame]
     subchain_stats: List[pd.DataFrame]

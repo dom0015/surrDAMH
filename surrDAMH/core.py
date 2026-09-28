@@ -17,6 +17,7 @@ import surrDAMH.process_COLLECTOR
 import surrDAMH.process_SAMPLER
 import surrDAMH.process_SOLVER
 from surrDAMH.configuration import Configuration
+from surrDAMH.distributions.normal import standardize_prior
 from surrDAMH.distributions.parent import Distribution
 from surrDAMH.modules.communication import (ABORT_GRACE_SECONDS,
                                             check_configuration_consistency,
@@ -26,7 +27,7 @@ from surrDAMH.modules.tools import ensure_dir
 from surrDAMH.modules.torch_threads import apply_torch_threads
 from surrDAMH.solver_specification import SolverSpec
 from surrDAMH.solvers import Solver, get_solver_from_spec
-from surrDAMH.stages import Stage, stage_name
+from surrDAMH.stages import Stage, check_stage_list, stage_name, wasted_snapshot_notes
 from surrDAMH.surrogates.parent import (Evaluator, Updater,
                                         apply_output_normalization_from_likelihood)
 from surrDAMH.modules.test_data import TestData
@@ -77,71 +78,108 @@ def _insert_best_fit_visualization_note(html_file_path: str, pool_mode_note: str
 
 class SamplingFramework:
     """
-    Entry point of the MPI-based sampler: construct one instance identically on every
-    rank of ``MPI.COMM_WORLD`` (except spawned solver children, which never see this
-    class), then call ``run()``. ``rank_world`` decides which role
-    (sampler/collector/solvers pool) each instance actually plays; see
-    ``docs/running.md`` for the process-count table.
+    Runs the MCMC sampling with MPI. Every rank executes the whole script; construct the
+    object identically everywhere, then call ``run()`` and finally ``write_report()``::
 
-    The forward model must be reachable on every rank that may need it:
-    - if ``use_solvers_pool=True``, ``solver_spec`` must be given (the pool rank loads
-      it via ``get_solver_from_spec`` and spawns ``conf.no_solvers`` children from it);
-    - if ``use_solvers_pool=False``, either ``solver_spec`` (loaded once per sampler
-      rank) or ``solver_instance`` (an already-constructed solver, reused as-is) may be
-      given.
+        conf = surrDAMH.Configuration(no_parameters=3, no_observations=2, output_dir="out_x",
+                                      use_solvers_pool=False, use_collector=False)
+        prior = surrDAMH.distributions.Normal(mean=0, sd=1, dim=3)    # or any other class in surrDAMH.distributions
+        likelihood = surrDAMH.distributions.Normal(mean=observed_data, sd=noise_sd)
+        stages = [surrDAMH.stages.Stage(max_evaluations=1000)]   # MH, random-walk proposal tuned online
+        sf = surrDAMH.SamplingFramework(conf, prior, likelihood, stages, solver_instance=my_solver)
+        sf.run()                                       # samples  -> <output_dir>/sampling_output/
+        sf.write_report(observations=observed_data)    # HTML     -> <output_dir>/post_processing_output/
+
+    Launch with ``mpiexec -n <N> python3 -m mpi4py script.py``. Ranks become samplers (one
+    chain each) plus, if enabled in ``conf``, one collector rank (trains the surrogate,
+    ``use_collector``) and one solvers-pool rank (``use_solvers_pool``); process counts in
+    ``docs/running.md``. For a single chain without MPI use
+    ``surrDAMH.runner_local.run_local`` instead.
+
+    Forward model, give exactly one of:
+
+    - ``solver_instance``: your ``surrDAMH.Solver`` object; needs ``conf.use_solvers_pool=False``.
+    - ``solver_spec``: a ``SolverSpec`` (file + class name); required with
+      ``use_solvers_pool=True``, works without it as well.
+
+    Surrogate, needed only for DAMH stages or Hamiltonian proposals (plain MH needs none):
+
+    - ``surrogate_updater``: trained during the run on the collector (``conf.use_collector=True``).
+    - ``surrogate_evaluator``: an already trained surrogate used as is, never updated; the
+      only option with ``conf.use_collector=False``.
     """
 
     def __init__(self, conf: Configuration, prior: Distribution, likelihood: Distribution,
                  list_of_stages: List[Stage], solver_spec: SolverSpec | None = None, solver_instance: Solver | None = None,
                  surrogate_updater: Updater | None = None, surrogate_evaluator: Evaluator | None = None,
-                 initial_snapshots: List[npt.NDArray] | None = None,
+                 surrogate_initial_training_data: List[npt.NDArray] | None = None,
                  surrogate_test_data: TestData | tuple[npt.NDArray, npt.NDArray, npt.NDArray, npt.NDArray] | None = None,
                  surrogate_restart: SurrogateRestart | None = None):
         """
         Args:
-            conf: run configuration; must be identical on every rank -- its
-                posterior-affecting fields are checked against rank 0's in ``run()``.
-            prior: prior distribution (internal space, see ``docs/concepts.md``).
-            likelihood: likelihood distribution, evaluated on solver/surrogate output.
-            list_of_stages: sampling stages, run in order on every sampler rank.
-            solver_spec: how to construct the forward-model solver; required when
-                ``conf.use_solvers_pool=True``, optional otherwise (see class docstring).
-            solver_instance: a pre-built solver, used only when ``use_solvers_pool=False``;
-                mutually substitutable with ``solver_spec`` in that case.
-            surrogate_updater: trains the surrogate on the collector rank; required for
-                any DAMH stage or Hamiltonian-family proposal when ``use_collector=True``.
-            surrogate_evaluator: initial/fixed surrogate evaluator, used directly by
-                samplers when ``use_collector=False`` (no in-run retraining).
-            initial_snapshots: ``(parameters, observations, multiplicity)`` arrays to
-                preload into the collector before sampling starts, so a first
-                DAMH/Hamiltonian stage does not need to wait for samplers to generate them
-                (see ``docs/running.md`` on the start-up handshake). Defaults to
-                ``surrogate_updater.get_initial_snapshots()`` if not given.
-            surrogate_test_data: fixed test set for surrogate-quality monitoring
-                (``surrogate_quality_test.csv``); either a ``TestData`` instance (its
-                posterior weights are computed here if missing) or the raw
-                ``(parameters, observations, log_posterior, weights)`` tuple.
-            surrogate_restart: where to restore the surrogate from, see
-                ``surrDAMH.modules.surrogate_restart.SurrogateRestart``. Applied on the
-                collector rank only, immediately before ``run_COLLECTOR``; the restored
-                snapshots become ``initial_snapshots`` unless the updater reports them
-                itself via ``get_initial_snapshots()`` or ``initial_snapshots`` was given
-                explicitly.
-
-        Notes:
-            ``run()`` checks the posterior-affecting fields of ``conf`` across ranks
-            (finding 2.9, see ``communication.check_configuration_consistency``); the rest
-            -- the stage list, prior, likelihood, surrogate objects -- is still neither
-            broadcast nor validated, and an inconsistency there is not detected until it
-            causes a mismatched collective call.
+            conf: run settings; construct it identically on every rank.
+            prior: prior of the parameters, an object from ``surrDAMH.distributions``. The
+                chain runs in the prior's *internal* space and ``prior.transform`` maps a
+                sample to the physical parameters the solver receives. That internal space is
+                the standard normal N(0, I) for every shipped prior: a ``Normal`` is
+                standardized automatically (``StandardizedNormal``: ``transform(z) = mean +
+                L z``), ``PriorIndependentComponents`` maps each coordinate to its component.
+                Consequences: ``Configuration.lhs_scale`` and ``initial_samples_distribution``
+                refer to internal (standardized) coordinates, and the surrogate is trained on
+                them unless ``transform_before_surrogate=True``.
+            likelihood: noise model of the data, an object from ``surrDAMH.distributions``
+                evaluated on the solver output. Typically
+                ``Normal(mean=observed_data, sd=noise_sd)``.
+            list_of_stages: ``surrDAMH.stages.Stage`` objects, run in this order by every sampler.
+            solver_spec: how to build the solver in another process (file, class, arguments).
+                Required with ``conf.use_solvers_pool=True``; the alternative to
+                ``solver_instance`` otherwise. Give exactly one of the two.
+            solver_instance: a ready ``surrDAMH.Solver`` object. Works only with
+                ``conf.use_solvers_pool=False`` (each sampler process runs the script and thus
+                builds its own copy). Give exactly one of ``solver_instance``/``solver_spec``.
+            surrogate_updater: a ``surrDAMH.surrogates.*Updater``, trained during the run on
+                the collector rank and re-sent to the samplers as it improves. Required when
+                ``conf.use_collector=True`` and any stage is DAMH or uses a ``Hamiltonian``
+                proposal; leave ``None`` for a plain-MH run or when ``use_collector=False``.
+            surrogate_evaluator: a fixed, already trained surrogate (``Updater.get_evaluator()``
+                of an earlier run, or ``surrDAMH.surrogates.reuse``). Used by the samplers
+                directly when ``conf.use_collector=False``; ignored otherwise.
+            surrogate_initial_training_data: training data the surrogate starts from, as a list
+                ``[parameters, observations, multiplicity]`` with shapes ``(n, no_parameters)``,
+                ``(n, no_observations)``, ``(n, 1)`` (multiplicity = weight of each point,
+                usually ones). ``None`` (default): only snapshots produced during the run
+                are used, so the first stage must be MH or wait for
+                ``conf.min_snapshots_initial`` snapshots. Parameters are internal-space
+                coordinates (or physical ones if ``conf.transform_before_surrogate=True``). To
+                reuse a previous run's data prefer ``surrogate_restart`` (below).
+            surrogate_test_data: fixed held-out points for monitoring surrogate accuracy
+                (written to ``sampling_output/surrogate_quality_test.csv``). The set is used
+                as given for the whole run, never extended or trained on. Create with
+                ``surrDAMH.TestData.generate(prior, likelihood, solver, conf, size=...)`` or
+                load an earlier set with ``surrDAMH.TestData.reuse(output_dir)``. ``None`` =
+                no monitoring.
+            surrogate_restart: warm-start the surrogate from a previous run:
+                ``surrDAMH.SurrogateRestart(state_dir="<previous_output_dir>/sampling_output")``
+                reloads its weights and training data (``mode="data"`` reloads the data only).
+                Missing files just print a message and the run starts cold. ``None`` (default)
+                = start from scratch. Only meaningful with a collector and an updater.
         """
+        # Maintainer notes: run() cross-checks the posterior-affecting fields of conf across
+        # ranks (finding 2.9, communication.check_configuration_consistency); the stage list,
+        # prior, likelihood and surrogate objects are neither broadcast nor validated, so an
+        # inconsistency there surfaces only as a mismatched collective call. initial_snapshots
+        # surrogate_initial_training_data defaults to surrogate_updater.get_initial_snapshots() and then to the snapshots
+        # restored by surrogate_restart (see _collector_role). A TestData instance gets its
+        # posterior weights computed on the collector if missing.
         self.conf = conf
         # Snapshotted by Configuration.__post_init__ (together with every other posterior-affecting
         # field, for the cross-rank check below), i.e. before _configure_surrogate_gradients() can
         # flip conf.use_surrogate_gradients, so the run manifest can record both the requested and
         # the effective value:
         self._use_surrogate_gradients_requested = conf.use_surrogate_gradients_requested
-        self.prior = prior
+        # every prior is sampled in the standard-normal internal space (2026-09-22): a Normal is
+        # wrapped in StandardizedNormal, other priors are internal-space by design already
+        self.prior = standardize_prior(prior)
         self.likelihood = likelihood
         self.solver_spec = solver_spec
         if solver_spec is not None and hasattr(solver_spec, "resolve_module_path"):
@@ -150,11 +188,24 @@ class SamplingFramework:
             # this very object to the spawned children, which do not inherit sys.path and are
             # not guaranteed to inherit the working directory.
             solver_spec.resolve_module_path()
+        check_stage_list(list_of_stages)  # fail here, with a hint, not deep inside run()
+        # solver hand-over rules, checked here rather than by an assert on the pool rank inside
+        # run() (2026-09-22): the message names what to change
+        if conf.use_solvers_pool and solver_spec is None:
+            raise ValueError(
+                "use_solvers_pool=True needs solver_spec=SolverSpec(...): the solvers pool spawns child "
+                "processes that import and construct the solver from a file, so a ready solver_instance "
+                "cannot be used there. Either pass solver_spec, or set Configuration(use_solvers_pool=False) "
+                "to run solver_instance inside every sampler process.")
+        if not conf.use_solvers_pool and solver_spec is None and solver_instance is None:
+            raise ValueError("give the forward model as solver_instance=... or solver_spec=SolverSpec(...)")
+        if solver_spec is not None and solver_instance is not None:
+            raise ValueError("give either solver_instance or solver_spec, not both")
         self.list_of_stages = list_of_stages
         self.surrogate_updater = surrogate_updater
         self.surrogate_evaluator = surrogate_evaluator
         self.solver_instance = solver_instance
-        self.initial_snapshots = initial_snapshots
+        self.surrogate_initial_training_data = surrogate_initial_training_data
         self.surrogate_test_data = surrogate_test_data
         self.surrogate_restart = surrogate_restart
 
@@ -295,13 +346,16 @@ class SamplingFramework:
         for i, stage in enumerate(self.list_of_stages):
             stage.name = stage_name(stage, i)
 
-        if self.rank_world == 0:
+        if self.rank_world == 0 and self.conf.debug:
             # effective settings, once, on rank 0 (WS5): everything that was silently corrected
             # by __post_init__ or by _configure_surrogate_gradients above is visible here.
             print(self.conf.describe(
                 use_surrogate_gradients_requested=self._use_surrogate_gradients_requested), flush=True)
             for i, stage in enumerate(self.list_of_stages):
                 print(stage.describe(i), flush=True)
+            if self.conf.use_collector:
+                for note in wasted_snapshot_notes(self.list_of_stages):
+                    print(f"  [note] {note}", flush=True)
             if self.surrogate_restart is not None:
                 print(f"  {self.surrogate_restart.describe()}", flush=True)
 
@@ -352,7 +406,7 @@ class SamplingFramework:
                 restored_snapshots = None
                 if self.surrogate_restart is not None:
                     restored_snapshots = self.surrogate_restart.apply(self.surrogate_updater)
-                initial_snapshots = self.initial_snapshots
+                initial_snapshots = self.surrogate_initial_training_data
                 if initial_snapshots is None:
                     # an updater that stored the restored snapshots itself reports them here
                     # (and sets training_data_loaded, so run_COLLECTOR does not re-add them)
@@ -373,7 +427,8 @@ class SamplingFramework:
                 if self.conf.use_solvers_pool is False:
                     if self.solver_instance is None:
                         assert self.solver_spec is not None, "either solver_spec or solver_instance must be given"
-                        solver_output_dir = ensure_dir(os.path.join(self.conf.output_dir, "solver_output", "rank{}".format(self.rank_world)))
+                        # path only; Solver.output_dir creates the directory on first use (2026-09-22)
+                        solver_output_dir = os.path.join(self.conf.output_dir, "solver_output", "rank{}".format(self.rank_world))
                         self.solver_instance = get_solver_from_spec(self.solver_spec, solver_id=self.rank_world, solver_output_dir=solver_output_dir)
                 else:
                     self.solver_instance = None
@@ -502,7 +557,8 @@ class SamplingFramework:
                   "names, posterior field statistics, best-fit solver visualization.",
                   flush=True)
 
-        samples = surrDAMH.post_processing.Samples(self.conf.no_parameters, self.conf.output_dir)
+        samples = surrDAMH.post_processing.Samples(self.conf.no_parameters, self.conf.output_dir,
+                                                    debug=self.conf.debug)
         # WS9 bullet 5: stages_to_disp accepts stage NAMES (as produced by
         # surrDAMH.stages.stage_name()) alongside the existing positional indices;
         # Samples._resolve_stages does the lookup (against this run's own stage names, read

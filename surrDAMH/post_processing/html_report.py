@@ -215,7 +215,13 @@ class SamplesReports(SamplesPlots):
 
         def get_stage_items(spec: Any) -> dict[str, Any]:
             if is_dataclass(spec):
-                return {field.name: getattr(spec, field.name) for field in fields(spec)}
+                items = {field.name: getattr(spec, field.name) for field in fields(spec)}
+                if is_dataclass(items.get("proposal")):
+                    # proposal spec (surrDAMH.proposals, 2026-09-21): same dict form as the manifest
+                    proposal = items["proposal"]
+                    items["proposal"] = {"type": type(proposal).__name__,
+                                         **{f.name: getattr(proposal, f.name) for f in fields(proposal)}}
+                return items
             if isinstance(spec, dict):
                 return dict(spec)
             if hasattr(spec, "__dict__"):
@@ -242,12 +248,18 @@ class SamplesReports(SamplesPlots):
             return type(value).__name__
 
         def default_target_rate(proposal_type: Any) -> float | None:
-            # the proposal classes' own defaults (Stage.adaptive_target_rate docstring)
+            # the proposal classes' own defaults (surrDAMH.proposals target_rate docstrings)
             if proposal_type in ("Hamiltonian", "HamiltonianInfinite"):
                 return 0.8
-            if proposal_type in ("RWMH", "pCN"):
+            if proposal_type in ("RandomWalk", "PCN", "RWMH", "pCN"):
                 return 0.234
             return None
+
+        def proposal_items(spec: dict) -> dict:
+            # the stage's proposal spec as a dict ({"type": ..., fields}); {} for a pre-2026-09-21
+            # manifest, whose stage dict carried proposal_type/adaptive/... at the top level
+            proposal = spec.get("proposal")
+            return dict(proposal) if isinstance(proposal, dict) else {}
 
         # -- carry-over subsection of "5. Proposal Adaptation" (2026-09-21) ------------------
         def param_label(index: int) -> str:
@@ -301,8 +313,8 @@ class SamplesReports(SamplesPlots):
                 consumer_sentence = 'this was the last stage; nothing consumed it.'
             parts.append(f'            <p class="description"><b>Carried over to the next stage</b> '
                          f'{consumer_sentence}</p>')
-            if "proposal_sd_or_cov" in carried_stage:
-                cov = np.asarray(carried_stage["proposal_sd_or_cov"], dtype=float)
+            if "scale" in carried_stage:
+                cov = np.asarray(carried_stage["scale"], dtype=float)
                 d = cov.shape[0]
                 log_sigma = summary.get("log_sigma")
                 rows = []
@@ -338,10 +350,10 @@ class SamplesReports(SamplesPlots):
                                  'deviations and the 10 largest |correlations| only; the full '
                                  f'covariance matrix is in sampling_output/carry_over/{escape(stage_name)}.npz.</p>')
                     parts.extend(pair_rows)
-            elif "pcn_beta" in carried_stage:
-                parts.extend(scalar_table([("beta", carried_stage["pcn_beta"])]))
-            elif "hamiltonian_step_size" in carried_stage:
-                parts.extend(scalar_table([("step_size", carried_stage["hamiltonian_step_size"])]))
+            elif "beta" in carried_stage:
+                parts.extend(scalar_table([("beta", carried_stage["beta"])]))
+            elif "step_size" in carried_stage:
+                parts.extend(scalar_table([("step_size", carried_stage["step_size"])]))
             else:
                 # a proposal family added after this report code (forward compatibility):
                 # show whatever scalar-shaped items came back rather than nothing
@@ -976,21 +988,24 @@ class SamplesReports(SamplesPlots):
             trace = self.adaptive_stats[stage_idx] if stage_idx < len(self.adaptive_stats) else None
             has_trace = trace is not None and not trace.empty
             carry = self.carry_over[stage_idx] if stage_idx < len(self.carry_over) else None
-            if not has_trace and not spec.get("adaptive", False) and carry is None:
+            proposal = proposal_items(spec)
+            declared_adaptive = proposal.get("adaptive", spec.get("adaptive", False))
+            if not has_trace and not declared_adaptive and carry is None:
                 continue
             adaptive_blocks += 1
             html_parts.extend(stage_open(f"adaptation_{stage_name}", f"Stage: {stage_name}"))
-            target_rate = spec.get("adaptive_target_rate")
-            target_source = "adaptive_target_rate"
+            target_rate = proposal.get("target_rate", spec.get("adaptive_target_rate"))
+            target_source = "target_rate"
             if target_rate is None:
-                target_rate = default_target_rate(spec.get("proposal_type"))
+                target_rate = default_target_rate(proposal.get("type", spec.get("proposal_type")))
                 target_source = "the proposal's default"
             if not has_trace:
                 html_parts.append('            <p class="description" style="color: orange;">This stage is declared '
                                   'adaptive=True but no adaptive_stats trace was found (save_to_file=False, or the run '
                                   'predates the adaptive_stats file).</p>')
             else:
-                parts = [f'proposal_type={format_stage_value(spec.get("proposal_type"))}' if "proposal_type" in spec else None,
+                proposal_label = proposal.get("type", spec.get("proposal_type"))
+                parts = [f'proposal={format_stage_value(proposal_label)}' if proposal_label is not None else None,
                          f'target rate {target_rate:g} ({target_source})' if target_rate is not None else 'target rate unknown',
                          f'{len(trace)} logged period(s) over '
                          f'{trace["rank_world"].nunique() if "rank_world" in trace.columns else 1} chain(s)']

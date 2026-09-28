@@ -12,6 +12,7 @@ Additional MPI process will be spawned by solvers pool.)
 from solver_examples.solver_spec_examples import SolverSpecExample1
 
 import surrDAMH
+from surrDAMH.proposals import RandomWalk
 
 """
 Minimal example without surrogate model (i.e. no collector is used and samples are
@@ -29,7 +30,7 @@ likelihood = surrDAMH.distributions.Normal(mean=5.0, sd=1.0)
 
 # sampling process stages:
 list_of_stages = []
-list_of_stages.append(surrDAMH.stages.Stage(algorithm_type="MH", proposal_sd_or_cov=0.5, max_evaluations=500))
+list_of_stages.append(surrDAMH.stages.Stage(algorithm="MH", proposal=RandomWalk(scale=0.5), max_evaluations=500))
 
 sam = surrDAMH.SamplingFramework(conf, prior=prior, likelihood=likelihood,
                                  list_of_stages=list_of_stages, solver_spec=solver_spec)

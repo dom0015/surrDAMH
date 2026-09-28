@@ -16,7 +16,6 @@ from mpi4py import MPI
 
 from surrDAMH.configuration import Configuration
 from surrDAMH.modules.communication import ServiceLoopThrottle
-from surrDAMH.modules.tools import ensure_dir
 from surrDAMH.solver_specification import SolverSpec
 
 
@@ -58,7 +57,8 @@ def run_SOLVER(conf: Configuration, solver_spec: SolverSpec):
 
     comm_with_child = []
     for i in range(conf.no_solvers):
-        solver_output_dir = ensure_dir(os.path.join(conf.output_dir, "solver_output", "rank{}".format(i)))
+        # path only; Solver.output_dir creates the directory on first use (2026-09-22)
+        solver_output_dir = os.path.join(conf.output_dir, "solver_output", "rank{}".format(i))
         comm_with_child.append(CommunicationWithChild(conf=conf, solver_spec=solver_spec,
                                                       solver_output_dir=solver_output_dir, solver_id=i))
     samplers_rank = np.arange(conf.no_samplers)

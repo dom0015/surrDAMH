@@ -1,11 +1,28 @@
 import os
+from typing import TypeVar
 import torch
 
 from surrDAMH.surrogates.parent import Updater
 
 _UPDATER_REGISTRY: dict[str, type[Updater]] = {}
 
-def register_updater(cls: type[Updater]) -> type[Updater]:
+#: Class names under which checkpoints of earlier versions recorded a surrogate, mapped to the
+#: current class name (2026-09-22, ``NeuralNetworkUpdaterMinibatches`` -> ``NeuralNetworkUpdater``).
+#: Read-side tolerance only, like the carry-over key map in ``modules.continuation``.
+LEGACY_SURROGATE_TYPE_NAMES: dict[str, str] = {"NeuralNetworkUpdaterMinibatches": "NeuralNetworkUpdater"}
+
+_UpdaterClass = TypeVar("_UpdaterClass", bound=type[Updater])
+
+
+def register_updater(cls: _UpdaterClass) -> _UpdaterClass:
+    """
+    Class decorator: make ``cls`` loadable by name from a checkpoint (``SurrogateReused``).
+
+    Generic in the class it decorates (2026-09-22): annotating it ``type[Updater] ->
+    type[Updater]`` made Pylance/pyright see every decorated updater as the bare ``Updater``,
+    so the constructor arguments of e.g. ``NeuralNetworkUpdater`` were reported as
+    "No parameter named ..." and never offered in completion.
+    """
     _UPDATER_REGISTRY[cls.__name__] = cls
     return cls
 
@@ -35,7 +52,9 @@ def SurrogateReused(experiment_folder: str, load_optimizer: bool = True, **overr
     # scalars, strings and plain containers, so nothing is lost.
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
     surrogate_type = checkpoint.get("surrogate_type")
-    updater_cls = _UPDATER_REGISTRY.get(surrogate_type)
+    if surrogate_type is not None:
+        surrogate_type = LEGACY_SURROGATE_TYPE_NAMES.get(surrogate_type, surrogate_type)
+    updater_cls = _UPDATER_REGISTRY.get(surrogate_type) if surrogate_type is not None else None
     if updater_cls is None:
         raise ValueError(
             f"Checkpoint surrogate_type {surrogate_type!r} is not registered; "

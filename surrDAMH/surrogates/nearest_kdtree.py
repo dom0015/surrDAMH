@@ -43,33 +43,39 @@ class KDTreeEvaluator(Evaluator):
         return interpolated_values
 
 
+# Maintainer note (moved out of the class docstring on 2026-09-22): supports_sample_weights =
+# False -- the stored observations are returned/averaged by distance, there is no per-row
+# weight; "multiplicity" only drops zero-multiplicity snapshots, "uniform" keeps every snapshot.
 @register_updater
 class KDTreeUpdater(Updater):  # initiated by COLLECTOR
     """
-    Nearest-neighbor interpolator.
-    Using scipy.spatial.cKDTree.
+    Nearest-neighbour surrogate (``scipy.spatial.cKDTree``): the prediction is the
+    inverse-distance-weighted average of the closest stored snapshots. Simplest and cheapest,
+    piecewise-constant-ish, no gradients::
 
-    Weighting: ``supports_sample_weights = False`` -- this is an interpolant, the stored
-    observations are returned/averaged by distance, so there is no per-row weight to apply.
-    With ``weighting="multiplicity"`` the zero-multiplicity snapshots (rejected proposals)
-    are dropped and every remaining snapshot counts once; the default
-    ``weighting="uniform"`` keeps every snapshot.
+        updater = surrDAMH.surrogates.KDTreeUpdater(
+            no_parameters=conf.no_parameters, no_observations=conf.no_observations,
+            no_nearest_neighbors=5)
+
+    Args:
+        no_parameters: number of parameters.
+        no_observations: number of observations.
+
+        no_nearest_neighbors: snapshots averaged per query; ``1`` = plain nearest neighbour.
+            Clamped to the number of stored snapshots while there are fewer.
+
+        weighting: ``"uniform"`` keeps every snapshot; ``"multiplicity"`` drops rejected
+            proposals first.
     """
 
     supports_sample_weights = False
 
     def __init__(self, no_parameters: int, no_observations: int,
+                 # --- model ---
                  no_nearest_neighbors: int,
-                 weighting: WeightingPolicy = "uniform"):
-        """
-        Args:
-            no_parameters: dimension of the parameter space.
-            no_observations: dimension of the observation space.
-            no_nearest_neighbors: number of neighbors averaged per query (inverse-distance
-                weights); clamped to the number of stored snapshots in ``get_evaluator()``
-                if fewer are available. ``1`` = nearest-neighbor lookup, no averaging.
-            weighting: snapshot-weighting policy, see ``Updater``.
-        """
+                 # --- data ---
+                 weighting: WeightingPolicy = "uniform") -> None:
+        """See the class docstring for every argument."""
         super().__init__(no_parameters, no_observations, weighting=weighting)
         self.no_nearest_neighbors = no_nearest_neighbors
 

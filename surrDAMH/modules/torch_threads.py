@@ -32,7 +32,7 @@ for it):
   numpy; import surrDAMH`` does not pre-empt this), the env vars are read too late and have
   no effect. The desired value is therefore also stashed here and re-applied the moment
   torch actually gets imported, from ``torch_perceptron_minibatches.py``'s
-  ``NeuralNetworkUpdaterMinibatches.__init__``, ``PyTorchNNEvaluator.__init__`` and
+  ``NeuralNetworkUpdater.__init__``, ``PyTorchNNEvaluator.__init__`` and
   ``PyTorchNNEvaluator.__setstate__`` (the latter is the unpickle hook: an evaluator sent from
   the collector to a sampler over MPI is unpickled via ``__new__``/``__setstate__``, which
   never calls ``__init__``).

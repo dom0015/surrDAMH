@@ -112,7 +112,9 @@ seed`.
 
 One row per outer DAMH iteration: `iteration, subchain_max_length, subchain_accepted,
 subchain_acceptance_rate, correction_log_ratio, outer_proposed_changed, outer_accepted,
-rank_world`.
+rank_world`. (This CSV column is still literally named `subchain_max_length` in
+`surrDAMH/modules/algorithms.py`, unlike the `Stage` field itself, which was renamed to
+`subchain_length` — apparent oversight in the library, not fixed here.)
 
 ### `adaptive_stats/<stage>/rank%04d.csv` (`adaptive=True` stages only)
 
@@ -127,12 +129,12 @@ One row per completed adaptation period (10 `adapt()` calls by default), written
 | `Hamiltonian_adaptive`, `HamiltonianInfinite_adaptive` | `m, mean_acceptance_probability, log_step_size, log_step_size_bar, rank_world` |
 
 `mean_acceptance_probability` is the mean over that period of the acceptance probability the
-proposal was fed (which in a DAMH stage is the *overall* outer probability for RWMH/pCN and the
-*sub-chain* probability for the Hamiltonian family, see `docs/stages.md`). For the random walk,
+proposal was fed (which in a DAMH stage is the *overall* outer probability for `RandomWalk`/`PCN`
+and the *sub-chain* probability for the `Hamiltonian` proposal, see `docs/stages.md`). For the random walk,
 `trace_C_over_d` and `shrinkage_delta` are `NaN` in the periods before the `warmup=100` count is
 reached, where the covariance is not yet re-estimated (the Robbins–Monro `log_sigma` runs from
 the first call). The Hamiltonian's `m` counts *sub-chain* steps in a DAMH stage, so it advances
-by `subchain_max_length` per outer iteration.
+by `subchain_length` per outer iteration.
 
 No file is written for a stage whose proposal does not adapt, and none for a stage with
 `save_to_file=False`; `read_run` then reports `adaptive_stats[stage] is None`
@@ -151,7 +153,8 @@ not guarded by `Stage.save_to_file` -- there is no separate switch for it.
 Two groups of keys, each value stored as a numpy array of its own dtype (a scalar as a 0-d array, read back as a Python `int`/`float`):
 
 - `carry_over__<key>`: `Proposal.carry_over()`, i.e. exactly what `build_proposal` consumes
-  for the next stage (`proposal_sd_or_cov`, `pcn_beta`, or `hamiltonian_step_size`).
+  for the next stage (`scale`, `beta`, or `step_size`; the proposal spec's step field, see
+  `docs/stages.md`).
 - `summary__<key>`: `Proposal.adapted_summary()`, diagnostic-only (never consumed by
   `build_proposal`) -- for `GaussRandomWalk_adaptive`: `base_cov`, `log_sigma`, `n_pooled`,
   `mean`; for `PCN_adaptive`: `beta`; for the Hamiltonian family: `step_size`.

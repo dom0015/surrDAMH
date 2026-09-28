@@ -208,7 +208,8 @@ class AlgorithmBase:
             data_name="subchain_stats",
             row=[
                 "iteration",
-                "subchain_max_length",
+                # TODO: rename also the column name
+                "subchain_max_length",  # on-disk column name kept after the Stage.subchain_length rename (2026-09-21): output format v2 is unchanged
                 "subchain_accepted",
                 "subchain_acceptance_rate",
                 "correction_log_ratio",
@@ -216,7 +217,7 @@ class AlgorithmBase:
                 "outer_accepted",
                 "rank_world",
             ],
-            condition=self.stage.save_to_file and self.stage.algorithm_type == "DAMH",
+            condition=self.stage.save_to_file and self.stage.algorithm == "DAMH",
         )
 
     @staticmethod
@@ -471,6 +472,12 @@ class AlgorithmBase:
             return
         self.surrogate_evaluator = self.evaluator_provider.evaluator
         if self.surrogate_evaluator is None:
+            # tell the collector we are about to block for the first evaluator (2026-09-22): it
+            # trains on the snapshots it has once every sampler is blocked, instead of waiting
+            # forever for min_snapshots_initial that nobody can produce any more
+            announce = getattr(self.evaluator_provider, "announce_waiting", None)
+            if announce is not None:
+                announce()
             self.surrogate_evaluator = self.evaluator_provider.get_evaluator()
             self.evaluator_provider.request_evaluator()
         self.current.observations_approx = cast(npt.NDArray, self._get_surrogate_observations(self.current.parameters))
@@ -719,7 +726,7 @@ class Algorithm_DAMH(AlgorithmBase):  # initiated by SAMPLERs
 
     def _propose_new_sample_using_subchain(self) -> tuple[Sample, int, float, list[float]]:
         """
-        Run one sub-chain of at most ``stage.subchain_max_length`` MH steps that use only the
+        Run one sub-chain of at most ``stage.subchain_length`` MH steps that use only the
         surrogate, starting from ``self.current``.
 
         Returns ``(subchain_current, counter_subchain_accepted, correction_log_ratio,
@@ -744,7 +751,7 @@ class Algorithm_DAMH(AlgorithmBase):  # initiated by SAMPLERs
         subchain_log_acceptance_probabilities: list[float] = []
         # refresh once per sub-chain, then keep the surrogate fixed until the sub-chain ends:
         bool_evaluator_changed = self._refresh_surrogate_evaluator_if_needed()
-        for _ in range(self.stage.subchain_max_length):
+        for _ in range(self.stage.subchain_length):
             subchain_proposed = self._propose_new_sample(subchain_current.parameters)
             if not self._parameters_are_finite(subchain_proposed):
                 # Non-finite sub-chain proposal (2026-09-20, item A): the surrogate is not
@@ -866,15 +873,15 @@ class Algorithm_DAMH(AlgorithmBase):  # initiated by SAMPLERs
                 data_name="subchain_stats",
                 row=[
                     i,
-                    self.stage.subchain_max_length,
+                    self.stage.subchain_length,
                     counter_subchain,
-                    counter_subchain / self.stage.subchain_max_length,
+                    counter_subchain / self.stage.subchain_length,
                     correction_log_ratio,
                     int(counter_subchain > 0),
                     int(outer_accepted),
                     self.rank_world,
                 ],
-                condition=self.stage.save_to_file and self.stage.algorithm_type == "DAMH",
+                condition=self.stage.save_to_file and self.stage.algorithm == "DAMH",
             )
             if time.time() - self.time_start > self.stage.time_limit:
                 break

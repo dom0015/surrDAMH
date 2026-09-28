@@ -15,6 +15,7 @@ from mpi4py import MPI
 
 import surrDAMH
 from surrDAMH.modules.tools import ensure_dir
+from surrDAMH.proposals import RandomWalk
 from surrDAMH.stages import Stage
 from wrapper import SolverTSX, observations
 
@@ -34,7 +35,7 @@ conf = surrDAMH.Configuration(output_dir="out_tsx", no_parameters=no_parameters,
 
 # NN updater (full-batch L-BFGS preset: one batch = all accumulated snapshots, no replay,
 # fitted only by the collector's periodic train() calls):
-updater = surrDAMH.surrogates.NeuralNetworkUpdaterMinibatches(no_parameters=conf.no_parameters, no_observations=conf.no_observations,
+updater = surrDAMH.surrogates.NeuralNetworkUpdater(no_parameters=conf.no_parameters, no_observations=conf.no_observations,
                                                               hidden_layer_sizes=(48, 60), solver="lbfgs", activation="tanh", learning_rate=1e-3,
                                                               iterations_batch=100, loss_target=1e-6, device="cpu", verbose=False, seed=15,
                                                               batch_size=None, replay_ratio=0.0, train_on_added_data=False)
@@ -42,15 +43,15 @@ updater = surrDAMH.surrogates.NeuralNetworkUpdaterMinibatches(no_parameters=conf
 # Gaussian prior distribution:
 list_of_components = []
 for i in range(no_subdomains):
-    list_of_components.append(surrDAMH.distributions.independent_components.Lognormal(-40, 3))
+    list_of_components.append(surrDAMH.distributions.LognormalComponent(-40, 3))
 for i in range(no_subdomains):
-    list_of_components.append(surrDAMH.distributions.independent_components.Lognormal(-25, 3))
+    list_of_components.append(surrDAMH.distributions.LognormalComponent(-25, 3))
 for i in range(no_subdomains):
-    list_of_components.append(surrDAMH.distributions.independent_components.Lognormal(26, 2))
+    list_of_components.append(surrDAMH.distributions.LognormalComponent(26, 2))
 for i in range(no_subdomains):
-    list_of_components.append(surrDAMH.distributions.independent_components.Uniform(0, 0.5))
+    list_of_components.append(surrDAMH.distributions.UniformComponent(0, 0.5))
 for i in range(2):
-    list_of_components.append(surrDAMH.distributions.independent_components.Lognormal(16, 2))
+    list_of_components.append(surrDAMH.distributions.LognormalComponent(16, 2))
 prior = surrDAMH.distributions.PriorIndependentComponents(list_of_components)
 
 # likelihood (additive Gaussian noise):
@@ -59,12 +60,12 @@ likelihood = surrDAMH.distributions.Normal(mean=observations, sd=10.0)
 # sampling process stages:
 list_of_stages = []
 # during MH stage, initial surrogate model is constructed:
-list_of_stages.append(Stage(algorithm_type="MH", proposal_sd_or_cov=0.3, time_limit=60*60))
+list_of_stages.append(Stage(algorithm="MH", proposal=RandomWalk(scale=0.3), time_limit=60*60))
 # during DAMH-SMU stage, surrogate model is further updated:
-list_of_stages.append(Stage(algorithm_type="DAMH", proposal_sd_or_cov=0.3, time_limit=60*60*6,
-                            subchain_max_length=10, surrogate_model_updates=True))
+list_of_stages.append(Stage(algorithm="DAMH", proposal=RandomWalk(scale=0.3), time_limit=60*60*6,
+                            subchain_length=10, surrogate_model_updates=True))
 # during DAMH stage, surrogate model is used but not updated:
-# list_of_stages.append(Stage(algorithm_type="DAMH", proposal_sd_or_cov=0.5, max_evaluations=500, surrogate_model_updates=False))
+# list_of_stages.append(Stage(algorithm="DAMH", proposal=RandomWalk(scale=0.5), max_evaluations=500, surrogate_model_updates=False))
 
 sam = surrDAMH.SamplingFramework(conf, prior=prior, likelihood=likelihood, surrogate_updater=updater,
                                  list_of_stages=list_of_stages, solver_instance=solver_instance)

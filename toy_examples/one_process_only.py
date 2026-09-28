@@ -27,7 +27,7 @@ likelihood = surrDAMH.distributions.Normal(mean=5.0, sd=1.0)
 
 # sampling process stages:
 list_of_stages = []
-list_of_stages.append(surrDAMH.stages.Stage(algorithm_type="MH", proposal_sd_or_cov=0.5, max_evaluations=500))
+list_of_stages.append(surrDAMH.stages.Stage(algorithm="MH", proposal=surrDAMH.proposals.RandomWalk(scale=0.5), max_evaluations=500))
 
 sam = surrDAMH.SamplingFramework(conf, prior=prior, likelihood=likelihood,
                                  list_of_stages=list_of_stages, solver_instance=solver_instance)

@@ -105,6 +105,10 @@ def _json_safe(value: Any) -> Any:
         return [_json_safe(v) for v in value]
     if isinstance(value, dict):
         return {str(k): _json_safe(v) for k, v in value.items()}
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        # proposal specs (surrDAMH.proposals, 2026-09-21): type name plus every field
+        return {"type": type(value).__name__,
+                **{f.name: _json_safe(getattr(value, f.name)) for f in dataclasses.fields(value)}}
     return type(value).__name__
 
 
@@ -129,6 +133,12 @@ def _summarize_public_attrs(obj: Any, include_values: bool = True) -> dict[str, 
 def _summarize_distribution(dist: Any) -> dict[str, Any] | None:
     if dist is None:
         return None
+    physical = getattr(dist, "physical", None)
+    if physical is not None and type(dist).__name__ == "StandardizedNormal":
+        # a Normal prior standardized by the framework (2026-09-22): record the user's Normal
+        # and the fact that the chain ran in the standardized internal space
+        return {"class": type(physical).__name__, "standardized": True,
+                "attributes": _summarize_public_attrs(physical)}
     return {"class": type(dist).__name__, "attributes": _summarize_public_attrs(dist)}
 
 

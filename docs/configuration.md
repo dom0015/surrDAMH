@@ -19,17 +19,16 @@ role layout (`no_samplers`, `rank_collector`, `rank_solvers_pool`) from
 | `use_solvers_pool` | `bool` | `True` | If `False`, each sampler runs the solver in-process instead of using spawned children. | no (topology only) |
 | `no_solvers` | `int` | `2` | Number of child solver processes spawned by the pool. | no (throughput only) |
 | `solver_maxprocs` | `int` | `1` | MPI processes per spawned solver. | no |
-| `solver_returns_tag` | `bool` | `False` | If `True`, `Solver.get_observations()` returns `(observations, tag)`; `tag < 0` marks a failed solve. | no (failure signalling) |
 | `use_collector` | `bool` | `True` | If `False`, no surrogate is *trained* during the run — an `Updater` only ever runs on the collector rank. **See "DAMH without a collector" below.** | yes, for any DAMH/Hamiltonian stage |
 | `save_snapshots_to_file` | `bool` | `False` | Write every proposal (accepted/rejected/prerejected) to `raw_data/*.csv`. | no (output only) |
 | `transform_before_saving` | `bool` | `True` | If `False`, `samples/*.csv` stores internal-space samples instead of `prior.transform`-ed ones. | no (output only) |
-| `transform_before_surrogate` | `bool` | `False` | If `False`, the surrogate is trained/evaluated on internal-space parameters; if `True`, on physical-space ones. | **yes** |
+| `transform_before_surrogate` | `bool` | `False` | If `False`, the surrogate is trained/evaluated on the internal (standardized, N(0, I)) parameters the chain works with; if `True`, on the physical parameters the solver receives. | **yes** |
 | `initial_sample_type` | `"lhs"\|"prior"\|"user_specified"\|"continued"` | `"prior"` | How the first sample of each chain is drawn. | **yes** — all four are reproducible: since G4 (2026-09-17) `"prior"`/`"user_specified"` draw from a per-chain `np.random.default_rng(10*no_stages*rank_world + 3)` (`surrDAMH.modules.seeds`) instead of the unseeded global NumPy RNG. A *user-supplied* `initial_samples_distribution` is only reproducible if its `rvs()` accepts the `generator` argument |
-| `initial_samples_distribution` | `Distribution\|None` | `None` | Source for `initial_sample_type="user_specified"`. | yes, when used |
+| `initial_samples_distribution` | `Distribution\|None` | `None` | Source for `initial_sample_type="user_specified"`; drawn in the prior's INTERNAL (standardized) coordinates (2026-09-22). | yes, when used |
 | `continued_from_dir` | `str\|None` | `None` | Source run directory for `initial_sample_type="continued"`. | yes, when used |
-| `lhs_scale` | `float\|ndarray` | `1.0` | Spread of the LHS initial-sample design (`initial_sample_type="lhs"`). | yes, when used |
+| `lhs_scale` | `float\|ndarray` | `1.0` | Spread of the LHS initial-sample design (`initial_sample_type="lhs"`), in the prior's INTERNAL (standardized) coordinates, i.e. prior standard deviations (2026-09-22). | yes, when used |
 | `min_snapshots_initial` | `int` | `1` | Snapshots needed before the first surrogate is trained. | **yes**, for DAMH-SMU (changes retrain timing → accept/reject sequence) |
-| `min_snapshots_to_update` | `int` | `1` | Further snapshots needed before each retrain. | **yes**, for DAMH-SMU |
+| `min_snapshots_to_update` | `int` | `0` | Further snapshots needed before each retrain. `0` (default since 2026-09-23) = retrain whenever `Updater.needs_retraining(new)` says the surrogate would change: continuously for `NeuralNetworkUpdater`, only after new snapshots for the interpolating/least-squares updaters (they never refit identical data). | **yes**, for DAMH-SMU |
 | `max_collected_snapshots_per_loop` | `int` | `1000` | Collector-side batching cap per poll loop. | **yes** — controls exactly when the surrogate is (re)trained (`surrDAMH.configuration.POSTERIOR_AFFECTING_FIELDS`), hence the DAMH-SMU accept/reject sequence |
 | `max_sampler_isend_requests` | `int` | `100` | Size of the sampler→collector snapshot `isend` buffer. | no (performance) |
 | `use_surrogate_gradients` | `bool` | `True` | Whether Hamiltonian-family proposals may use surrogate autograd. | **yes** — may be silently forced to `False` by `SamplingFramework` if the surrogate/settings are incompatible; the *effective* value is recorded in `run_manifest.json` |
@@ -59,8 +58,8 @@ default `max_evaluations=10` inserted when no stopping condition was given, and 
 `Configuration.describe(use_surrogate_gradients_requested=…)` adds when
 `SamplingFramework` had to disable gradients for an incompatible surrogate. `Stage.describe()`
 also appends `[note]` lines naming fields that do not apply to the stage as configured
-(`adaptive_target_rate` etc. when `adaptive=False` — the ignored-setting class of bug that
-motivated this, finding G1).
+(a proposal's `target_rate` etc. when the proposal is not adaptive — the ignored-setting class
+of bug that motivated this, finding G1).
 
 `tests/unit/test_describe.py` asserts that *every* dataclass field appears in the output, so
 a newly added field cannot stay invisible.

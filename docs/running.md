@@ -21,7 +21,7 @@ See `docs/configuration.md`'s "DAMH without a collector" table for which
 Observations always travel pickled together with their solver tag — the spawned child
 sends `[observations, solver_tag]` to the pool and the pool forwards `[observations,
 solver_tag]` to the requesting sampler, in both cases using the *request counter* as the
-MPI tag. A negative `solver_tag` (failed solve, `solver_returns_tag=True`) is therefore
+MPI tag. A negative `solver_tag` (failed solve, from a solver returning `(observations, tag)`) is therefore
 just payload; the sampler rejects that proposal and does not hand it to the surrogate.
 There is no alternative raw-buffer transport: `Configuration.pickled_observations` was
 removed on 2026-09-17 (decision 5 / WS8).
@@ -110,8 +110,8 @@ if rank_world == conf.rank_collector:
 Missing files are not an error: a message is printed and the run starts cold. An
 *incompatible* checkpoint is an error (`ValueError` from the updater), as is an updater
 without state persistence (`NotImplementedError`) — today only
-`NeuralNetworkUpdaterMinibatches` implements it. The restored snapshots are handed to the
-collector as `initial_snapshots` unless the updater reports them itself via
+`NeuralNetworkUpdater` implements it. The restored snapshots are handed to the
+collector as `surrogate_initial_training_data` unless the updater reports them itself via
 `get_initial_snapshots()`; either way they are counted once (finding 2.8).
 
 Related but different: `surrDAMH.surrogates.reuse.SurrogateReused(experiment_folder)`
@@ -163,3 +163,15 @@ settings, after every silent correction. See
 
 `PYTHON` overrides the interpreter (defaults to `/dolfinx-env/bin/python3` if present).
 `pytest.ini` markers: `unit`, `validation`, `mpi`.
+
+## Surrogate stage before enough snapshots (2026-09-22)
+
+A DAMH or Hamiltonian-proposal stage needs a surrogate. If it starts before the collector has
+`Configuration.min_snapshots_initial` snapshots (short first stage, large threshold), the collector
+used to wait forever. Now every sampler tells the collector when it blocks for its first
+evaluator (`TAG_EVALUATOR_NEEDED`); once all of them have, the collector trains the initial
+surrogate on the snapshots it has and prints
+`collector: every sampler is waiting for the first surrogate but only N snapshots exist ...`.
+Treat that line as a configuration warning: lower `min_snapshots_initial` or lengthen the
+preceding stage. With no snapshot at all the run stops with a `RuntimeError` that names the fix.
+`run_local` behaves the same way.

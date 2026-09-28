@@ -506,6 +506,304 @@ file per adaptive stage.
 - **Not covered:** no MPI test asserts on the new file (the MPI suite only proves nothing broke; the
   rank-0 write path is exercised by every adaptive MPI test but its content is not checked there).
 
+**2.26 Intuitive-usage pass (2026-09-21, author-requested via `toy_examples/template_experiment_intuitive.py`):
+`Solver.set_parameters` default validates; `Configuration` fields regrouped.** [read]
+The author's own script failed for two reasons that are the script's, not the library's: it
+never called `SamplingFramework.run()` before `write_report()` (`RunFormatError`: no manifest
+yet), and its only stage was `Stage(max_evaluations=200)`, i.e. a non-adaptive random walk with
+no `proposal_sd_or_cov` (raises in `build_proposal`, §2.24 rule). A third latent problem: the
+solver's random linear map was unseeded, so with `use_solvers_pool=False` every sampler rank
+would have sampled a different forward model. All three fixed in the script; it runs with 1 and
+2 ranks (`mpiexec -n 2`, scratch output, 200 evaluations, report written).
+Library changes, all documented in `CHANGELOG.md` (Additions / Documentation):
+- `Solver.set_parameters` default now does `np.asarray` + size check against `no_parameters`
+  (when set), `Solver.__init__` takes optional `no_parameters`/`no_observations` and stores
+  `solver_id`/`output_dir`. Evidence that nothing else changes: every `Solver` subclass in
+  `surrDAMH/`, `toy_examples/`, `tests/` overrides `set_parameters` or already receives a
+  `(no_parameters,)` array (`grep -rn "set_parameters" surrDAMH`: sampler passes
+  `prior.transform(sample.parameters)`, child passes `.reshape((conf.no_parameters,))`);
+  `pytest tests` (unit + validation): 480 passed, 1 skipped.
+- `Configuration` field order changed (same 24 names/types/defaults, verified against
+  `git show HEAD:` programmatically). Consequence: `Configuration.describe()` prints the fields
+  in the new order and the configuration block of `run_manifest.json` has a new key order.
+  Not posterior-affecting; no test depends on the order (`tests/unit/test_describe.py` checks
+  membership only).
+- Docstrings only: `SamplingFramework`, `SolverSpec`, `Stage` (lead), `Normal`, `Distribution`,
+  `docs/writing_a_solver.md` snippet. Maintainer content of the old `Configuration` docstring
+  moved to a comment block above the dataclass.
+
+**2.27 `Stage.adaptive` default = "adapt unless pinned"; warning instead of error for a fixed random
+walk without a step (2026-09-21, author decisions after §2.26).** [read]
+Author's instruction: "make adaptive=True the default; when adaptive=False and no step and no previous
+adaptive stage, warn and use a default". A plain `adaptive=True` default was tried first and measured:
+25/464 unit tests fail (stage directories renamed to `alg####_MH-adaptive`, fixed-proposal
+assumptions), 12/13 maintained examples switch to adaptive proposals -- because the examples pin
+`proposal_sd_or_cov`, not `adaptive` (the manager's earlier statement that they "set the field
+explicitly" was wrong and was corrected to the author). The author had no preference between the
+two semantics offered, so the recommended one was implemented: `adaptive=None` -> `True` iff the
+proposal's own step field is `None` (`_step_is_unpinned()` in `stages.py`), `False` for block.
+Evidence: no maintained example changes (all 13 give the step; the two Hamiltonian examples give
+`hamiltonian_step_size=0.05`); `pytest tests` 481 passed / 1 skipped; the seven tests that used a
+step-`None` stage as a frozen carry-over consumer were pinned with `adaptive=False`
+(`test_runner_local.py` x2, `test_algorithms_local.py`, `test_config_stages.py`, `test_describe.py`,
+`test_proposals.py` x2 incl. one renamed from `..._raises` to `..._warns_and_uses_default`, plus
+`tests/mpi/test_mpi_posterior.py` B5/B11 -- MPI run status: see the session report). New test:
+`test_config_stages.py::test_adaptive_default_is_adapt_unless_the_step_is_pinned`. Docs:
+`docs/stages.md` rows `adaptive`/`proposal_sd_or_cov`; design follow-up in
+`17_stage_proposal_objects_design_2026-09-21.md` (author chose "proposal objects", not implemented).
+
+**2.28 `Stage` redesigned around proposal specs (`surrDAMH.proposals`); `Configuration.solver_returns_tag`
+removed (2026-09-21, author decisions; design `17_stage_proposal_objects_design_2026-09-21.md`).** [read]
+Author's answers to the design's §4: short names, one `Hamiltonian` spec with a flag (named
+`integrator="leapfrog"|"split"` rather than `infinite`), new `surrDAMH/proposals.py`, no string
+shorthand; `solver_returns_tag`: remove. Core by the manager (stages.py rewritten, proposals.py new,
+proposal_builder dispatch on spec type incl. `Block` sub-proposals built from specs with the prior
+sliced per group, carry-over keys `scale`/`beta`/`step_size` with a legacy-key map in
+`load_carry_over`, manifest nests the spec as `{"type", fields}`, describe/html_report adapted,
+process_CHILD detects tuple returns). Sweeps by three sonnet agents (toy_examples+docs, tests/unit+
+validation, runner_local+tests/mpi); every diff reviewed by the manager.
+Bug caught by the examples sweep and fixed: `process_SAMPLER.py:188` still read `.algorithm_type`
+(the manager's sed only matched `stage.algorithm_type`) -- every multi-stage MPI run would have
+aborted after stage 0. Doc error caught in review: the swept `docs/stages.md` described
+`is_excluded` backwards; corrected.
+Evidence, all on the final tree: `pytest tests` 482 passed / 1 skipped (unit + validation +
+runner_local; the validation golden numbers and `test_post_processing` golden file reproduce
+exactly, i.e. one-to-one translation is not posterior-affecting); `pytest -m mpi
+tests/mpi/test_mpi_posterior.py` 14 passed in one invocation; the other six MPI files 26 passed
+(agent run, after the line-188 fix); `mpiexec -n 2 own_solver.py` (3 stages MH -> DAMH-SMU -> DAMH)
+completes; `template_experiment_intuitive.py` runs with `Stage(max_evaluations=200)`.
+Deliberately kept: the `subchain_stats` CSV column is still named `subchain_max_length` (output
+format v2 unchanged; noted at the writer in `algorithms.py` and in `docs/outputs.md`).
+Left for the author: none from this pass. The dolfinx/GRF/TSX scripts were translated but not run
+(slow); their `Stage(...)` lines are one-to-one.
+
+**2.29 `__init__` audit: two documented import paths were broken, four names were unreachable
+(2026-09-21, author-requested: "check all init files to see if user sees what he should see").** [read]
+Findings, all confirmed by running the documented spelling:
+- `surrDAMH.runner_local.run_local(...)` -- spelled out in `docs/running.md` §"no MPI" and in the
+  `template_experiment.py` / `template_experiment_manual_test.py` docstrings -- raised
+  `AttributeError`: `__init__.py` never imported `runner_local`. Fixed (bug-fix entry in CHANGELOG).
+- `docs/writing_a_surrogate.md` told users to subclass `surrDAMH.surrogates.parent.Updater`; `parent`
+  is an internal module name. `Updater`/`Evaluator` are now exported from `surrDAMH.surrogates` and
+  the doc uses that.
+- `Stage` and `SolverSpec` were reachable only as `surrDAMH.stages.Stage` /
+  `surrDAMH.solver_specification.SolverSpec`, while their peers `Configuration`, `Solver`,
+  `Distribution` were top-level. Both added top-level (the submodule spellings still work).
+- Module docstrings added to `surrDAMH`, `.distributions`, `.stages`, `.surrogates`: each says which
+  name to reach for, for what, with a runnable snippet -- this is what a user sees on hover/`help()`.
+Raised here and decided the same day:
+- the aliases `Uniform`/`Lognormal`/`Beta`/`Normal` of `distributions/independent_components.py`
+  (`Normal = NormalComponent` COLLIDED with `surrDAMH.distributions.Normal`, the full Gaussian):
+  **author said remove**, done -- only the `*Component` names remain (CHANGELOG "Breaking changes").
+- `surrDAMH.core`, `.configuration`, `.process_SAMPLER/SOLVER/COLLECTOR`, `.modules` appear in
+  `dir(surrDAMH)`/autocomplete as a side effect of the imports `core.py` itself needs at runtime
+  (`surrDAMH.process_SAMPLER.run_SAMPLER(...)`). They are excluded from `__all__`; hiding them from
+  autocomplete would need a lazy `__getattr__` and was not attempted.
+Evidence: `pytest tests` 482 passed / 1 skipped; `pytest -m mpi tests/mpi/test_mpi_basic.py
+tests/mpi/test_mpi_transport.py` 9 passed; all `toy_examples/*.py` parse;
+`template_experiment_intuitive.py` runs clean.
+
+**2.30 `Solver.no_parameters`/`no_observations` declared as `int` so Pylance sees them
+(2026-09-22, author chose this of three options offered).** [read]
+Problem reported by the author from the IDE: after §2.26 gave the base class
+``no_parameters: int | None = None``, ``Configuration(no_parameters=solver.no_parameters, ...)``
+does not type-check. Measured with the bundled pyright (the engine behind Pylance) on
+``toy_examples/template_experiment_intuitive.py``: **6 errors**, two on the ``Configuration`` call
+and four where ``self.no_observations`` reaches numpy shape arguments inside the user's own solver.
+Options offered, all three verified to type-check clean in a scratch file: (a) bare declaration
+``no_parameters: int`` with no class-level value; (b) required keyword-only constructor arguments;
+(c) properties over private ``int | None`` storage. Author chose (a). Rationale that decided it:
+the library never reads ``solver.no_parameters`` (everything internal uses ``conf.no_parameters``,
+grep-confirmed) and **no** Solver subclass in the repo calls ``super().__init__()``, so a
+declaration-only attribute changes nothing for existing solvers while removing a real trap -- an
+unset attribute used to travel as ``None`` into ``Configuration`` and fail far away.
+Implementation: declaration only; ``set_parameters`` reads it via ``getattr(self, "no_parameters",
+None)`` so a solver that never set it just gets no size check.
+Evidence: pyright on the template 6 -> 0 errors, on ``surrDAMH/solvers.py`` 0; the four solver
+styles checked at runtime (``super().__init__`` sets them; the size check still raises; direct
+assignment -- the existing style -- unchanged; a forgetful solver raises
+``AttributeError: 'Forgetful' object has no attribute 'no_parameters'``); ``pytest tests`` 482
+passed / 1 skipped; ``template_experiment_intuitive.py`` runs clean.
+``SurrogateAsSolver`` subclasses ``Solver`` and sets neither attribute -- safe, it overrides
+``set_parameters`` and nothing reads them from it. ``docs/writing_a_solver.md`` updated.
+
+**2.31 Example-solver contract cleanups found by type-checking the examples (2026-09-22).** [read]
+Running the bundled pyright over `toy_examples/` (the engine behind the author's Pylance) surfaced
+three genuine contract slips, all fixed:
+- `own_solver.py::Own_solver.get_observations` was annotated `-> npt.ArrayLike` (an incompatible
+  override of `Solver.get_observations -> npt.NDArray`) and actually returned a numpy **scalar**,
+  not the `(no_observations,)` array the contract asks for. Now returns `np.array([res])`.
+- `solvers.calculate_artificial_observations` declared `parameters: npt.NDArray` while the example
+  passed the natural `[-2, 2]`; widened to `npt.ArrayLike` + `np.asarray` inside. Its
+  `observations.ravel()` also assumed the solver returned a numpy object -- `np.asarray(...).ravel()`
+  now tolerates a plain float.
+- `template_experiment_intuitive.py`: `__del__` removed (author: "if not necessary, remove"). It is
+  not necessary -- every row is flushed on write and Python closes the file object itself -- and it
+  was actively harmful: skipped on `MPI_Abort`, and it masked a failing `__init__` behind
+  `AttributeError` during garbage collection (observed while debugging §2.32 below).
+**Behaviour evidence for the return-shape change** (scalar -> shape `(1,)`), per the author's
+"prove identical per configuration" rule: `own_solver.py` under `mpiexec -n 2`, output redirected to
+scratch (no `out_*` touched). The **MH stage is byte-identical** before vs after
+(`samples/alg0000_MH/rank0000.csv`, `cmp` clean; 110 accepted / 390 rejected both times), i.e. the
+exact-model chain and the solver's numbers are unchanged. The DAMH stages differ -- but they differ
+**between two runs of the unchanged code too** (DAMH-SMU 441/59 vs 488/12 accepted/rejected), because
+DAMH-SMU retrain timing depends on collector message arrival; the changed run (496/4) sits inside
+that spread. So: not posterior-affecting, only the declared container shape changed.
+`pytest tests` 482 passed / 1 skipped afterwards.
+Remaining pyright noise in `toy_examples/`: `Import "mpi4py" could not be resolved`, environmental
+(the CLI pyright is not pointed at `/dolfinx-env`; the IDE resolves it). A `pyrightconfig.json`
+pinning the interpreter would silence it -- not added, the author's IDE already selects it.
+
+**2.32 `Solver.output_dir` created lazily; the `solver_id`/`output_dir` injection kept
+(2026-09-22, author decision after the manager laid out reasons for and against).** [read]
+Facts established first: the two values are NOT `SolverSpec` fields -- `get_solver_from_spec`
+injects them into the subclass constructor call; nothing in the library reads them back from an
+instance (zero readers); the same class works as `solver_instance=` and dies with
+`TypeError: __init__() got an unexpected keyword argument 'solver_id'` as a spec (demonstrated);
+the directory used to be created eagerly per instance, leaving empty `solver_output/rank*/` dirs.
+Author: keep the injection, make the directory lazy. Implemented as a property on `Solver`
+(getter creates on first read, setter stores; `core.py` and `process_SOLVER.py` pass the path only).
+Evidence: `pytest tests` 482 passed / 1 skipped; pool run with a solver that never writes -> no
+`solver_output/`; pool run with a writing spec-solver -> only the child that served requests
+created its dir (2 children, 1 sampler: `rank0` 41 calls, `rank1` nothing); pyright clean on
+`solvers.py`. The `Solver` docstring sentence about "keep the solver_id/output_dir keyword
+arguments" is still to be rewritten (plan agreed in conversation, awaiting the author's go).
+
+**2.33 Three corrections from the author's template notes + the template made runnable
+(2026-09-22, author: "do these three corrections; fix the intuitive template so it runs").** [read]
+Source: comments the author left in `toy_examples/template_experiment_intuitive.py` while trying the
+API. (1) `register_updater` typed `type[Updater] -> type[Updater]` erased every updater's own type
+for Pylance (pyright `reveal_type` -> `type[Updater]`, "No parameter named hidden_layer_sizes");
+made generic, now `type[NeuralNetworkUpdater]` / `PolynomialSklearnUpdater`. (2) `target_rate` with
+`adaptive=False` was silently ignored (only a `describe()` note); the specs now warn at construction
+(`tests/unit/test_config_stages.py::test_target_rate_with_adaptive_false_prints_a_warning_at_construction`).
+(3) `NeuralNetworkUpdaterMinibatches` -> `NeuralNetworkUpdater`, 64 occurrences in code/examples/
+tests/current docs (historical `library_notes/` and older CHANGELOG entries left as written);
+checkpoint tolerance via `LEGACY_SURROGATE_TYPE_NAMES` (checked on both read paths, `load_state`
+and `SurrogateReused`), verified with a forged old-name checkpoint.
+Template: the author's `list_of_stages.append(surrDAMH.stages.RandomWalk(...))` failed deep in
+`run()` (`AttributeError: 'RandomWalk' object has no attribute 'algorithm'`). Root cause was an
+import leak (`surrDAMH.stages.RandomWalk` resolved); closed with a private alias in `stages.py`,
+plus `stages.check_stage_list` called by `SamplingFramework.__init__` and `run_local` so the mistake
+fails at construction with the fix in the message. The template line itself is now
+`Stage(proposal=RandomWalk(scale=0.5, adaptive=False, target_rate=0.5), max_evaluations=100)`, kept
+deliberately so the new warning shows; the two answered comment lines were removed.
+Evidence: pyright clean on `stages.py`, `proposals.py`, `reuse.py`, the template (environmental
+`torch`/`mpi4py` import notices aside); `pytest tests` 485 passed / 1 skipped (3 new tests);
+`pytest -m mpi tests/mpi/test_mpi_surrogate.py` -- see the session report for the count; template
+on `mpiexec -n 2`: both stages finish on both ranks, per-rank logs 303/302 rows, the target_rate
+warning printed once per rank.
+
+**2.34 Updater constructors: all parameters typed, regrouped by importance, user-facing class
+docstrings (2026-09-22, author: "some of the types are Unknown now; sort by type and importance").** [read]
+pyright `reveal_type` on the five `__init__`s before: only `NeuralNetworkUpdater` had `Unknown`
+(`no_parameters`, `no_observations`, `hidden_layer_sizes` unannotated); the other three were typed.
+After: 0 `Unknown` across all four. Order after the two sizes: model -> training -> data ->
+runtime (NN: hidden_layer_sizes, activation, seed | solver, learning_rate, iterations_batch,
+loss_target, batch_size, weight_decay, gradient_clip_norm, shuffle_batches | weighting,
+replay_ratio, replay_max_old_samples, train_on_added_data, output_normalization, output_mean,
+output_scale | device, verbose; RBF: kernel, smoothing, epsilon, degree | max_neighbors,
+neighbors | dedup_tolerance, weighting | verbose). Safe because every repository caller passes
+these by keyword (grep for a 3rd positional argument: only `**kwargs` forwarding in
+`tests/unit/test_surrogates.py`). No name, default or behaviour changed.
+Class docstrings rewritten the Configuration way: short lead + `Args:` grouped (Pylance shows
+the class docstring on the constructor call); the long maintainer paragraphs (finding 3.10 degree
+rule and ridge rationale, finding 3.3 max_neighbors, WS6 weighting/normalization history, L-BFGS
+preset) live on as comment blocks above each class. Evidence: `pytest tests` 486 passed / 1
+skipped (new guard test); template runs; all examples parse; pyright: the four modules have 6
+PRE-EXISTING errors in untouched code (`model.fit` on a possibly-None model x2, torch RNG state
+"possibly unbound" x3, `save_state` override signature) -- not addressed, listed here for §3.
+
+**2.35 Template comments answered: docstring corrections, early solver-hand-over check
+(2026-09-22, author: "check comments in template, make docstring corrections, delete solved ones").** [read]
+Every question the author left in `template_experiment_intuitive.py` was checked against the code
+before answering (collector retrain rule `process_COLLECTOR.py:299-303`; consumers of `no_solvers`,
+`torch_threads`, `debug`, `paths_to_append`; `surrogate_test_data` normalized once and read-only;
+`Normal` has no `transform` -> internal space == parameter space). Changes: CHANGELOG Additions
+(three entries). New library behaviour: `SamplingFramework.__init__` raises on pool-without-spec /
+no solver / both solvers (was an assert on the pool rank in `run()`; the author had flipped the
+template to `use_solvers_pool=True` with a `solver_instance` to test exactly this).
+Evidence: `pytest tests` 486 passed / 1 skipped; template on `mpiexec -n 2` both stages finish;
+pool+instance driver on 2 ranks -> ValueError on both ranks, exit 0; pyright on the edited modules
+clean except the 3 pre-existing duck-typed `field_builder`/`coords`/`measurement_points` accesses
+in `core.py` (hasattr-guarded at runtime). Template cleaned of the answered comments; the author's
+notes docstring untouched.
+
+**2.36 Author's five decisions on the template review: `Normal` priors standardized; `dim`;
+`surrogate_initial_training_data`; field docstrings cleaned (2026-09-22).** [read]
+Decisions: (1) `mu/sigma` vs `mean/sd` -- later; (2) `d` -> renamed `dim`; (3) `initial_snapshots`
+-> renamed `surrogate_initial_training_data` (author's own suggestion); (4) `SolverSpec` paths --
+recommendation given, decision later (§8a); (5) standardize `Normal` priors -- done.
+Design of (5): `Normal` is dual-use (prior AND likelihood), so its `logpdf` must stay the physical
+density; the internal-space view is a separate `StandardizedNormal` wrapper applied by every entry
+point that receives a prior (`SamplingFramework.__init__`, `run_local`, `TestData.generate`,
+`TestData.compute_log_posterior_and_weights`) via `standardize_prior()` (idempotent, other priors
+pass through). `_prior_is_gaussian` accepts it (pCN now exact for any Normal); the manifest records
+the user's `Normal` plus `standardized: true`. Consequences listed in CHANGELOG (sample stream,
+`lhs_scale`/`initial_samples_distribution` units, surrogate inputs, continuation from pre-change
+runs invalid for Normal priors). Evidence: closed-form check (prior N(8,5) x N(-1,0.5), linear
+model, noise 0.7): chain mean [9.94, -0.98] / sd [0.85, 0.50] == closed form [9.94, -0.98] /
+[0.85, 0.50]; `pytest tests` 490 passed / 1 skipped (4 new `TestStandardizedNormal` tests);
+MPI posterior/surrogate/hang files -- see session report; template on 2 ranks OK.
+Also this round: Configuration field docstrings -- first attempt (attribute docstrings) DUPLICATED the
+hover text, because Pylance extracts the `Args:` entry for the parameter hover as well; final state
+(§2.37 below): Args only, each entry ending with the default. `docs/concepts.md`,
+`docs/configuration.md` updated.
+
+**2.37 Parameter hovers of `Configuration`/`Stage`: Args entries end with the default; attribute
+docstrings removed (2026-09-22, author: "tooltips duplicated, default still not shown").** [read]
+Learned from the author's IDE (not reproducible from the CLI pyright): a dataclass constructor
+parameter's hover shows (a) the `Args:` entry parsed out of the CLASS docstring and (b) the field's
+attribute docstring if there is one -- so the two texts I had were shown twice -- and it does NOT show
+the signature default. Fix: attribute docstrings deleted; a script appends `Default: ``<repr>``.`
+(`Required.`; `unlimited` for maxsize/inf) to every Args entry of both dataclasses from the actual
+field defaults (23 + 12 entries, none left unmatched). `pytest tests` and pyright clean (see report).
+Lesson recorded in `.claude/skills/api-intuitiveness-check/SKILL.md`.
+
+**2.38 Deadlock fix: surrogate stage starting before `min_snapshots_initial` (2026-09-22, found by the
+GRF scheme study's smoke run, `toy_examples/out_scheme_study_2026-09-22/runs/smoke`).** [read]
+Symptom: 3 ranks (2 samplers + collector), stage 1 = 300 evaluations/chain, `min_snapshots_initial=2000`,
+stage 2 = DAMH: stage 1 finished at 2.4 s, then nothing until the 200 s kill. Cause traced in
+`process_COLLECTOR.py`: `sampler_got_last_evaluator` starts `True`, so the initial TAG_UPDATE request
+is served only after the first training, and `cond_init` needs `min_snapshots_initial` snapshots that
+the blocked samplers can never send. The WS8 start-up handshake covered only a surrogate FIRST stage.
+Fix: new `TAG_EVALUATOR_NEEDED` announcement from the algorithm's blocking wait
+(`Algorithm_DAMH._initialize_current_approximation` -> `EvaluatorProvider.announce_waiting`), collector
+trains on what it has once all active samplers are blocked (warning), `RuntimeError` with zero
+snapshots; same rule in `LocalSurrogateManager.get_evaluator`. Evidence: the smoke scheme now completes
+in 4.0 s with the warning; `tests/mpi/test_mpi_hangs.py` 9 passed incl. the new `test_i3b`;
+`tests/unit/test_algorithms_local.py`, `test_communication.py`, `test_runner_local.py` 59 passed.
+Wire protocol: one new tag (7), one int, Irecv posted per sampler on the collector and cancelled in
+`sampler_stops`/`terminate` (same pattern as TAG_UPDATE/TAG_STOP_UPDATING).
+
+**2.39 GRF sampling-scheme study (2026-09-22, author-requested) -- record in `18_sampling_schemes_grf_2026-09-22.md`;
+library side-effect: `stages.wasted_snapshot_notes`.** [read]
+16 runs, 4.37 M exact evaluations, one run per scheme. Headline: adaptive pCN is the stage-1 proposal
+(ESS/eval 0.065 = 8.6x the maintained example's fixed beta 0.2, beta adapts to 0.89); DAMH with a 5-step
+pCN sub-chain reaches 0.69 ESS/eval on a degree-2 polynomial surrogate (10.6x MH), 8.8x RBF, 8.3x network;
+1-step sub-chains only 2.1-2.5x; k-d tree (RMSE 0.05 > noise 0.03) 0.9-2.6x; Hamiltonian(0.05x100) on the
+network 4.8x. Every scheme reproduces `R_ref` (v1 sd 0.208-0.212 vs 0.2116; per-parameter mean deviations
+<= 0.043 ref sd, within MC error). Two observations for the author: adaptive pCN saturates at beta = 1.0
+inside a DAMH sub-chain on this near-prior posterior (target 0.234 unreachable from above; not a bug, but a
+boundary note from the proposal would help); the frozen final stage streamed 60 000 useless snapshots and
+the collector refit RBF/KD-tree 30 times for nothing -> `wasted_snapshot_notes` start-up note (CHANGELOG
+Additions), quantified by the `*_nosend` reruns (frozen stage 831 -> 386 s RBF, 555 -> 243 s KD-tree; ESS/eval
+unchanged). `pytest tests` 491 passed / 1 skipped after both library changes of the day (§2.38, this).
+
+**2.40 `min_snapshots_to_update` default 0 with the `Updater.needs_retraining` hook (2026-09-23).** [read]
+Author asked whether an identical-model guard already existed: only `PolynomialSklearnUpdater`
+skipped the *fit* when the snapshot count was unchanged, and still returned a fresh evaluator that
+the collector pickled and sent; `RBFInterpolationUpdater` refit and `KDTreeUpdater` rebuilt the tree
+on every `get_evaluator()`; the collector had no change check at all. So a plain default of 0 would
+have refit RBF on every collector loop. Implemented: `Updater.needs_retraining(new)` (default
+`new > 0`; NN: `True` once it has data), consulted in `process_COLLECTOR` and
+`LocalSurrogateManager._maybe_update_evaluator` together with `min_snapshots_to_update`; default
+changed 1 -> 0 (Configuration field, Args, docs row, surrogate contract table). Equivalence for the
+interpolating updaters: `new >= 0 and new > 0` == `new >= 1`. Evidence: two new unit tests (CHANGELOG);
+full suite -- see the session report. The MPI helper `_collector_retrainings` in
+`tests/mpi/test_mpi_posterior.py` mirrors the old rule but is only used with explicit large
+thresholds where both rules agree (rows exist only when a batch arrived, i.e. new > 0).
+
 ## 3. Pre-existing bugs the new tests pin but do not fix — [bug] / [decide]
 
 Each test asserts *today's* behaviour with a docstring citing the finding; flip the assertion
@@ -674,6 +972,24 @@ finding-by-finding version and `09_improvement_plan.md` §1/§4/§6 for the work
 
 ### (a) Needs the author's decision
 
+- **From the 2026-09-22 template review, still open:** (1) parameter names `mu`/`sigma` on the
+  components vs `mean`/`sd` on `Normal` -- author: "later". (4) import paths for spawned solver
+  processes: `Configuration.paths_to_append` CAN reach the children (they unpickle `conf`, so
+  `process_CHILD` could `sys.path.extend(conf.paths_to_append)` before `get_solver_from_spec`),
+  but the manager recommends moving the field to `SolverSpec` instead (applied inside
+  `get_solver_from_spec`, which runs wherever the solver is built) and removing it from
+  `Configuration`; author: decide later. (5a) `min_snapshots_to_update` default 0: author wants
+  it for the NN; proposal: `Updater.needs_retraining(new_snapshots: int) -> bool` hook (default
+  `new_snapshots > 0`, NN overrides to `True`) consulted by the collector, so a 0 default costs
+  the interpolating updaters nothing -- **done 2026-09-23 (author's go after note 18 §3.1); CHANGELOG
+  "Behaviour changes", §2.40.**
+  Done: (2) `dim`, (3) `surrogate_initial_training_data`, (5) standardization (§2.36).
+
+- ~~**Component aliases `Uniform`/`Lognormal`/`Beta`/`Normal` in
+  `distributions/independent_components.py`**~~ **Closed 2026-09-21 -- author: remove them, keep only
+  the `*Component` names.** Done the same day (CHANGELOG "Breaking changes"); no in-repo caller
+  remained, `pytest tests` 482 passed / 1 skipped afterwards.
+
 - ~~**Finding 1.1** (`state_dependent_approximation=True`): needs a derivation of the correct
   shifted sub-chain kernel and a V4 validation.~~ **Closed 2026-09-18 — feature removed**
   (decision 26, `09` §3 round 4). The derivation was attempted and fails: the shift is also
@@ -691,6 +1007,8 @@ finding-by-finding version and `09_improvement_plan.md` §1/§4/§6 for the work
   this note was last written. `load_snapshots`/`_load_snapshot_parameters_and_observations`
   were already caller-less. If the answer for all three is "delete", it's the same shape of
   change as `pdf_report` (`grep` confirmed 0 callers, `./run_tests.sh unit` as the safety check).
+- **Intuitive-usage pass, 2026-09-21 (`template_experiment_intuitive.py` notes): all closed** --
+  default step size (§2.27), `Stage` proposal specs and `solver_returns_tag` removal (§2.28).
 
 ### (b) Decision-free, not done
 

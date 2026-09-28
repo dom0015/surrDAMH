@@ -60,12 +60,16 @@ try:
         else:
             parent_comm.Bcast([received_data, MPI.DOUBLE], root=0)
             solver_instance.set_parameters(received_data.reshape((conf.no_parameters,)))
-            if conf.solver_returns_tag:
-                [sent_data, solver_tag] = solver_instance.get_observations()
+            # 2026-09-21 (author decision): no Configuration flag any more -- a solver either returns
+            # the observations or an (observations, tag) tuple, detected here exactly as the
+            # sampler's Algorithm does for a local solver (algorithms.py, isinstance(result, tuple))
+            result = solver_instance.get_observations()
+            if isinstance(result, tuple):
+                sent_data, solver_tag = result
                 if solver_tag < 0:
                     sent_data = np.zeros((conf.no_observations,))
             else:
-                sent_data = solver_instance.get_observations()
+                sent_data = result
                 solver_tag = 0
             counter += 1
             if rank == 0:

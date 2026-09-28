@@ -10,10 +10,11 @@ from surrDAMH.distributions.parent import Distribution
 
 class UnivariateComponent:
     """
-    One marginal of a ``PriorIndependentComponents`` prior: maps a standard-normal
-    internal coordinate to a physical value with the component's own distribution via
-    ``transform`` (an inverse-CDF-style transformation, see
-    ``surrDAMH.distributions.transformations``), independent of every other component.
+    Base class of the components of ``PriorIndependentComponents``: the prior of ONE
+    parameter. ``transform`` maps a standard-normal internal value to this component's
+    physical value (an inverse-CDF-style map, see ``surrDAMH.distributions.transformations``).
+    Subclass it for a marginal not shipped here (``NormalComponent``, ``UniformComponent``,
+    ``LognormalComponent``, ``BetaComponent``).
     """
 
     def __init__(self):
@@ -21,7 +22,7 @@ class UnivariateComponent:
 
     def transform(self, parameter):
         """Maps one standard-normal internal value to this component's physical value."""
-        pass
+        raise NotImplementedError
 
     def pdf(self, x):
         """Evaluate the marginal prior PDF at value(s) *x* in transformed (physical) space."""
@@ -30,23 +31,27 @@ class UnivariateComponent:
 
 class PriorIndependentComponents(Distribution):
     """
-    Prior built from independent univariate components (``UniformComponent``,
-    ``NormalComponent``, ``LognormalComponent``, ``BetaComponent``), each with its own
-    physical-space marginal. Internally the sampler always works with the STANDARD
-    NORMAL N(0, I) (design decision, not an approximation): ``logpdf``/``grad_logpdf``
-    are exactly the standard-normal log-density/gradient with no Jacobian term for
-    ``transform``, because MCMC acceptance ratios are computed entirely in this internal
-    space (pinned by
-    ``tests/unit/test_distributions.py::TestPriorIndependentComponentsLogpdfDesign``).
-    ``transform(sample)`` maps an internal N(0, I) sample to the physical parameters,
-    component by component, only for the solver/surrogate and for on-disk output.
+    Prior with independent parameters, one component per parameter::
+
+        prior = PriorIndependentComponents([
+            NormalComponent(mu=0.0, sigma=1.0),
+            LognormalComponent(mu=-2.0, sigma=0.5),
+            UniformComponent(a=0.0, b=1.0),
+        ])
+
+    The chain samples in the standard normal N(0, I) internal space; ``transform`` maps each
+    coordinate to its component's distribution for the solver, the surrogate and the saved
+    samples. This is what pCN and the dimension-robust Hamiltonian proposal expect.
+
+    Args:
+        list_of_components: one component per parameter, in parameter order.
     """
+    # Maintainer note: logpdf/grad_logpdf are exactly the standard-normal log-density/gradient
+    # with no Jacobian term for transform -- a design decision, not an approximation: MCMC
+    # acceptance ratios are computed entirely in the internal space (pinned by
+    # tests/unit/test_distributions.py::TestPriorIndependentComponentsLogpdfDesign).
 
     def __init__(self, list_of_components: list[UnivariateComponent]):
-        """
-        Args:
-            list_of_components: list of UnivariateComponent instances
-        """
         self.list_of_components = list_of_components
         self.no_parameters = len(list_of_components)
         self.mean = np.zeros((self.no_parameters,))
@@ -87,9 +92,7 @@ class PriorIndependentComponents(Distribution):
 
 
 class UniformComponent(UnivariateComponent):
-    """
-    U(a,b)
-    """
+    """Uniform prior of one parameter on ``[a, b]``."""
 
     def __init__(self, a: float = 0.0, b: float = 1.0):
         self.a = a
@@ -103,9 +106,7 @@ class UniformComponent(UnivariateComponent):
 
 
 class LognormalComponent(UnivariateComponent):
-    """
-    Lognormal(mu,sigma)
-    """
+    """Lognormal prior of one parameter: ``log(x) ~ N(mu, sigma)``."""
 
     def __init__(self, mu=0.0, sigma=1.0):
         self.mu = mu
@@ -119,9 +120,7 @@ class LognormalComponent(UnivariateComponent):
 
 
 class BetaComponent(UnivariateComponent):
-    """
-    Beta(alpha,beta)
-    """
+    """Beta(alpha, beta) prior of one parameter on ``[0, 1]``."""
 
     def __init__(self, alpha=2.0, beta=2.0):
         self.alpha = alpha
@@ -135,9 +134,7 @@ class BetaComponent(UnivariateComponent):
 
 
 class NormalComponent(UnivariateComponent):
-    """
-    Normal(mu,sigma)
-    """
+    """Normal prior of one parameter: ``N(mu, sigma)`` (``sigma`` is the standard deviation)."""
 
     def __init__(self, mu=0.0, sigma=1.0):
         self.mu = mu
@@ -149,9 +146,3 @@ class NormalComponent(UnivariateComponent):
     def pdf(self, x):
         return stats.norm.pdf(x, loc=self.mu, scale=self.sigma)
 
-
-# Backward-compatible aliases for the component-style interface.
-Uniform = UniformComponent
-Lognormal = LognormalComponent
-Beta = BetaComponent
-Normal = NormalComponent

@@ -184,6 +184,9 @@ class MpiEvaluatorProvider(EvaluatorProvider):
     def request_evaluator(self) -> None:
         self.communicator.request_evaluator()
 
+    def announce_waiting(self) -> None:
+        self.communicator.announce_waiting()
+
     def evaluator_is_available(self) -> bool:
         return self.communicator.evaluator_is_available()
 

@@ -1,15 +1,66 @@
-from . import (distributions, post_processing, solver_specification, solvers,
-               stages, surrogates)
+"""
+surrDAMH: surrogate-accelerated MCMC (delayed-acceptance Metropolis-Hastings) for
+Bayesian inverse problems, parallelised with mpi4py.
+
+A sampling script needs five things, all reachable from here::
+
+    import surrDAMH
+    from surrDAMH.proposals import RandomWalk          # optional: proposal settings
+
+    conf = surrDAMH.Configuration(no_parameters=3, no_observations=2, output_dir="out_x",
+                                  use_solvers_pool=False, use_collector=False)
+    prior = surrDAMH.distributions.Normal(mean=0, sd=1, dim=3)
+    likelihood = surrDAMH.distributions.Normal(mean=observed_data, sd=0.1)
+    stages = [surrDAMH.Stage(max_evaluations=1000)]
+    sf = surrDAMH.SamplingFramework(conf, prior, likelihood, stages, solver_instance=my_solver)
+    sf.run()                                     # launch with: mpiexec -n 4 python3 -m mpi4py script.py
+    sf.write_report(observations=observed_data)  # HTML report under <output_dir>/post_processing_output/
+
+Where to look for what:
+
+- ``surrDAMH.Configuration``      -- run-wide settings (MPI roles, output, surrogate timing)
+- ``surrDAMH.distributions``      -- priors and likelihoods: ``Normal``,
+  ``PriorIndependentComponents``, ``GaussianMixture``, ``FromScipy``
+- ``surrDAMH.Stage``              -- one sampling stage (also ``surrDAMH.stages.Stage``)
+- ``surrDAMH.proposals``          -- proposal settings of a stage: ``RandomWalk``, ``PCN``,
+  ``Hamiltonian``, ``Block``
+- ``surrDAMH.Solver``             -- base class for your forward model;
+  ``surrDAMH.SolverSpec`` describes one that must be built in another process
+- ``surrDAMH.surrogates``         -- surrogate updaters (``PolynomialSklearnUpdater``,
+  ``RBFInterpolationUpdater``, ``KDTreeUpdater``, ``NeuralNetworkUpdater``)
+  and the ``Updater``/``Evaluator`` base classes for writing your own
+- ``surrDAMH.SamplingFramework``  -- runs the sampling with MPI; ``surrDAMH.run_local``
+  runs a single chain in one process, without MPI
+- ``surrDAMH.post_processing``    -- analysis of a finished run (``Samples``);
+  ``surrDAMH.read_run`` loads its raw output
+
+Documentation: ``docs/README.md``; runnable examples: ``toy_examples/``.
+"""
+
+from . import (distributions, post_processing, proposals, solver_specification,
+               solvers, stages, surrogates)
 from .configuration import Configuration
 from .distributions import Distribution
 from .solvers import Solver
+from .solver_specification import SolverSpec
+from .stages import Stage
 from .core import SamplingFramework
+from .runner_local import run_local
+from . import runner_local
 from .modules.manifest import RunFormatError
 from .modules.run_data import RunData, read_run
 from .modules.surrogate_restart import SurrogateRestart
 from .modules.test_data import TestData
 
-__all__ = ["SamplingFramework", "Configuration", "Solver", "Distribution",
-           "distributions", "surrogates", "TestData", "SurrogateRestart",
-           "solver_specification", "solvers", "stages", "post_processing",
-           "read_run", "RunData", "RunFormatError"]
+__all__ = [
+    # building a sampling script
+    "Configuration", "Stage", "Solver", "SolverSpec", "Distribution", "SamplingFramework",
+    "run_local",
+    # optional inputs of SamplingFramework
+    "TestData", "SurrogateRestart",
+    # reading a finished run
+    "read_run", "RunData", "RunFormatError",
+    # subpackages
+    "distributions", "proposals", "stages", "solvers", "solver_specification",
+    "surrogates", "post_processing", "runner_local",
+]

@@ -619,7 +619,8 @@ class Autocorrelation:
             for j in range(self.samples.no_parameters):
                 self.autocorr_function[i][:, j] = emcee.autocorr.function_1d(self.samples_all_stages[i][:, j])
         self.length = [x.shape[0] for x in self.autocorr_function]
-        print("Autocorr. functions calculated, shapes:", [i.shape for i in self.autocorr_function])
+        if self.samples.debug:
+            print("Autocorr. functions calculated, shapes:", [i.shape for i in self.autocorr_function])
 
     def calculate_autocorr_function_mean(self):
         chains_range = range(self.no_chains)

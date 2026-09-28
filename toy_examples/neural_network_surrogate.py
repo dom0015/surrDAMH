@@ -16,6 +16,7 @@ from mpi4py import MPI
 
 import surrDAMH
 from surrDAMH.modules.tools import ensure_dir
+from surrDAMH.proposals import RandomWalk
 from surrDAMH.stages import Stage
 
 comm_world = MPI.COMM_WORLD
@@ -39,7 +40,7 @@ likelihood = surrDAMH.distributions.Normal(mean=observations, sd=1.0)
 
 # neural network surrogate model (full-batch L-BFGS preset: one batch = all accumulated
 # snapshots, no replay, fitted only by the collector's periodic train() calls):
-updater = surrDAMH.surrogates.NeuralNetworkUpdaterMinibatches(no_parameters=conf.no_parameters, no_observations=conf.no_observations,
+updater = surrDAMH.surrogates.NeuralNetworkUpdater(no_parameters=conf.no_parameters, no_observations=conf.no_observations,
                                                               hidden_layer_sizes=(4, ), solver="lbfgs", activation="tanh", learning_rate=1e-3,
                                                               iterations_batch=100, loss_target=1e-6, device="cpu", verbose=False,
                                                               batch_size=None, replay_ratio=0.0, train_on_added_data=False)
@@ -47,11 +48,11 @@ updater = surrDAMH.surrogates.NeuralNetworkUpdaterMinibatches(no_parameters=conf
 # sampling process stages:
 list_of_stages = []
 # during MH stage, initial surrogate model is constructed:
-list_of_stages.append(Stage(algorithm_type="MH", proposal_sd_or_cov=0.5, max_evaluations=50))
+list_of_stages.append(Stage(algorithm="MH", proposal=RandomWalk(scale=0.5), max_evaluations=50))
 # during DAMH-SMU stage, surrogate model is further updated:
-list_of_stages.append(Stage(algorithm_type="DAMH", proposal_sd_or_cov=0.5, max_evaluations=50, surrogate_model_updates=True))
+list_of_stages.append(Stage(algorithm="DAMH", proposal=RandomWalk(scale=0.5), max_evaluations=50, surrogate_model_updates=True))
 # during DAMH stage, surrogate model is used but not updated:
-list_of_stages.append(Stage(algorithm_type="DAMH", proposal_sd_or_cov=0.5, max_evaluations=50,
+list_of_stages.append(Stage(algorithm="DAMH", proposal=RandomWalk(scale=0.5), max_evaluations=50,
                       surrogate_model_updates=False, send_snapshots_to_collector=False))
 
 sam = surrDAMH.SamplingFramework(conf, surrogate_updater=updater, prior=prior, likelihood=likelihood,

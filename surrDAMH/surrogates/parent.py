@@ -220,6 +220,20 @@ class Updater:
         """
         pass
 
+    def needs_retraining(self, new_snapshots: int) -> bool:
+        """
+        Would another ``train()`` + ``get_evaluator()`` produce a different surrogate?
+
+        Consulted by the collector (and ``run_local``'s surrogate manager) before every
+        retraining, in addition to ``Configuration.min_snapshots_to_update`` (2026-09-23). The
+        default answers ``new_snapshots > 0``: an interpolant or a least-squares fit on the same
+        data is the same model, so refitting it (and shipping it to the samplers) is wasted.
+        An updater that keeps improving with more optimizer steps on unchanged data -- the
+        neural network -- overrides this to ``True``, which is what lets
+        ``min_snapshots_to_update=0`` (the default) train it continuously.
+        """
+        return new_snapshots > 0
+
     def train(self,):
         """
         Trains the surrogate model, e.g. neural network.

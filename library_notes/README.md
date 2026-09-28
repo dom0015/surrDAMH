@@ -38,7 +38,10 @@ across `175059e`..`9efb54b` on `working_Kuba`, and re-verified against the curre
 | What dead code exists and why it's kept | `13_dead_code_report.md` (reference only — author decided not to delete dead code) |
 | The GRF long-run validation campaign | `14_grf_validation_2026-09-17.md` (dated record) |
 | How usable is the adaptive proposal; which knobs must be guessed; what adaptivity to add | `15_adaptivity_study_2026-09-18.md` (dated record; raw runs in `toy_examples/out_adaptivity_study_2026-09-18/`, 4 GB, off-limits) |
+| Which proposal / surrogate / sub-chain length pays off on the GRF example (adaptive pCN 8.6x the fixed-beta example; DAMH with a 5-step pCN sub-chain ~10x MH; k-d tree useless at 20 parameters); deadlock and frozen-stage trap found on the way | `18_sampling_schemes_grf_2026-09-22.md` (dated record; runs + figures in `toy_examples/out_scheme_study_2026-09-22/`, 4.3 GB, off-limits) |
+| Design of the `Stage(proposal=RandomWalk()...)` interface, implemented 2026-09-21 | `17_stage_proposal_objects_design_2026-09-21.md` |
 | What the literature prescribes for removing guessed parameters (RAM / shrinkage-AM + Robbins–Monro, sub-chain adaptation in DAMH, dual-averaging step size at fixed T, mass = Σ̂⁻¹, adaptive pCN, DA diagnostics), with references and prototype evidence | `16_adaptivity_options_research_2026-09-20.md` (dated record; reviews + prototypes in `toy_examples/out_adaptivity_research_2026-09-20/`) |
+| Is DAMH-SMU (surrogate retrained while sampling) a valid MCMC algorithm? Assumptions A0–A6, full proof (reversibility, Lipschitz-in-surrogate kernel bound, uniform Doeblin, coupling), and what the NN surrogate needs (bounded outputs/weights, Polyak-averaged publication or decaying budget or randomised installation) | `18_damh_smu_validity_proof_2026-09-22.md` (theory only; refereed) |
 
 For the user-facing contract (config fields, output format, how to run, how to write a solver
 or surrogate) start at `docs/README.md` instead — it's maintained going forward, this folder is

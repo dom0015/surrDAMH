@@ -36,6 +36,7 @@ import numpy as np
 
 from surrDAMH.configuration import Configuration
 from surrDAMH.distributions.parent import Distribution, rvs_with_generator
+from surrDAMH.distributions.normal import standardize_prior
 from surrDAMH.modules import algorithms as alg
 from surrDAMH.modules import lhs_normal as lhs
 from surrDAMH.modules.algorithm_interfaces_local import (LocalEvaluatorProvider,
@@ -48,7 +49,7 @@ from surrDAMH.modules.proposal_builder import build_proposal
 from surrDAMH.modules.seeds import initial_sample_seed, stage_seed0
 from surrDAMH.modules.torch_threads import apply_torch_threads
 from surrDAMH.solvers import Solver
-from surrDAMH.stages import Stage, stage_name
+from surrDAMH.stages import Stage, stage_name, check_stage_list
 from surrDAMH.surrogates.parent import (Evaluator, Updater,
                                         apply_output_normalization_from_likelihood)
 
@@ -134,6 +135,8 @@ def run_local(conf: Configuration, prior: Distribution, likelihood: Distribution
     Returns:
         ``SamplingResult`` with one ``StageResult`` per stage.
     """
+    check_stage_list(stages)
+    prior = standardize_prior(prior)  # same internal space as SamplingFramework (2026-09-22)
     if conf.use_collector or conf.use_solvers_pool:
         raise ValueError("run_local() requires a configuration with use_collector=False and use_solvers_pool=False "
                          "(the local runner replaces the collector and the solvers pool)")
@@ -190,7 +193,7 @@ def run_local(conf: Configuration, prior: Distribution, likelihood: Distribution
         # choice of services for this stage (mirrors process_SAMPLER):
         snapshot_collector_stage = surrogate_manager if stage.send_snapshots_to_collector else None
         evaluator_provider_stage = None
-        if stage.algorithm_type == "DAMH" or stage.proposal_needs_gradients():
+        if stage.algorithm == "DAMH" or stage.proposal_needs_gradients():
             assert evaluator_provider is not None, ("stage requires a surrogate model; pass 'updater' or 'evaluator' "
                                                     "to run_local()")
             evaluator_provider_stage = evaluator_provider
@@ -202,7 +205,7 @@ def run_local(conf: Configuration, prior: Distribution, likelihood: Distribution
             observation_provider_stage = observation_provider
 
         stage.name = stage_name(stage, i)
-        alg_class = alg.Algorithm_MH if stage.algorithm_type == "MH" else alg.Algorithm_DAMH
+        alg_class = alg.Algorithm_MH if stage.algorithm == "MH" else alg.Algorithm_DAMH
 
         alg_instance = alg_class(proposal=proposal,
                                  observation_provider=cast(Any, observation_provider_stage),
