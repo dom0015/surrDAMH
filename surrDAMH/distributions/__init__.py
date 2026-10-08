@@ -40,11 +40,12 @@ from .independent_components import (
 )
 from .normal import Normal, StandardizedNormal, standardize_prior
 from .gaussian_mixture import GaussianMixture
-from .parent import Distribution, FromScipy
+from .parent import Distribution, FromScipy, distribution_dimension
 
 __all__ = [
     "Distribution",
     "FromScipy",
+    "distribution_dimension",
     "Normal",
     "StandardizedNormal",
     "standardize_prior",

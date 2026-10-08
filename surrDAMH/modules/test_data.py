@@ -4,11 +4,15 @@ import os
 
 import numpy as np
 
-from surrDAMH.configuration import Configuration
+from typing import TYPE_CHECKING
+
 from surrDAMH.distributions.normal import standardize_prior
 from surrDAMH.distributions.parent import Distribution
 from surrDAMH.solver_specification import SolverSpec
 from surrDAMH.solvers import Solver, get_solver_from_spec
+
+if TYPE_CHECKING:
+    from surrDAMH.core import Problem
 
 
 def _test_data_path(experiment_folder: str) -> str:
@@ -47,27 +51,32 @@ class TestData:
         self.weights = weights
 
     @classmethod
-    def generate(cls, prior: Distribution, likelihood: Distribution, solver: Solver | SolverSpec,
-                 conf: Configuration, size: int = 16, seed: int = 25347) -> "TestData":
+    def generate(cls, problem: "Problem", size: int = 16, transform_before_surrogate: bool = False,
+                 seed: int = 25347) -> "TestData":
         """
-        Draws ``size`` fresh samples from ``prior`` (using a temporary, locally-seeded
-        NumPy RNG state that is restored afterwards -- does not disturb the sampler's
-        own RNG usage) and evaluates the exact model on each. Also computes
-        ``log_posterior``/``weights`` immediately (unlike ``reuse()``, which does not).
+        Draws ``size`` fresh samples from ``problem.prior`` (the internal-space prior, with an
+        own ``np.random.default_rng(seed)``, so the sampler's RNG usage is not disturbed) and
+        evaluates the exact model on each. Also computes ``log_posterior``/``weights``
+        immediately (unlike ``reuse()``, which does not).
 
         Args:
-            prior: prior distribution to draw test points from.
-            likelihood: likelihood used for the posterior weights.
-            solver: forward model, or a ``SolverSpec`` to construct one locally.
-            conf: configuration (``no_observations``, ``transform_before_surrogate``).
+            problem: the ``surrDAMH.Problem``; its prior, likelihood, ``no_observations`` and
+                solver are used (a ``SolverSpec`` is instantiated locally).
             size: number of test points.
-            seed: seed for the temporary RNG state used to draw the test points.
+            transform_before_surrogate: the value of ``Configuration.transform_before_surrogate``
+                of the run that will use this set (``True``: ``surrogate_parameters`` are the
+                physical parameters).
+            seed: seed of the generator used to draw the test points.
 
         Returns:
             A new ``TestData`` with ``log_posterior``/``weights`` already populated.
         """
-        solver = resolve_solver(solver)
-        prior = standardize_prior(prior)  # the sampler's internal space (2026-09-22)
+        if problem.solver_instance is not None:
+            solver = problem.solver_instance
+        else:
+            solver = resolve_solver(problem.solver_spec)
+        prior = problem.prior  # the sampler's internal space (standardized by Problem, 2026-09-22)
+        likelihood = problem.likelihood
         # WS4, 2026-09-18: an owned generator instead of save/restore-the-global-seed. Both are
         # deterministic for a given seed and don't disturb unrelated code; this one also matches
         # the generator=-based seeding the rest of the library uses since G4 (modules/seeds.py).
@@ -75,12 +84,12 @@ class TestData:
         rng = np.random.default_rng(seed)
         parameters = np.vstack([prior.rvs(generator=rng) for _ in range(size)])
 
-        if conf.transform_before_surrogate:
+        if transform_before_surrogate:
             surrogate_parameters = np.vstack([prior.transform(p.copy()) for p in parameters])
         else:
             surrogate_parameters = parameters.copy()
 
-        observations = np.zeros((size, conf.no_observations))
+        observations = np.zeros((size, problem.no_observations))
         for i, p in enumerate(parameters):
             solver.set_parameters(prior.transform(p.copy()))
             observations[i, :] = np.asarray(solver.get_observations()).reshape(-1)

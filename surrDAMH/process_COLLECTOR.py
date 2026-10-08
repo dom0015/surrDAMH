@@ -310,7 +310,7 @@ def run_COLLECTOR(conf: Configuration, surrogate_updater: Updater, surrogate_del
                         "every sampler is waiting for a surrogate but no snapshot has ever been collected, so "
                         "none can be trained: the stage that needs the surrogate must be preceded by a stage "
                         "with send_snapshots_to_collector=True, or pass surrogate_initial_training_data / "
-                        "surrogate_restart to SamplingFramework")
+                        "surrogate_restart to Problem.run_sampling")
                 print(f"collector: every sampler is waiting for the first surrogate but only {no_snapshots_total} "
                       f"snapshots exist (< min_snapshots_initial={conf.min_snapshots_initial}); training the initial "
                       "surrogate on them now instead of deadlocking -- lower min_snapshots_initial or lengthen the "
@@ -383,6 +383,13 @@ def run_COLLECTOR(conf: Configuration, surrogate_updater: Updater, surrogate_del
                     if comm.sampler_requests_evaluator():
                         comm.send_evaluator(evaluator_instance)
                         sampler_got_last_evaluator[i] = True
+                        did_something = True
+                elif evaluator_instance is not None and comm.sampler_waits_for_answer():
+                    # 2026-09-30: a stage that never polls (frozen DAMH, gradient-only MH) asks for
+                    # the newest evaluator at its start; this sampler already has it, so it is sent
+                    # again rather than leaving the sampler blocked until the next retraining
+                    if comm.sampler_requests_evaluator():
+                        comm.send_evaluator(evaluator_instance)
                         did_something = True
                 # poll the stop signal even before the first surrogate exists; otherwise a
                 # run whose samplers never need a surrogate (or stop before one is trained)

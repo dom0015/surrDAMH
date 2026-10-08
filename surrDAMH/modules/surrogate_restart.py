@@ -10,7 +10,7 @@ that every experiment script used to re-implement or re-wire by hand.
 Difference to ``surrDAMH.surrogates.reuse.SurrogateReused``: that function *constructs* an
 updater from a checkpoint (its hyper-parameters come out of the checkpoint), while this one
 restores state into an updater the user has already configured in the sampling script, and
-is applied by ``SamplingFramework`` itself on the collector rank.
+is applied by ``Problem.run_sampling`` itself on the collector rank.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ class SurrogateRestart:
     """
     Where a run's surrogate state lives, and how much of it to restore at start-up.
 
-    Pass an instance as ``SamplingFramework(..., surrogate_restart=...)``; it is applied
+    Pass an instance as ``problem.run_sampling(conf, stages, surrogate_restart=...)``; it is applied
     **on the collector rank only**, just before ``run_COLLECTOR``, because the collector
     rank is the only one that owns an ``Updater``.
 
@@ -72,7 +72,7 @@ class SurrogateRestart:
         return os.path.join(self.state_dir, SURROGATE_TRAINING_DATA_NAME)
 
     def describe(self) -> str:
-        """One-line description, logged by ``SamplingFramework`` at start-up."""
+        """One-line description, logged by ``Problem.run_sampling`` at start-up."""
         return f"SurrogateRestart(mode={self.mode!r}, state_dir={self.state_dir!r})"
 
     def apply(self, updater: Updater) -> list[npt.NDArray] | None:
@@ -125,7 +125,7 @@ class SurrogateRestart:
         Write ``updater``'s state to ``checkpoint_path``/``training_data_path`` so that a
         later run with the same ``state_dir`` can restore it.
 
-        Call it on the collector rank after ``SamplingFramework.run()`` returns. Note that
+        Call it on the collector rank after ``Problem.run_sampling()`` returns. Note that
         this overwrites the files ``apply()`` reads, which is what "continue where the last
         run stopped" means; use a different ``state_dir`` to keep the input state intact.
 

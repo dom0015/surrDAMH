@@ -40,10 +40,12 @@ true_observations = surrDAMH.solvers.calculate_artificial_observations(
 likelihood = surrDAMH.distributions.Normal(mean=true_observations, sd=0.1)
 
 # --- 4. configuration ---------------------------------------------------------
+# problem sizes (no_parameters=2, no_observations=2): solver_spec does not declare them, but
+# the prior (2 components) and the likelihood (true_observations, length 2) do, so Problem
+# resolves both from those -- no need to repeat them on Configuration.
+no_parameters, no_observations = 2, 2
 conf = surrDAMH.Configuration(
     output_dir="out_template_experiment",       # everything gets written under here
-    no_parameters=2,                            # must match the solver/prior
-    no_observations=2,                          # must match the solver/likelihood
     use_collector=True,                         # False = no surrogate model at all (plain MH only)
     use_solvers_pool=True,                       # False = solver runs in-process on each sampler (no spawn)
     no_solvers=2,                                # child solver processes spawned by the pool (only if use_solvers_pool)
@@ -55,14 +57,14 @@ conf = surrDAMH.Configuration(
 
 # --- 5. surrogate model -------------------------------------------------------
 updater = surrDAMH.surrogates.PolynomialSklearnUpdater(
-    no_parameters=conf.no_parameters, no_observations=conf.no_observations, max_degree=5)
+    no_parameters=no_parameters, no_observations=no_observations, max_degree=5)
 # updater = surrDAMH.surrogates.RBFInterpolationUpdater(
-#     no_parameters=conf.no_parameters, no_observations=conf.no_observations,
+#     no_parameters=no_parameters, no_observations=no_observations,
 #     neighbors=20, kernel="thin_plate_spline")
 # updater = surrDAMH.surrogates.KDTreeUpdater(
-#     no_parameters=conf.no_parameters, no_observations=conf.no_observations, no_nearest_neighbors=5)
+#     no_parameters=no_parameters, no_observations=no_observations, no_nearest_neighbors=5)
 # updater = surrDAMH.surrogates.NeuralNetworkUpdater(
-#     no_parameters=conf.no_parameters, no_observations=conf.no_observations,
+#     no_parameters=no_parameters, no_observations=no_observations,
 #     hidden_layer_sizes=(32, 32), solver="adamw")
 
 # --- 6. sampling stages --------------------------------------------------------
@@ -85,12 +87,10 @@ list_of_stages = [
 ]
 
 # --- 7. run --------------------------------------------------------------------
-sam = surrDAMH.SamplingFramework(conf, prior=prior, likelihood=likelihood,
-                                 list_of_stages=list_of_stages, solver_spec=solver_spec,
-                                 surrogate_updater=updater)
-sam.run()
+problem = surrDAMH.Problem(prior, likelihood, solver=solver_spec)
+run = problem.run_sampling(conf, list_of_stages, surrogate_updater=updater)
 
 # --- 8. report ------------------------------------------------------------------
 # called on every rank: rank 0 builds sampling_output/post_processing_output/report_extended.html
 # and summary.csv, the other ranks just wait at the internal MPI barrier.
-sam.write_report(observations=true_observations)
+run.write_report(observations=true_observations)

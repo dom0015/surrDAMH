@@ -22,6 +22,7 @@ from surrDAMH.modules.algorithm_interfaces import (AlgorithmConfiguration,
 from surrDAMH.modules.manifest import raw_data_columns, samples_columns
 from surrDAMH.modules.monitoring import SamplingOutputMonitor
 from surrDAMH.modules.proposals import Proposal
+from surrDAMH.solvers import check_observations_shape
 from surrDAMH.stages import Stage
 
 #: ``Sample.solver_tag`` of a proposal that was never handed to the solver because its
@@ -173,6 +174,7 @@ class AlgorithmBase:
         # output format v2: the header is written when (and only when) the file is created.
         self.no_parameters = int(self.conf.no_parameters)
         self.no_observations = int(self.conf.no_observations)
+        self._observations_shape_checked = False  # C3, see _evaluate_sample
         self.monitor.set_header("samples", samples_columns(self.no_parameters))
         self.monitor.set_header("raw_data", raw_data_columns(self.no_parameters, self.no_observations))
         self._prepare_run()
@@ -188,6 +190,13 @@ class AlgorithmBase:
             sample.observations = result
             sample.solver_tag = 0
         assert sample.observations is not None
+        if not self._observations_shape_checked and sample.solver_tag >= 0:
+            # C3 (2026-10-08): once per stage, on the first successful evaluation
+            provider = self.observation_provider
+            solver = getattr(provider, "solver", None)
+            solver_name = type(solver if solver is not None else provider).__name__
+            check_observations_shape(sample.observations, self.no_observations, solver_name)
+            self._observations_shape_checked = True
         sample.log_likelihood, sample.log_prior = self._compute_log_posterior_terms(
             sample.parameters,
             sample.observations,
@@ -480,6 +489,8 @@ class AlgorithmBase:
                 announce()
             self.surrogate_evaluator = self.evaluator_provider.get_evaluator()
             self.evaluator_provider.request_evaluator()
+            if not self.stage.surrogate_model_updates:
+                self._install_newest_evaluator()
         self.current.observations_approx = cast(npt.NDArray, self._get_surrogate_observations(self.current.parameters))
         # assert self.current.observations_approx is not None
         self.current.log_likelihood_approx, self.current.log_prior = self._compute_log_posterior_terms(
@@ -488,6 +499,35 @@ class AlgorithmBase:
         )
         if self.conf.use_surrogate_gradients:
             self._install_gradient_functions()
+
+    def _install_newest_evaluator(self) -> None:
+        """
+        Replace the evaluator just fetched by the collector's NEWEST one (2026-09-30).
+
+        Called only by a stage that does not update its surrogate (``surrogate_model_updates=
+        False``: frozen DAMH, or an MH stage using surrogate gradients only) and only when it
+        fetched the FIRST evaluator of the chain itself. That first message answers the request
+        posted at start-up, i.e. it is the first surrogate the collector trained; after an MH
+        warm-up the collector has usually retrained many times since, and a stage that never
+        polls again would keep that stale surrogate for its whole run (review notes §3,
+        ``19_efficiency_study_2026-09-28.md`` §4.4). ``get_newest_evaluator`` (MPI provider only)
+        blocks until the collector answers with its current evaluator -- the same one again if
+        nothing newer exists. Local providers do not have it and need nothing: their
+        ``get_evaluator`` already returns the newest trained evaluator. A newest evaluator that
+        predicts non-finite values at the current state is refused, as in
+        ``_refresh_surrogate_evaluator_if_needed``.
+        """
+        get_newest = getattr(self.evaluator_provider, "get_newest_evaluator", None)
+        if get_newest is None:
+            return
+        candidate = get_newest()
+        if candidate is None or candidate is self.surrogate_evaluator:
+            return
+        if not self._evaluator_is_finite(candidate):
+            self.counter_nonfinite_evaluators += 1
+            self._warn_about_nonfinite_evaluator(installed_anyway=False)
+            return
+        self.surrogate_evaluator = candidate
 
     def _install_gradient_functions(self) -> None:
         """

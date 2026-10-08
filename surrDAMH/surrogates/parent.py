@@ -195,7 +195,7 @@ class Updater:
         """
         Hook: supply per-observation normalization statistics derived from the likelihood.
 
-        Called once by ``SamplingFramework``/``run_local`` (via
+        Called once by ``Problem.run_sampling``/``run_sampling_local`` (via
         ``apply_output_normalization_from_likelihood``) for updaters configured with
         ``output_normalization="likelihood"``. No-op in the base class and in every updater
         that does not normalize its targets.
@@ -349,7 +349,7 @@ def apply_output_normalization_from_likelihood(updater, likelihood) -> None:
     """
     Feeds likelihood-derived normalization statistics into ``updater``, if it asked for them.
 
-    Called once by ``SamplingFramework`` and ``run_local``. Does nothing unless the updater
+    Called once by ``Problem.run_sampling`` and ``run_sampling_local``. Does nothing unless the updater
     is configured with ``output_normalization="likelihood"``. If the likelihood cannot
     supply usable per-observation statistics, warns (``RuntimeWarning``, naming the
     likelihood class) and leaves the updater at the identity normalization.

@@ -3,7 +3,7 @@
 """
 Sampling stages: what the chain does, in which order.
 
-``SamplingFramework(..., list_of_stages=[...])`` runs them in sequence on every chain; each
+``problem.run_sampling(conf, stages=[...])`` runs them in sequence on every chain; each
 stage continues from the last sample of the previous one. A stage combines an algorithm
 (plain MH, or surrogate-accelerated DAMH), a proposal (``surrDAMH.proposals``) and a
 stopping rule::
@@ -150,7 +150,7 @@ class Stage:
     def describe(self, index: int | None = None) -> str:
         """
         Multi-line summary of this stage's **effective** settings, printed once on rank 0 by
-        ``SamplingFramework.run()`` and by ``run_local()``.
+        ``Problem.run_sampling()`` and by ``Problem.run_sampling_local()``.
 
         Every field appears as ``name=value`` (the proposal spec with all its fields), with a
         trailing ``*`` on the ones that change the sampled distribution or the acceptance rate.

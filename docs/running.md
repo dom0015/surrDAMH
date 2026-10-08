@@ -1,5 +1,27 @@
 # Running
 
+## `Problem` and runs
+
+Build a `surrDAMH.Problem(prior, likelihood, solver)` once (`solver` is a `Solver` instance or
+a `SolverSpec` — one argument, type-dispatched). `no_parameters`/`no_observations` are resolved
+from whichever of `solver`/`prior`/`likelihood` supplies them (`problem.describe()` prints the
+sizes and where each came from; see [`configuration.md`](configuration.md)). Then run it:
+
+```python
+problem = surrDAMH.Problem(prior, likelihood, solver)
+run = problem.run_sampling(conf, stages, surrogate_updater=updater)   # MPI; call on every rank
+# or, with no MPI roles at all:
+run = problem.run_sampling_local(conf, stages, surrogate_updater=updater)
+run.write_report(observations=...)
+```
+
+Both return a `SamplingRun` (`.problem`, `.conf`, `.stages`, `.output_dir`, `.write_report(...)`).
+See `toy_examples/minimal_example.py` for the smallest `run_sampling` script.
+`toy_examples/one_process_only.py` and `toy_examples/post_processing_with_html_report.py` also
+call `run_sampling`, just under a single rank (`use_collector=False`, `use_solvers_pool=False`,
+one process); see "Single process / no MPI at all" below for the no-MPI-at-all alternative,
+`run_sampling_local`.
+
 ## Process counts and roles
 
 `Configuration.__post_init__` derives roles from `MPI.COMM_WORLD`'s size (`size`) and
@@ -35,7 +57,7 @@ mpiexec -n 4 python3 -m mpi4py my_experiment.py
 Prefer `-m mpi4py` over `-m mpi4py.run` / plain `python3`: it installs mpi4py's own
 excepthook, so an uncaught exception on rank 0 aborts the whole job even without the
 library's own guard. The library now also aborts the job itself, independent of how it
-was launched: `SamplingFramework.run()` wraps every role body, and `process_CHILD.py`
+was launched: `Problem.run_sampling()` wraps every role body, and `process_CHILD.py`
 wraps the spawned solver loop, so that ANY rank's uncaught exception (sampler,
 collector, solvers pool, or a spawned solver child) prints a traceback and calls
 `MPI.COMM_WORLD.Abort(1)` — no configuration is known to hang silently on an ordinary
@@ -58,13 +80,14 @@ collector rank to retrain the surrogate, or a pre-trained fixed `surrogate_evalu
 — neither of which a single sampler process without a collector can provide (see
 `docs/configuration.md`).
 
-For no MPI dependency at all, use `surrDAMH.runner_local.run_local(conf, prior,
-likelihood, stages, solver, updater=None, evaluator=None)`: one chain, in one Python
-process, reproducing rank 0 of an equivalent MPI run (same seed formula). It supports
-`updater=` for in-process DAMH-SMU (`LocalSurrogateManager` trains the surrogate
-in-process instead of needing a collector), `evaluator=` for a fixed surrogate, and
-continuation via `Configuration.initial_sample_type="continued"`. See
-`toy_examples/` for `run_local` usage and `docs/writing_a_surrogate.md`.
+For no MPI dependency at all, use
+`problem.run_sampling_local(conf, stages, surrogate_updater=None, surrogate_evaluator=None)`:
+one chain, in one Python process, reproducing rank 0 of an equivalent MPI run (same seed
+formula). It supports `surrogate_updater=` for in-process DAMH-SMU (`LocalSurrogateManager`
+trains the surrogate in-process instead of needing a collector), `surrogate_evaluator=` for a
+fixed surrogate, and continuation via `Configuration.initial_sample_type="continued"`.
+(`surrDAMH.runner_local.run_local` is the internal engine behind it — not part of the public
+API — in case you need to read the implementation.) See `docs/writing_a_surrogate.md`.
 
 ## Continuation
 
@@ -84,15 +107,14 @@ filename, are used).
 ## Surrogate restart
 
 A run can start from the surrogate a previous run ended with, instead of learning it again
-from scratch. `SamplingFramework` takes a `surrogate_restart=` argument
+from scratch. `Problem.run_sampling` takes a `surrogate_restart=` argument
 (`surrDAMH.SurrogateRestart`, `surrDAMH/modules/surrogate_restart.py`); it is applied on the
 **collector rank only**, immediately before the collector loop starts, since that is the
 only rank that owns an `Updater`.
 
 ```python
 restart = surrDAMH.SurrogateRestart(state_dir="out_previous_run/sampling_output", mode="state")
-sam = surrDAMH.SamplingFramework(conf, ..., surrogate_updater=updater, surrogate_restart=restart)
-sam.run()
+run = problem.run_sampling(conf, stages, surrogate_updater=updater, surrogate_restart=restart)
 if rank_world == conf.rank_collector:
     restart.save(updater)     # write this run's state back, for the next restart
 ```
@@ -147,7 +169,7 @@ env vars as a fallback for a torch import that has not happened yet).
 
 ## Start-up log
 
-`SamplingFramework.run()` and `run_local()` print `Configuration.describe()` and one
+`Problem.run_sampling()` and `run_sampling_local()` print `Configuration.describe()` and one
 `Stage.describe(i)` block per stage on rank 0 before anything else happens — the effective
 settings, after every silent correction. See
 [`configuration.md`](configuration.md#configurationdescribe--stagedescribe).
@@ -174,4 +196,4 @@ surrogate on the snapshots it has and prints
 `collector: every sampler is waiting for the first surrogate but only N snapshots exist ...`.
 Treat that line as a configuration warning: lower `min_snapshots_initial` or lengthen the
 preceding stage. With no snapshot at all the run stops with a `RuntimeError` that names the fix.
-`run_local` behaves the same way.
+`run_sampling_local` behaves the same way.

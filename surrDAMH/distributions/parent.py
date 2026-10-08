@@ -21,6 +21,49 @@ def rvs_with_generator(distribution, generator: "np.random.Generator | None"):
         return distribution.rvs()
 
 
+def distribution_dimension(dist) -> "int | None":
+    """
+    Number of components of ``dist`` if it can be read off the object, else ``None``.
+
+    Used by ``surrDAMH.Problem`` to find ``no_parameters`` (prior) and ``no_observations``
+    (likelihood). Never draws samples. ``Normal``/``StandardizedNormal``: ``n`` (``None`` for a
+    dimension-free ``Normal``, i.e. a scalar ``mean`` without ``dim``);
+    ``PriorIndependentComponents``: ``no_parameters``; ``GaussianMixture``: the length of the
+    mean vectors; ``FromScipy``: the scipy object's ``dim`` attribute if it has one; any other
+    object: its ``no_parameters`` attribute, then its ``dim`` attribute.
+    """
+    if dist is None or getattr(dist, "dimension_free", False):
+        return None
+    # local imports: those modules import this one
+    from surrDAMH.distributions.gaussian_mixture import GaussianMixture
+    from surrDAMH.distributions.independent_components import PriorIndependentComponents
+    from surrDAMH.distributions.normal import Normal, StandardizedNormal
+    if isinstance(dist, (Normal, StandardizedNormal)):
+        return int(dist.n)
+    if isinstance(dist, PriorIndependentComponents):
+        return int(dist.no_parameters)
+    if isinstance(dist, GaussianMixture):
+        means = np.asarray(dist.means)
+        return int(means.shape[1]) if means.ndim == 2 else None
+    if isinstance(dist, FromScipy):
+        dim = getattr(dist.scipy_rv, "dim", None)
+        return _as_dimension(dim)
+    for name in ("no_parameters", "dim"):
+        value = _as_dimension(getattr(dist, name, None))
+        if value is not None:
+            return value
+    return None
+
+
+def _as_dimension(value) -> "int | None":
+    """``value`` as a positive int, or ``None`` if it is not an integer (bools excluded)."""
+    if isinstance(value, (bool, np.bool_)) or value is None:
+        return None
+    if isinstance(value, (int, np.integer)) and int(value) > 0:
+        return int(value)
+    return None
+
+
 class Distribution:
     """
     Parent class of priors and likelihoods. Ready-made classes live in

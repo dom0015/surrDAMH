@@ -235,7 +235,7 @@ def build_proposal(stage: Stage, conf: "Configuration", prior: Distribution, see
     # Hamiltonian one (BlockProposal.__init__ sets its own needs_gradients to True iff any
     # sub-proposal needs gradients). Same message and exception type as before: one code path.
     assert not getattr(my_Prop, "needs_gradients", False) or conf.use_surrogate_gradients, \
-        "Hamiltonian proposals need use_surrogate_gradients=True (it may have been disabled by SamplingFramework, see warnings)"
+        "Hamiltonian proposals need use_surrogate_gradients=True (it may have been disabled by Problem.run_sampling, see warnings)"
     return my_Prop
 
 

@@ -20,14 +20,14 @@ sampling_output/
   notes/<stage.name>/rank%04d.csv          accepted, rejected, pre-rejected, sum, seed                  (header row)
   subchain_stats/<stage.name>/rank%04d.csv iteration, subchain_max_length, subchain_accepted, subchain_acceptance_rate, correction_log_ratio, outer_proposed_changed, outer_accepted, rank_world   (header row; DAMH stages only)
   adaptive_stats/<stage.name>/rank%04d.csv  one row per adaptation period                                (header row; adaptive=True stages only)
-  carry_over/<stage.name>.npz              carry_over__*, summary__*                                    (one file per adaptive stage, no rank suffix; written once by sampler rank 0 / run_local)
+  carry_over/<stage.name>.npz              carry_over__*, summary__*                                    (one file per adaptive stage, no rank suffix; written once by sampler rank 0 / run_sampling_local)
   last_sample/<stage.name>/rank%04d.npz    parameters (float64), no_parameters                          (one file per chain, written after each stage)
   surrogate_quality.csv                    snapshots_total, batch_size, rmse, max_abs_error             (header row; collector only)
   surrogate_quality_test.csv               update_index, snapshots_total, n_test, max_log_posterior, rmse, max_abs_error, weighted_rmse, weighted_mean_abs_error, weighted_ess   (header row; collector only; weighted_ess added 2026-09-18, finding S10 -- effective sample size of the posterior weights, Kish's formula; equals n_test when no weights are supplied)
   run_manifest.json                        see "Run manifest" below
 solver_output/rank<k>/                     solver-defined scratch directory
 post_processing_output/
-  summary.csv, report_extended.html, best_fit_solver_visualization_*.png    (written by SamplingFramework.write_report)
+  summary.csv, report_extended.html, best_fit_solver_visualization_*.png    (written by SamplingRun.write_report)
 ```
 
 `<stage.name>` is `alg%04d_<MH|MH-adaptive|DAMH|DAMH-SMU>` (`stages.stage_name`), e.g.
@@ -145,7 +145,7 @@ reads back the same way, so the reader is backwards compatible here.
 
 Written once (new 2026-09-21, no `rank%04d` suffix -- every rank already pooled to the
 identical state, see `GaussRandomWalk_adaptive.set_pooled_state`) at the end of an adaptive
-stage, by sampler rank 0 in the MPI runner and unconditionally by `run_local`: the same
+stage, by sampler rank 0 in the MPI runner and unconditionally by `run_sampling_local`: the same
 cross-rank hand-over that is printed to stdout as `Stage ... carry-over ...:`, so a report can
 show the proposal the *next* stage actually started from. Unlike `save_last_sample`, this is
 not guarded by `Stage.save_to_file` -- there is no separate switch for it.
@@ -164,13 +164,13 @@ None`, same as for a run produced before this file existed.
 
 ### `last_sample/<stage>/rank%04d.npz`
 
-Written by both the MPI sampler and `run_local` after every stage (regardless of
+Written by both the MPI sampler and `run_sampling_local` after every stage (regardless of
 `save_to_file`), so any later run can continue from it
 (`Configuration.initial_sample_type="continued"`, `continued_from_dir=...`).
 
 ## Run manifest (`run_manifest.json`)
 
-Written by rank 0 (or by `run_local`) before role dispatch and finalized after the run:
+Written by rank 0 (or by `run_sampling_local`) before role dispatch and finalized after the run:
 `manifest_version`, `format_version` (`2`), `surrdamh_version`, `runner`
 (`"mpi"`/`"local"`), timestamps, `hostname`, package versions, `git` (commit/dirty/branch),
 the full `configuration`/`stages`/`prior`/`likelihood` summaries, `surrogate`
@@ -178,7 +178,7 @@ the full `configuration`/`stages`/`prior`/`likelihood` summaries, `surrogate`
 `seed0 = 10*(no_stages*rank+i)` formula and every per-rank/per-stage seed, plus whether
 `initial_sample_type` makes the run reproducible), `mpi` layout, `environment`
 (thread-count env vars), `unverified_options` (e.g.
-`use_surrogate_gradients was disabled by SamplingFramework`), and `continued_from` (with the source run's own
+`use_surrogate_gradients was disabled by Problem.run_sampling`), and `continued_from` (with the source run's own
 manifest embedded, if it had one). Manifest writing/finalizing never aborts a run — any
 failure there is printed as a `WARNING`, not raised.
 
@@ -220,7 +220,7 @@ whose `carry_over/<stage>.npz` is missing (a run that predates it).
 
 `surrDAMH.post_processing.Samples(no_parameters, output_dir)` is a facade on top of
 `read_run` and keeps the plotting/statistics API used by
-`SamplingFramework.write_report()`; see its docstrings. Note that the posterior *field statistics*
+`SamplingRun.write_report()`; see its docstrings. Note that the posterior *field statistics*
 section evaluates the solver once per posterior state; pass `field_statistics_max_samples=<N>` to
 sub-sample N states (fixed seed) when chains are long and the solver is fast — otherwise the report
 can take longer than the sampling (see `library_notes/14_grf_validation_2026-09-17.md`, F1).

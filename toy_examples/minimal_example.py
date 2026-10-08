@@ -20,18 +20,18 @@ generated using the basic MH algorithm).
 """
 
 solver_spec = SolverSpecExample1()
-conf = surrDAMH.Configuration(output_dir="out_minimal_example", no_parameters=2, no_observations=1,
-                              use_collector=False, no_solvers=1)
+conf = surrDAMH.Configuration(output_dir="out_minimal_example", use_collector=False, no_solvers=1)
 prior = surrDAMH.distributions.PriorIndependentComponents([
     surrDAMH.distributions.NormalComponent(mu=0.0, sigma=1.0),
     surrDAMH.distributions.NormalComponent(mu=0.0, sigma=1.0),
 ])
-likelihood = surrDAMH.distributions.Normal(mean=5.0, sd=1.0)
+# mean=[5.0] (not the bare scalar 5.0): solver is a SolverSpec here, not a Solver instance, so
+# Problem cannot read no_observations off it -- the length of `mean` supplies it instead.
+likelihood = surrDAMH.distributions.Normal(mean=[5.0], sd=1.0)
 
 # sampling process stages:
 list_of_stages = []
 list_of_stages.append(surrDAMH.stages.Stage(algorithm="MH", proposal=RandomWalk(scale=0.5), max_evaluations=500))
 
-sam = surrDAMH.SamplingFramework(conf, prior=prior, likelihood=likelihood,
-                                 list_of_stages=list_of_stages, solver_spec=solver_spec)
-sam.run()
+problem = surrDAMH.Problem(prior, likelihood, solver=solver_spec)
+run = problem.run_sampling(conf, list_of_stages)

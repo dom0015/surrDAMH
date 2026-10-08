@@ -22,6 +22,7 @@ TAG_EVALUATOR_OBJECT = 4  # this message contains evaluator object (or None if s
 TAG_STOP_UPDATING = 5  # when sampler knows that it will not want new evaluator later
 TAG_INITIAL_SURROGATE = 6  # collector -> sampler, once at start-up: can an evaluator be provided?
 TAG_EVALUATOR_NEEDED = 7  # sampler -> collector: I am blocked waiting for my FIRST evaluator (2026-09-22)
+#                          or, since 2026-09-30, for an answer to my outstanding request (get_newest_evaluator)
 TAG_FIRST_SNAPSHOT = 10
 
 # Seconds to wait between printing a fatal traceback and calling MPI_Abort. MPI_Abort makes the
@@ -95,7 +96,7 @@ def check_tag_upper_bound(list_of_stages: List[Any], tag_ub: int | None = None) 
     floor would eventually pass an invalid tag.
 
     Diagnostic only: it never raises and never changes control flow. Called once, on rank 0, from
-    ``SamplingFramework.run()``.
+    ``Problem.run_sampling()``.
 
     Args:
         list_of_stages: the run's stages; each contributes ``min(max_evaluations, max_samples)``
@@ -173,7 +174,7 @@ def check_configuration_consistency(conf: Configuration, comm: Any = None) -> No
 
     Why the *requested* values and not the effective ones: ``use_surrogate_gradients`` may
     legitimately end up different per rank, since
-    ``SamplingFramework._configure_surrogate_gradients()`` disables it locally on a rank whose
+    ``core._configure_surrogate_gradients()`` disables it locally on a rank whose
     updater/evaluator cannot do gradients (only the collector holds an ``Updater``). Comparing
     the pre-mutation snapshot sidesteps that without needing a per-field exclusion list.
 
@@ -184,7 +185,7 @@ def check_configuration_consistency(conf: Configuration, comm: Any = None) -> No
     a result.
 
     Collective: must be called on every rank of ``comm`` (once per role, from
-    ``SamplingFramework.run()`` before role dispatch). A single ``bcast`` of a small dict of
+    ``Problem.run_sampling()`` before role dispatch). A single ``bcast`` of a small dict of
     primitives plus one ``allreduce``; the ``allreduce`` makes *every* rank raise when *any* rank
     sees a difference, so the job fails with the same error everywhere instead of one rank
     crashing while the rest block in a matching MPI call.
@@ -192,7 +193,7 @@ def check_configuration_consistency(conf: Configuration, comm: Any = None) -> No
     Args:
         conf: this rank's configuration.
         comm: communicator to check over; ``None`` means ``MPI.COMM_WORLD``. A size-1
-            communicator (or the MPI-free ``run_local()``, which never calls this) has nothing
+            communicator (or the MPI-free ``run_sampling_local()``, which never calls this) has nothing
             to compare against and returns immediately.
 
     Raises:
@@ -305,6 +306,24 @@ class CommEvaluator_sampler:
         buf = np.array([self.idx], dtype=int)
         self.comm_world.Send(buf=buf, dest=self.rank_collector, tag=TAG_EVALUATOR_NEEDED)
 
+    def get_newest_evaluator(self) -> Evaluator:
+        """
+        Block until the collector answers the outstanding request with its CURRENT evaluator,
+        then post the next request (2026-09-30). Precondition: an evaluator was received before
+        and a request is outstanding (as right after ``get_evaluator(); request_evaluator()``).
+
+        Normally the collector answers a request only once it has an evaluator this sampler has
+        not got yet; the ``TAG_EVALUATOR_NEEDED`` announcement (same message as
+        ``announce_waiting``, carrying the idx of the request being waited on) makes it answer
+        immediately, with the evaluator it already sent if nothing newer exists. Used by stages
+        that never poll again (frozen DAMH, gradient-only MH) so that they do not keep the first
+        surrogate the collector ever trained.
+        """
+        self.announce_waiting()
+        evaluator = self.get_evaluator()
+        self.request_evaluator()
+        return evaluator
+
     def get_evaluator(self) -> Evaluator:
         """
         Waits for current evaluator.
@@ -362,6 +381,7 @@ class CommEvaluator_collector():
         self.recv_buffer_needed = np.zeros(shape=(1,), dtype=int)
         self.request_needed_signal = self.comm_world.Irecv(buf=self.recv_buffer_needed, source=self.rank_sampler, tag=TAG_EVALUATOR_NEEDED)
         self.blocked_waiting_for_first_evaluator = False
+        self.announced_idx = 0  # request idx carried by the latched TAG_EVALUATOR_NEEDED message
         self.isend_request = None
 
     def sampler_is_blocked(self) -> bool:
@@ -372,16 +392,38 @@ class CommEvaluator_collector():
         if not self.blocked_waiting_for_first_evaluator and self.request_needed_signal is not None \
                 and self.request_needed_signal.Get_status():
             self.request_needed_signal.Wait()
+            # read before re-posting: the new Irecv reuses the buffer (2026-09-30)
+            self.announced_idx = int(self.recv_buffer_needed[0])
             self.request_needed_signal = self.comm_world.Irecv(buf=self.recv_buffer_needed, source=self.rank_sampler,
                                                                tag=TAG_EVALUATOR_NEEDED)
             self.blocked_waiting_for_first_evaluator = True
         return self.blocked_waiting_for_first_evaluator
+
+    def sampler_waits_for_answer(self) -> bool:
+        """
+        True if the sampler announced (``TAG_EVALUATOR_NEEDED``) that it is blocked on an update
+        request the collector has not answered yet (2026-09-30). Polled only once an evaluator
+        exists and this sampler already got it: ``CommEvaluator_sampler.get_newest_evaluator``
+        then needs an answer even though nothing newer exists. An announcement for a request
+        that was already answered (``announced_idx <= current_idx``, e.g. the one sent before
+        blocking for the first evaluator when that evaluator was already on its way) is stale
+        and dropped.
+        """
+        while self.sampler_is_blocked():
+            if self.announced_idx > self.current_idx:
+                return True
+            self.blocked_waiting_for_first_evaluator = False  # stale: drop it, look for a newer one
+        return False
 
     def _cancel_needed_signal(self) -> None:
         if self.request_needed_signal is not None:
             self.request_needed_signal.Cancel()
             self.request_needed_signal.Wait()
             self.request_needed_signal = None
+            # a sampler may announce more than once (get_newest_evaluator, 2026-09-30); receive any
+            # announcement that is still unmatched so that none is left behind at finalization
+            while self.comm_world.Iprobe(source=self.rank_sampler, tag=TAG_EVALUATOR_NEEDED):
+                self.comm_world.Recv(buf=self.recv_buffer_needed, source=self.rank_sampler, tag=TAG_EVALUATOR_NEEDED)
 
     def sampler_requests_evaluator(self) -> bool:
         """

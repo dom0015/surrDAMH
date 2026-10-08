@@ -18,10 +18,17 @@ class MySolver(surrDAMH.solvers.Solver):
 `self.parameters` and raises `ValueError` if its size differs from `no_parameters` (when
 that attribute is set). Override it only if the model needs the parameters in another form.
 `no_parameters`/`no_observations` are *declared* on `Solver` as `int` but not assigned, so a
-type checker (Pylance/pyright) knows every solver has them as plain `int` — `Configuration(
-no_parameters=my_solver.no_parameters, ...)` type-checks. Set them via `super().__init__(...)`
-or by plain assignment; a solver that sets neither raises `AttributeError` at the attribute the
-first time anything reads it, instead of silently reporting `None`.
+type checker (Pylance/pyright) knows every solver has them as plain `int` —
+`surrDAMH.Problem(prior, likelihood, solver=my_solver)` type-checks and, at run time, reads
+these two attributes off `my_solver` to resolve `no_parameters`/`no_observations` for the
+whole run (see `docs/configuration.md`'s "Sizes" section) if nothing else pins them first. Set
+them via `super().__init__(...)` or by plain assignment — **always declare both**, since a
+solver that sets neither raises `AttributeError` at the attribute the first time anything
+reads it (instead of silently reporting `None`), and `Problem` then has one less source to
+resolve the sizes from. A `SolverSpec` cannot be inspected this way (point 2 of the "Sizes"
+precedence list does not apply to it — it is not imported until the run starts), so a script
+that passes a `SolverSpec` needs the prior/likelihood (or an explicit `no_parameters=`/
+`no_observations=`) to supply the sizes instead.
 
 - `__init__(solver_id, output_dir, **kwargs)`: `solver_id` identifies this instance
   (e.g. the spawned child's rank, or the sampler rank running it locally) — key any
@@ -41,7 +48,7 @@ first time anything reads it, instead of silently reporting `None`.
   negative tag it yields `log_likelihood = -inf` and keeps the sample out of the
   surrogate training data.
 - `visualize_solution(show=False) -> list[(figure, axes)]`: optional, called by
-  `SamplingFramework.write_report()` on the best-fit sample; default returns `[]`.
+  `SamplingRun.write_report()` on the best-fit sample; default returns `[]`.
 - Optional duck-typed attributes (checked with `hasattr`, not required): `par_names`
   (parameter names, used in the HTML report), `field_builder`/`coords`/
   `measurement_points` (all three together enable the report's posterior-field-statistics
@@ -65,12 +72,12 @@ solver_spec = surrDAMH.solver_specification.SolverSpec(
 `importlib.util.spec_from_file_location` and instantiates
 `solver_class_name(**solver_parameters, solver_id=..., output_dir=...)`. Required
 whenever `Configuration.use_solvers_pool=True` (the pool rank loads the class once per
-spawned child); optional when `use_solvers_pool=False` (an already-built
-`solver_instance=` also works there).
+spawned child); optional when `use_solvers_pool=False` (an already-built `Solver`
+instance passed as `Problem(..., solver=my_solver)` also works there).
 
 **`solver_module_path` is stored absolute.** Since WS5 (2026-09-17), `SolverSpec`
 resolves a relative path with `os.path.abspath` in `__post_init__`
-(`SolverSpec.resolve_module_path()`, called again by `SamplingFramework.__init__` so that
+(`SolverSpec.resolve_module_path()`, called again by `Problem.__init__` so that
 subclasses defining their own `__init__` are covered too). The resolution happens on the
 **launching rank, at construction time**, so what the solvers pool broadcasts to its
 spawned children is always an absolute path. A relative path like
@@ -96,3 +103,17 @@ terminate signal. The pool rank itself never calls the solver directly — it on
 requests from sampler ranks to whichever child is free. See `docs/running.md` for the
 resulting process-count table and `library_notes/00_overview.md` §7 for the full
 request/response protocol.
+
+## Two checks that catch a mis-declared solver
+
+- **Start-up (solver-pool only):** every spawned child gathers its own declared
+  `(no_parameters, no_observations)` (`None` if the solver sets neither attribute) to the
+  pool rank, which compares them against the resolved `Configuration` values and aborts the
+  job with a `ValueError` naming the `solver_id` and both sets of values on a mismatch. A
+  solver that declares neither attribute only gets a printed warning, not an error — declare
+  both if you want the mismatch caught here rather than at first evaluation.
+- **First evaluation (every run):** the first time a solver (in-process, spawned child, or
+  `Stage.use_only_surrogate=True`) returns observations, their shape is checked against
+  `(no_observations,)`; a mismatch raises `ValueError` naming the solver class and the two
+  shapes. Checked once per stage, not every call, to keep the per-evaluation overhead at
+  zero.

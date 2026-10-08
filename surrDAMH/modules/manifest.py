@@ -5,7 +5,7 @@ Run manifest: a machine-readable record of everything that affects the posterior
 for one sampling run (``library_notes/09_improvement_plan.md`` WS4, §0 principle 4).
 
 This module is MPI-free on purpose (no ``mpi4py`` import): MPI layout numbers are passed
-in as a plain dict (``mpi_layout``) by the caller (``SamplingFramework.run()`` on rank 0,
+in as a plain dict (``mpi_layout``) by the caller (``Problem.run_sampling()`` on rank 0,
 or ``runner_local.run_local()``), so the module can be unit-tested without MPI and reused
 by both runners.
 
@@ -279,7 +279,7 @@ def _continued_from(conf: Any) -> dict[str, Any] | None:
 def _unverified_options(conf: Any, use_surrogate_gradients_requested: bool | None) -> list[str]:
     options = []
     if (use_surrogate_gradients_requested and not conf.use_surrogate_gradients):
-        options.append("use_surrogate_gradients was disabled by SamplingFramework")
+        options.append("use_surrogate_gradients was disabled by Problem.run_sampling")
     return options
 
 

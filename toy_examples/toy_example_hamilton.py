@@ -53,12 +53,15 @@ likelihood = surrDAMH.distributions.Normal(mean=observations, sd=1.0)
 # --- 4. configuration -----------------------------------------------------------
 conf = surrDAMH.Configuration(
     output_dir=output_dir,
-    no_parameters=no_parameters,
-    no_observations=no_observations,
     use_solvers_pool=False,      # solver runs locally on each sampler process
     min_snapshots_to_update=0,
     min_snapshots_initial=0,
 )
+
+# problem: solver_instance declares no_parameters/no_observations, matching the local
+# variables above; built here (rather than at the run call) so TestData.generate (step 6)
+# can use it.
+problem = surrDAMH.Problem(prior, likelihood, solver=solver_instance)
 
 # --- 5. surrogate model (neural network) -----------------------------------------
 updater = Updater(
@@ -80,7 +83,7 @@ updater = Updater(
     gradient_clip_norm=2.0,
     weight_decay=1e-3,
 )
-# restored on the collector rank by SamplingFramework.run(), before the collector loop starts:
+# restored on the collector rank by Problem.run_sampling(), before the collector loop starts:
 surrogate_restart = SurrogateRestart(state_dir=conf.output_dir + "/sampling_output",
                                      mode=SURROGATE_RESTART_MODE)
 
@@ -92,10 +95,10 @@ if rank_world == conf.rank_collector:
     try:
         surrogate_test_data = TestData.reuse(conf.output_dir)
     except FileNotFoundError:
-        surrogate_test_data = TestData.generate(prior, likelihood, solver_instance, conf,
-                                                size=SURROGATE_TEST_SET_SIZE, seed=SURROGATE_TEST_SET_SEED)
+        surrogate_test_data = TestData.generate(problem, size=SURROGATE_TEST_SET_SIZE,
+                                                seed=SURROGATE_TEST_SET_SEED)
         surrogate_test_data.save(conf.output_dir)
-    # log_posterior/weights are filled in by SamplingFramework if they are still missing
+    # log_posterior/weights are filled in by Problem.run_sampling if they are still missing
     print(f"Collector - surrogate test set: {surrogate_test_data.get_size()} points.", flush=True)
 
 # --- 7. sampling stages -------------------------------------------------------------
@@ -111,17 +114,13 @@ list_of_stages = [
 ]
 
 # --- 8. run ----------------------------------------------------------------------------
-sam = surrDAMH.SamplingFramework(
+run = problem.run_sampling(
     conf,
-    prior=prior,
-    likelihood=likelihood,
+    list_of_stages,
     surrogate_updater=updater,
-    list_of_stages=list_of_stages,
-    solver_instance=solver_instance,
     surrogate_test_data=surrogate_test_data,
     surrogate_restart=surrogate_restart,
 )
-sam.run()
 
 if rank_world == conf.rank_collector and SAVE_SURROGATE_STATE:
     surrogate_restart.save(updater)
@@ -129,5 +128,5 @@ if rank_world == conf.rank_collector and SAVE_SURROGATE_STATE:
 # --- 9. report ---------------------------------------------------------------------------
 # called on every rank: rank 0 writes post_processing_output/report_extended.html and
 # summary.csv, the other ranks only wait in the internal barrier.
-sam.write_report(observations=observations, par_names=["par0", "par1"],
+run.write_report(observations=observations, par_names=["par0", "par1"],
                  parameters_to_disp=list(range(conf.no_parameters)))

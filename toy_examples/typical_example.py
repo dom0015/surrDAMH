@@ -26,12 +26,16 @@ from surrDAMH.stages import Stage
 solver_spec = solver_examples.solver_spec_examples.SolverSpecExample2()
 
 # configuration (specification of basic settings of the sampling framework):
-conf = surrDAMH.Configuration(output_dir="out_typical_example", no_parameters=2, no_observations=1, min_snapshots_initial=4)
+conf = surrDAMH.Configuration(output_dir="out_typical_example", min_snapshots_initial=4)
+
+# problem sizes: solver_spec does not declare them, but the prior (2-D) and the likelihood
+# (below) do, so Problem resolves no_parameters=2, no_observations=1 from those.
+no_parameters, no_observations = 2, 1
 
 # choice of surrogate model:
-updater = surrDAMH.surrogates.PolynomialSklearnUpdater(no_parameters=conf.no_parameters, no_observations=conf.no_observations)
-# updater = surrDAMH.surrogates.RBFInterpolationUpdater(no_parameters=conf.no_parameters, no_observations=conf.no_observations)
-# updater = surrDAMH.surrogates.KDTreeUpdater(no_parameters=conf.no_parameters, no_observations=conf.no_observations, no_nearest_neighbors=5)
+updater = surrDAMH.surrogates.PolynomialSklearnUpdater(no_parameters=no_parameters, no_observations=no_observations)
+# updater = surrDAMH.surrogates.RBFInterpolationUpdater(no_parameters=no_parameters, no_observations=no_observations)
+# updater = surrDAMH.surrogates.KDTreeUpdater(no_parameters=no_parameters, no_observations=no_observations, no_nearest_neighbors=5)
 
 # Gaussian prior distribution:
 prior = surrDAMH.distributions.FromScipy(scipy.stats.multivariate_normal(mean=[-1.0, 1.0], cov=np.eye(2)))
@@ -49,9 +53,8 @@ list_of_stages.append(Stage(algorithm="DAMH", proposal=RandomWalk(scale=1.0), ti
 # during DAMH stage, surrogate model is used but not updated:
 list_of_stages.append(Stage(algorithm="DAMH", proposal=RandomWalk(scale=1.0), time_limit=20, surrogate_model_updates=False))
 
-sam = surrDAMH.SamplingFramework(conf, surrogate_updater=updater, prior=prior, likelihood=likelihood,
-                                 list_of_stages=list_of_stages, solver_spec=solver_spec)
-sam.run()
+problem = surrDAMH.Problem(prior, likelihood, solver=solver_spec)
+run = problem.run_sampling(conf, list_of_stages, surrogate_updater=updater)
 
 # post processing:
 comm_world = MPI.COMM_WORLD

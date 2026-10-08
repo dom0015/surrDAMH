@@ -210,7 +210,7 @@ class PyTorchNNEvaluator(Evaluator):
 #   "multiplicity").
 # - Output normalization: "likelihood" (default) centres the targets on the observed data and
 #   scales by the per-observation noise sd, both taken from the likelihood via
-#   Updater.set_output_normalization (called once by SamplingFramework / run_local); "manual"
+#   Updater.set_output_normalization (called once by Problem.run_sampling / run_sampling_local); "manual"
 #   uses output_mean/output_scale; "identity" = no normalization (the pre-WS6 default).
 # - Full-batch L-BFGS preset (replaces the deleted NeuralNetworkUpdaterBasic):
 #   NeuralNetworkUpdater(..., solver="lbfgs", batch_size=None, replay_ratio=0.0,

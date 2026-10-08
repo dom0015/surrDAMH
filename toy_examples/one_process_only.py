@@ -17,18 +17,19 @@ and samples are generated using the basic MH algorithm).
 """
 
 solver_instance = Solver_illustrative_local()
-conf = surrDAMH.Configuration(output_dir="out_one_process_only", no_parameters=2, no_observations=1,
+conf = surrDAMH.Configuration(output_dir="out_one_process_only",
                               use_collector=False, use_solvers_pool=False)
 prior = surrDAMH.distributions.PriorIndependentComponents([
     surrDAMH.distributions.NormalComponent(mu=0.0, sigma=1.0),
     surrDAMH.distributions.NormalComponent(mu=0.0, sigma=1.0),
 ])
+# dimension-free: mean=5.0 is a bare scalar, but solver_instance declares no_observations=1,
+# so Problem can broadcast the likelihood to the right size.
 likelihood = surrDAMH.distributions.Normal(mean=5.0, sd=1.0)
 
 # sampling process stages:
 list_of_stages = []
 list_of_stages.append(surrDAMH.stages.Stage(algorithm="MH", proposal=surrDAMH.proposals.RandomWalk(scale=0.5), max_evaluations=500))
 
-sam = surrDAMH.SamplingFramework(conf, prior=prior, likelihood=likelihood,
-                                 list_of_stages=list_of_stages, solver_instance=solver_instance)
-sam.run()
+problem = surrDAMH.Problem(prior, likelihood, solver=solver_instance)
+run = problem.run_sampling(conf, list_of_stages)

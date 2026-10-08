@@ -31,13 +31,13 @@ class Solver:
     Keep the ``solver_id``/``output_dir`` keyword arguments in ``__init__``: the library
     passes them whenever it constructs the solver itself (from a ``SolverSpec``).
 
-    Three ways to hand the model to ``SamplingFramework``:
+    Three ways to hand the model to ``surrDAMH.Problem(prior, likelihood, solver=...)``:
 
-    - ``solver_instance=MySolver(...)``: simplest; requires
+    - ``solver=MySolver(...)``: simplest; requires
       ``Configuration.use_solvers_pool=False`` (the solver then runs inside every sampler
       process). Every sampler rank runs the script and builds its own instance, so keep the
       constructor deterministic (seed any random data).
-    - ``solver_spec=SolverSpec(...)`` naming the ``.py`` file and class: required with
+    - ``solver=SolverSpec(...)`` naming the ``.py`` file and class: required with
       ``use_solvers_pool=True`` (spawned solver processes import the file themselves), also
       fine without the pool. See ``surrDAMH.solver_specification.SolverSpec``.
     - a ready-made example from ``toy_examples/solver_examples/solver_spec_examples.py``.
@@ -48,7 +48,7 @@ class Solver:
 
     Parameters arrive in physical space (after ``prior.transform``). An instance is called
     many times with different parameters and must not keep state between calls beyond what
-    ``set_parameters`` sets. Optional extras picked up by ``SamplingFramework.write_report``:
+    ``set_parameters`` sets. Optional extras picked up by ``SamplingRun.write_report``:
     ``visualize_solution()`` (figures of the best fit) and a ``par_names`` attribute (parameter
     names). Full contract: ``docs/writing_a_solver.md``.
     """
@@ -144,6 +144,19 @@ class Solver:
         """Same as ``set_parameters_and_get_observations(parameters)``."""
         self.set_parameters(parameters)
         return self.get_observations()
+
+
+def check_observations_shape(observations, no_observations: int, solver_name: str) -> None:
+    """
+    C3 (2026-10-08): raise ``ValueError`` unless ``observations`` has shape
+    ``(no_observations,)``, the ``Solver.get_observations`` contract. Called on the first
+    successful evaluation of a stage (sampler) or of a spawned solver child.
+    """
+    returned = np.shape(observations)
+    if returned != (int(no_observations),):
+        raise ValueError(f"{solver_name}.get_observations() returned shape {returned}, expected "
+                         f"({int(no_observations)},) (no_observations={int(no_observations)}); return a flat "
+                         "array with one value per observation")
 
 
 def get_solver_from_spec(solver_spec: SolverSpec, solver_id: int = 0, solver_output_dir: str | None = None) -> Solver:

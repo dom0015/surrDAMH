@@ -829,6 +829,60 @@ and their test flipped from pinning the bug to pinning the fix.
 | `SurrogateAsSolver` + `use_only_surrogate` | shape mismatch (A20) | shape tests + MPI I5 | fixed (WS3) |
 | `AlgorithmBase._prepare_run` after `use_only_surrogate` | surrogate obs leaked into next stage (A11) | `test_stage_after_use_only_surrogate_starts_from_exact_observations` | fixed (WS3) |
 
+**[bug] Frozen DAMH stage directly after an MH stage uses the stale first evaluator (found
+2026-09-29, `19_efficiency_study_2026-09-28.md` §4.4, not fixed).** `Stage(algorithm="DAMH",
+surrogate_model_updates=False)` placed right after an MH warm-up installs, in
+`AlgorithmBase._initialize_current_approximation`, whatever evaluator message is waiting for the
+request posted at start-up — the first network the collector trained (on `min_snapshots_initial`
+snapshots) — and never polls again. Measured: surrogate-vs-exact RMSE 0.13–0.14 in that stage
+(noise 0.01; 0.0006 in a frozen stage that follows a DAMH-SMU stage), 0 accepted of 400 000
+proposals with a Hamiltonian proposal, 0.5 % with a random walk. A DAMH-SMU stage replaces the
+stale evaluator within a few iterations, and a frozen stage after an SMU stage inherits a current
+one, so the layouts used so far were unaffected. Fix: at the start of a non-updating DAMH stage,
+drain pending evaluator messages and take the newest (or post a fresh request and wait for its
+answer). Also worth a warning: a DAMH stage whose exact acceptance is exactly zero after ~1 000
+iterations. Diagnostic runs: `tmp_efficiency_study_2026-09-28/runs/{D_frozen_only,
+D_frozen_only_eps,X_smu_eps,X_frozen_rw}`.
+
+**Fixed 2026-09-30.** A stage with `surrogate_model_updates=False` that fetches the chain's first
+evaluator itself (frozen DAMH, and — same bug, confirmed — an MH stage with a Hamiltonian proposal
+using surrogate gradients only) now calls `AlgorithmBase._install_newest_evaluator` right after that
+fetch: `CommEvaluator_sampler.get_newest_evaluator` re-sends the existing `TAG_EVALUATOR_NEEDED`
+int (idx of the outstanding request) and blocks; the collector
+(`CommEvaluator_collector.sampler_waits_for_answer`, drops announcements whose idx was already
+answered) replies at once with its current evaluator, the same one again if it has not retrained.
+Stages after an SMU stage (evaluator already held), DAMH-SMU stages and `run_local` (its
+`get_evaluator` already returns the newest) take no new path. The suggested "drain pending messages"
+variant would not work: the newer evaluator is only sent after a new request, so nothing newer is
+ever pending. Verified: manual check (MH 300 → frozen DAMH 300, `Solver_illustrative_local` with
+2 ms delay, polynomial updater, `min_snapshots_initial=4`, 2 samplers + collector) frozen stage
+0/300 accepted per chain and RMSE(obs_approx, obs) 7.55 before, 289/300 and 292/300 accepted with
+RMSE 0.021 after; Hamiltonian MH stage 0/200 → 165/200 and 154/200 accepted; deterministic layouts
+(single training on initial data) bit-identical before/after in `samples` and `raw_data`, incl.
+SMU → frozen and MH → SMU → frozen; regression test
+`tests/mpi/test_mpi_surrogate.py::test_frozen_damh_after_mh_uses_the_newest_evaluator` fails on the
+old code (RMSE 7.21) and passes on the new. Not done: the suggested warning for a DAMH stage with
+zero exact acceptance; a frozen stage after `SMU → MH` still inherits the evaluator the SMU stage
+last installed (not the collector's newest).
+
+**[bug] `toy_examples/grf_diffusion.py::Solver_diffusion_GRF.get_observations` (found 2026-09-28,
+not fixed yet, author to decide).** The solution is evaluated with `cells = np.zeros(...)`
+("dummy cell indices"), i.e. every measurement point is evaluated in mesh cell 0. dolfinx then
+returns the bilinear extrapolation of cell 0's four nodal values to each point, not the solution
+there. Consequences, all verified with a scratch script on 2026-09-28: (i) with a constant field
+the profile is linear, so the extrapolation coincides with the truth and the error is invisible;
+(ii) for a random field the observations differ from the true point values by up to 0.045 on the
+3×3 grid (noise sd in the examples: 0.03); (iii) cell 0 touches the left Dirichlet boundary, so
+only two of its nodal values are free and **the forward map has rank 2 for any number of
+observation points** — this is why notes 14 §1.1 and 18 §1.1 measured "only v₁ constrained, v₂
+weakly" and why adaptive pCN ran to β = 1 there. Fix: compute the colliding cells once in
+`__init__` (`geometry.bb_tree` → `compute_collisions_points` → `compute_colliding_cells`) and pass
+them to `eval`. The fix changes the posterior of every GRF example and the artificial observations
+(`generate_artificial_observations` calls the same method), so the sampling numbers in notes 14 and
+18 describe the rank-2 problem, not the diffusion problem they claim; their *relative* conclusions
+(sub-chain length dominant, surrogate accuracy ceiling) are not affected in kind, but the
+"posterior ≈ prior in 18 of 20 directions" statement is an artefact of the bug.
+
 **[read]** the testing plan's item 8 prediction (`matrix_rank(sd_or_cov) ≤ 10` for `period=10`)
 is wrong: `self.samples` accumulates across periods, so rank eventually reaches full.
 `test_adaptive_random_walk_reaches_full_rank_covariance` asserts the real behaviour; corrected
@@ -1136,6 +1190,41 @@ finding-by-finding version and `09_improvement_plan.md` §1/§4/§6 for the work
 - Raw material: `toy_examples/out_adaptivity_research_2026-09-20/` (three reviews with per-reference
   verification, prototype scripts, `results_proto.csv` 1605 runs, 13 figures) — an `out_*` directory,
   the author's to keep or delete.
+
+### (b4) Added 2026-09-29 by the efficiency study (`19_efficiency_study_2026-09-28.md` §7) — decision-free unless marked
+
+- **Silent dead DAMH chain.** The stale-evaluator bug above produced a chain that accepted 0 of
+  400 000 proposals for 20 minutes with nothing but the per-iteration progress line. Suggest a
+  warning when a stage's exact acceptance is exactly zero after N (say 1 000) iterations, and a
+  start-up warning when a non-adaptive Hamiltonian/pCN/RandomWalk stage has nothing to carry from
+  (it silently falls back to the library default step; §4.4).
+- **[decide] Adaptation target of RandomWalk/pCN inside a DAMH sub-chain.** Both adapt on the *outer*
+  acceptance probability, which pre-rejection keeps near the target while the sub-chain accepts 1–2 %
+  of its steps (σ inflates to 1.5–1.8 with sub-chain 20–100). An option to score the sub-chain
+  acceptance instead (note 16's α-scoring item) would test the alternative (§4.2). **Measured
+  2026-09-29 (`21_pcn_investigation_2026-09-29.md` §4):** with a 200-step pCN sub-chain the adaptive
+  β runs to 0.25 (sub-chain acceptance 0.3 %, 0.027 ESS/eval) while a fixed β = 0.10 (sub-chain
+  acceptance 11 %) gives 0.063 — 2.3×. The defect is real and grows with the sub-chain length.
+- **[design] Generalised pCN.** pCN is isotropic in the prior's internal space; on the corrected GRF
+  posterior (eigen-sd 1.02 → 0.087) it is 10–16× behind the covariance random walk at both proposals'
+  optima, and 10× behind the Hamiltonian proposal in DAMH at equal surrogate cost (note 21). A pCN
+  whose reference Gaussian is the learned posterior covariance (with the corresponding prior-ratio
+  correction in the acceptance) would remove the handicap; the library has no such proposal. **Side-tested 2026-09-30 (note 21 §8,
+  stand-alone script, no library change):** with the covariance the adaptive random walk actually
+  learned, gpCN at β 0.4–0.6 gives 2–2.5× the covariance random walk and 25× plain pCN on P1; the
+  `I + low rank` form (prior in the uninformed directions, keeps the function-space robustness) is as
+  good as the full one; β = 1 is only good with the exact posterior covariance. ≈ 30 lines +
+  a posterior-recovery test if implemented.
+- **Frozen-stage slowdown of random-walk DAMH.** With `surrogate_model_updates=False` and
+  `send_snapshots_to_collector=False` the frozen stage took 2–3× the wall time of the DAMH-SMU stage
+  doing the same surrogate work (`B_rw_50`: 491 → 1497 s; `E_rw_50`: 383 → 3042 s); Hamiltonian
+  schemes show no such gap. Unexplained; needs a profile of the sampler loop in that configuration (§6).
+- **Polynomial/RBF + `min_snapshots_to_update=0` at 10⁵ snapshots stalls the samplers.** Degree-3
+  polynomial: 552 s for a 20 000-evaluation MH warm-up that takes 22 s with the network, 8 176 s for
+  the DAMH-SMU stage; RBF (50 neighbours) timed out after 4 h. The default `0` is right for the
+  network (trains continuously on the idle collector) and wrong for refit-from-scratch updaters when
+  the snapshot count is large; a start-up note, or a size-dependent default for those updaters, would
+  help (§4.3).
 
 ### (c) Future work by design (deliberately deferred, not "not done")
 

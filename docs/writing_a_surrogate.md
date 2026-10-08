@@ -4,7 +4,7 @@ A surrogate approximates the forward model to make DAMH's sub-chains cheap (and,
 optionally, to provide gradients for Hamiltonian-family proposals). Two roles:
 
 - **`Updater`** owns the training data and the trainable state; runs on the collector
-  rank (`process_COLLECTOR.run_COLLECTOR`) or in-process for `run_local`'s
+  rank (`process_COLLECTOR.run_COLLECTOR`) or in-process for `run_sampling_local`'s
   `LocalSurrogateManager`. Passive: the caller decides *when* to call `add_data`/
   `train`/`get_evaluator`, governed by `Configuration.min_snapshots_initial`/
   `min_snapshots_to_update`.
@@ -75,7 +75,7 @@ hands the weights to its fit. The collector logs the chosen policy at start-up.
 - **`"likelihood"` (default)** — the training targets are centred on the observed data
   (`likelihood.mean`) and scaled by the per-observation noise standard deviation
   (`likelihood.sd` broadcast to `no_observations`, or `sqrt(diag(likelihood.cov))`).
-  `SamplingFramework.__init__` and `run_local` call
+  `Problem.run_sampling`/`run_sampling_local` call
   `Updater.set_output_normalization(mean, scale)` once for it. If the likelihood cannot
   supply usable statistics, a `RuntimeWarning` naming the likelihood class is issued and
   the updater stays at the identity.

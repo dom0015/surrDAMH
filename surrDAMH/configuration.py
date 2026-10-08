@@ -84,7 +84,7 @@ def normalize_for_comparison(value: Any, _depth: int = 0) -> Any:
 
 # Maintainer notes (moved out of the Configuration docstring on 2026-09-21):
 #
-# Cross-rank consistency check: since 2026-09-18 (finding 2.9), SamplingFramework.run()
+# Cross-rank consistency check: since 2026-09-18 (finding 2.9), Problem.run_sampling()
 # broadcasts rank 0's *requested* values of POSTERIOR_AFFECTING_FIELDS and every rank
 # asserts equality, so a script that builds a different Configuration per rank fails at
 # start-up instead of silently sampling a different posterior per chain
@@ -99,7 +99,7 @@ def normalize_for_comparison(value: Any, _depth: int = 0) -> Any:
 # trained on); min_snapshots_initial/min_snapshots_to_update/max_collected_snapshots_per_loop
 # (control exactly when the surrogate is (re)trained, hence the DAMH-SMU accept/reject
 # sequence for runs that use a collector); use_surrogate_gradients (may be silently
-# disabled by SamplingFramework for an incompatible surrogate, see run_manifest.json's
+# disabled by Problem.run_sampling for an incompatible surrogate, see run_manifest.json's
 # use_surrogate_gradients_requested); initial_sample_type (every type is reproducible
 # since G4, 2026-09-17: "prior"/"user_specified" draw from
 # np.random.default_rng(10*no_stages*rank_world + 3), see surrDAMH.modules.seeds); and
@@ -142,7 +142,7 @@ def normalize_for_comparison(value: Any, _depth: int = 0) -> Any:
 # documented.
 #
 # Invalid combinations that raise (at Stage/proposal construction, i.e. at
-# SamplingFramework.run() time, not eagerly at Configuration() time): an unknown
+# Problem.run_sampling() time, not eagerly at Configuration() time): an unknown
 # Stage.algorithm; a DAMH or Hamiltonian-family first stage with no evaluator
 # available yet (no surrogate_updater/preloaded snapshots when use_collector=True, or no
 # fixed surrogate_evaluator when use_collector=False -- see use_collector below); a pCN
@@ -163,17 +163,21 @@ class Configuration:
     output layout. See ``docs/configuration.md`` for the full field reference.
 
     Args:
-        no_parameters: Number of unknown parameters of the forward model (the dimension
-            of the parameter space). Required. (posterior-affecting)
-        no_observations: Number of observed values (the dimension of the observation
-            space). Required. (posterior-affecting)
         output_dir: Root directory where samples and other outputs are written. Required.
+        no_parameters: Number of unknown parameters of the forward model (the dimension
+            of the parameter space). Optional: ``None`` (default) takes the value
+            ``surrDAMH.Problem`` resolved (from ``Problem(no_parameters=)``, the solver, or the
+            prior) when the run starts; a value given here must agree with it.
+            (posterior-affecting)
+        no_observations: Number of observed values (the dimension of the observation
+            space). Optional, resolved like ``no_parameters`` (from the solver or the
+            likelihood). (posterior-affecting)
         use_solvers_pool: ``True``: one MPI rank runs a solvers pool that spawns
             ``no_solvers`` child processes, each importing and constructing the solver from a
-            ``SolverSpec`` -- so ``SamplingFramework`` must get ``solver_spec=``; a ready
-            ``solver_instance`` cannot be used (it cannot be shipped to a spawned process).
-            ``False``: the solver runs inside every sampler process; ``solver_instance=`` or
-            ``solver_spec=`` both work. Default: ``True``.
+            ``SolverSpec`` -- so ``Problem`` must get ``solver=SolverSpec(...)``; a ready
+            ``Solver`` instance cannot be used (it cannot be shipped to a spawned process).
+            ``False``: the solver runs inside every sampler process; a ``Solver`` instance or a
+            ``SolverSpec`` both work. Default: ``True``.
         no_solvers: Number of child solver processes spawned by the solvers pool. Ignored
             when ``use_solvers_pool=False``. Default: ``2``.
         solver_maxprocs: Number of MPI processes used by each spawned solver. Ignored when
@@ -181,7 +185,7 @@ class Configuration:
         use_collector: If ``False``, no surrogate model is trained during the run -- an
             ``Updater`` only ever runs on the collector rank. DAMH and Hamiltonian-family
             stages then need a pre-trained, fixed ``surrogate_evaluator`` passed to
-            ``SamplingFramework`` instead of a ``surrogate_updater`` (no in-run updates,
+            ``Problem.run_sampling`` instead of a ``surrogate_updater`` (no in-run updates,
             no DAMH-SMU). MH-only stages work with any combination of ``use_collector``
             and ``use_solvers_pool``. Default: ``True``. (posterior-affecting)
         paths_to_append: Directories appended to ``sys.path`` in the process that builds
@@ -215,7 +219,7 @@ class Configuration:
             on the internal (standardized) parameters the chain works with; if ``True``, on
             the physical parameters the solver receives. Default: ``False``. (posterior-affecting)
         use_surrogate_gradients: Whether Hamiltonian-family proposals may use surrogate
-            autograd. May be silently disabled by ``SamplingFramework`` if the surrogate
+            autograd. May be silently disabled by ``Problem.run_sampling`` if the surrogate
             is incompatible -- check ``run_manifest.json`` for the effective value.
             Default: ``True``. (posterior-affecting)
         save_snapshots_to_file: If ``True``, write every exact-model evaluation -- the
@@ -241,7 +245,7 @@ class Configuration:
             updates. No effect on the other ranks. Default: ``False``.
 
     Some field combinations are only checked when a run actually starts (at
-    ``SamplingFramework.run()`` time, not when ``Configuration()`` is constructed) and
+    ``Problem.run_sampling()`` time, not when ``Configuration()`` is constructed) and
     raise there: an unknown stage algorithm type, a DAMH/Hamiltonian first stage with no
     surrogate available yet, a pCN stage with a non-Gaussian internal prior, or a
     Hamiltonian proposal without ``use_surrogate_gradients`` in effect. See
@@ -249,9 +253,9 @@ class Configuration:
     """
 
     # --- problem ---
-    no_parameters: int
-    no_observations: int
     output_dir: str
+    no_parameters: int | None = None
+    no_observations: int | None = None
 
     # --- MPI layout ---
     use_solvers_pool: bool = True
@@ -287,7 +291,7 @@ class Configuration:
 
     def __post_init__(self) -> None:
         # Requested (as-passed-in) values of the posterior-affecting fields, captured before
-        # anything -- this method, SamplingFramework._configure_surrogate_gradients() -- can
+        # anything -- this method, core._configure_surrogate_gradients() -- can
         # mutate them. Two users: the requested-vs-effective reporting of
         # use_surrogate_gradients (describe()/run_manifest.json), and the cross-rank consistency
         # check of finding 2.9 (communication.check_configuration_consistency). The *requested*
@@ -330,21 +334,56 @@ class Configuration:
                                       "solvers pool (1 sampler + pool + collector); 4 recommended")
         self.sampler_ranks = np.arange(self.no_samplers)  # ranks 0, 1, ..., no_samplers-1
 
+        # loaded by load_continuation() when the run starts (it needs the resolved no_parameters)
         self.continued_samples: npt.NDArray | None = None
-        if self.initial_sample_type == "continued":
-            if self.continued_from_dir is None:
-                raise ValueError("continued_from_dir must be set when initial_sample_type == 'continued'")
-            from surrDAMH.modules.continuation import load_last_samples
-            self.continued_samples = load_last_samples(
-                experiment_dir=self.continued_from_dir,
-                no_parameters=self.no_parameters,
-                no_chains=self.no_samplers,
-            )
+        if self.initial_sample_type == "continued" and self.continued_from_dir is None:
+            raise ValueError("continued_from_dir must be set when initial_sample_type == 'continued'")
+
+    def resolve_problem_sizes(self, no_parameters: int | None, no_observations: int | None) -> None:
+        """
+        Take the problem sizes resolved by ``surrDAMH.Problem``: a field left at ``None`` is
+        set, a field given explicitly must be equal (``ValueError`` naming both values).
+
+        The requested-value snapshot used by the cross-rank configuration check is updated
+        for both names, so the check compares the resolved sizes. Called first thing by
+        ``Problem.run_sampling``/``run_sampling_local``.
+        """
+        for name, value in (("no_parameters", no_parameters), ("no_observations", no_observations)):
+            if value is None:
+                continue
+            current = getattr(self, name)
+            if current is None:
+                setattr(self, name, int(value))
+            elif int(current) != int(value):
+                raise ValueError(
+                    f"Configuration({name}={current}) does not match the problem's {name}={value} "
+                    f"(see Problem.describe()); remove {name} from Configuration or make the two agree")
+            self._requested_posterior_fields[name] = getattr(self, name)
+
+    def load_continuation(self) -> None:
+        """
+        Load the initial samples of a continued run (``initial_sample_type="continued"``) from
+        ``continued_from_dir`` into ``continued_samples``. No-op for any other initial sample
+        type or when already loaded. Needs the resolved ``no_parameters``; called by
+        ``Problem.run_sampling``/``run_sampling_local`` after :meth:`resolve_problem_sizes`.
+        """
+        if self.initial_sample_type != "continued" or self.continued_samples is not None:
+            return
+        if self.continued_from_dir is None:
+            raise ValueError("continued_from_dir must be set when initial_sample_type == 'continued'")
+        if self.no_parameters is None:
+            raise ValueError("load_continuation() needs no_parameters; call resolve_problem_sizes() first")
+        from surrDAMH.modules.continuation import load_last_samples
+        self.continued_samples = load_last_samples(
+            experiment_dir=self.continued_from_dir,
+            no_parameters=self.no_parameters,
+            no_chains=self.no_samplers,
+        )
 
     @property
     def use_surrogate_gradients_requested(self) -> bool:
         """``use_surrogate_gradients`` as passed to the constructor, i.e. before
-        ``SamplingFramework._configure_surrogate_gradients()`` may have turned it off for an
+        ``core._configure_surrogate_gradients()`` may have turned it off for an
         incompatible surrogate (see ``run_manifest.json`` and :meth:`describe`)."""
         return bool(self._requested_posterior_fields["use_surrogate_gradients"])
 
@@ -367,17 +406,17 @@ class Configuration:
     def describe(self, use_surrogate_gradients_requested: bool | None = None) -> str:
         """
         Multi-line summary of the **effective** configuration, printed once on rank 0 by
-        ``SamplingFramework.run()`` and by ``run_local()``.
+        ``Problem.run_sampling()`` and by ``Problem.run_sampling_local()``.
 
         Every field of the dataclass appears as ``name=value``; a trailing ``*`` marks the
         posterior-/acceptance-rate-/reproducibility-affecting ones listed in the class
         docstring. The MPI role layout derived in ``__post_init__`` is appended, and so is
         the requested-versus-effective value of ``use_surrogate_gradients`` when they differ
-        (``SamplingFramework`` may disable it for an incompatible surrogate).
+        (``Problem.run_sampling`` may disable it for an incompatible surrogate).
 
         Args:
             use_surrogate_gradients_requested: the value the user passed in, before
-                ``SamplingFramework._configure_surrogate_gradients`` possibly turned it off.
+                ``core._configure_surrogate_gradients`` possibly turned it off.
                 Omit it (``None``) to show only the effective value.
 
         Returns:
@@ -389,7 +428,7 @@ class Configuration:
                 bool(use_surrogate_gradients_requested) != bool(self.use_surrogate_gradients):
             extra.append(f"[effective] use_surrogate_gradients: requested="
                          f"{bool(use_surrogate_gradients_requested)}, in effect={bool(self.use_surrogate_gradients)}"
-                         " (disabled by SamplingFramework, see the warning above)")
+                         " (disabled by Problem.run_sampling, see the warning above)")
         if self.continued_samples is not None:
             extra.append(f"[continuation] loaded initial samples: shape={tuple(self.continued_samples.shape)}")
         return describe_fields(self, POSTERIOR_AFFECTING_FIELDS,

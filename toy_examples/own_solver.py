@@ -43,11 +43,12 @@ solver_instance = Own_solver()
 # configuration (specification of basic settings of the sampling framework),
 # since local solver instance was specified, solvers pool cannot be used,
 # the solver will be evaluated directly on Samplers:
-conf = surrDAMH.Configuration(output_dir="out_own_solver", no_parameters=2, no_observations=1,
-                              use_solvers_pool=False)
+conf = surrDAMH.Configuration(output_dir="out_own_solver", use_solvers_pool=False)
 
-# polynominal surrogate model updater:
-updater = surrDAMH.surrogates.PolynomialSklearnUpdater(no_parameters=conf.no_parameters, no_observations=conf.no_observations)
+# polynominal surrogate model updater (sizes come straight from the solver instance --
+# Problem, built below, resolves the same numbers from it):
+updater = surrDAMH.surrogates.PolynomialSklearnUpdater(no_parameters=solver_instance.no_parameters,
+                                                        no_observations=solver_instance.no_observations)
 
 # Gaussian prior distribution:
 prior = surrDAMH.distributions.PriorIndependentComponents([
@@ -68,9 +69,8 @@ list_of_stages.append(Stage(algorithm="DAMH", proposal=RandomWalk(scale=0.5), ma
 # during DAMH stage, surrogate model is used but not updated:
 list_of_stages.append(Stage(algorithm="DAMH", proposal=RandomWalk(scale=0.5), max_evaluations=500, surrogate_model_updates=False))
 
-sam = surrDAMH.SamplingFramework(conf, surrogate_updater=updater, prior=prior, likelihood=likelihood,
-                                 list_of_stages=list_of_stages, solver_instance=solver_instance)
-sam.run()
+problem = surrDAMH.Problem(prior, likelihood, solver=solver_instance)
+run = problem.run_sampling(conf, list_of_stages, surrogate_updater=updater)
 
 # post processing:
 comm_world = MPI.COMM_WORLD

@@ -19,6 +19,32 @@ from surrDAMH.modules.communication import ServiceLoopThrottle
 from surrDAMH.solver_specification import SolverSpec
 
 
+_undeclared_sizes_warned = False
+
+
+def check_declared_solver_sizes(declared, conf: Configuration, solver_id: int, solver_spec: SolverSpec) -> None:
+    """
+    C2 (2026-10-08): compare the ``(no_parameters, no_observations)`` declared by each rank of a
+    spawned solver with ``conf``; ``ValueError`` on a mismatch (the pool's ``_run_role`` turns it
+    into a job-wide abort). Sizes a solver does not declare (``None``) are not checked; that
+    prints one warning per process.
+    """
+    global _undeclared_sizes_warned
+    class_name = getattr(solver_spec, "solver_class_name", type(solver_spec).__name__)
+    for child_rank, (no_parameters, no_observations) in enumerate(declared):
+        for name, value, configured in (("no_parameters", no_parameters, conf.no_parameters),
+                                        ("no_observations", no_observations, conf.no_observations)):
+            if value is None:
+                if not _undeclared_sizes_warned:
+                    print(f"WARNING: solver {class_name} (solver_id={solver_id}) does not declare {name}; "
+                          "its sizes cannot be checked against the configuration", flush=True)
+                    _undeclared_sizes_warned = True
+            elif int(value) != int(configured):
+                raise ValueError(
+                    f"solver {class_name} (solver_id={solver_id}, child rank {child_rank}) declares "
+                    f"{name}={value}, but the run is configured with {name}={configured}")
+
+
 class CommunicationWithChild:
     def __init__(self, conf: Configuration, solver_spec: SolverSpec, solver_output_dir: str, solver_id: int) -> None:
         child_process_path = os.path.dirname(os.path.abspath(__file__))
@@ -28,6 +54,10 @@ class CommunicationWithChild:
         self.tag = 0
         self.received_data = np.zeros((conf.no_observations,))
         self.comm.bcast([conf, solver_spec], root=MPI.ROOT)
+        # C2 (2026-10-08): every child rank reports the sizes its solver declares (matching
+        # gather in process_CHILD.py, right after get_solver_from_spec)
+        declared = self.comm.gather(None, root=MPI.ROOT)
+        check_declared_solver_sizes(declared, conf, solver_id, solver_spec)
 
     def send_parameters(self, data_par):
         self.tag += 1

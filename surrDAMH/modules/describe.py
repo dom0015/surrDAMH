@@ -4,11 +4,11 @@
 Rendering of the *effective* settings of a run (WS5, ``library_notes/09_improvement_plan.md``).
 
 ``Configuration.describe()`` and ``Stage.describe()`` are built on the two helpers here and
-are printed once on rank 0 by ``SamplingFramework.run()`` and by ``run_local()``. The point
+are printed once on rank 0 by ``Problem.run_sampling()`` and by ``Problem.run_sampling_local()``. The point
 is that every dataclass field is shown with the value that is actually in effect at that
 moment -- after ``__post_init__`` corrections (e.g. ``adaptive`` forced off for pCN,
 ``surrogate_model_updates`` resolved from ``None`` / refused for a gradient-free MH stage)
-and after ``SamplingFramework`` may have
+and after ``Problem.run_sampling`` may have
 disabled ``use_surrogate_gradients``. An ignored setting like the ``target_rate``
 of finding G1 is then visible in the log instead of silently doing nothing.
 

@@ -10,14 +10,12 @@ no_observations = solver_instance.no_observations
 ref_observations = solver_instance.generate_artificial_observations()
 
 conf = surrDAMH.Configuration( # TODO: comments not shown
-    no_parameters=no_parameters,
-    no_observations=no_observations,
     output_dir="out_grf_simplified",
     use_solvers_pool=False, # TODO: check both possibilities, consider better naming
     use_collector=False, # TODO: when surrogate in not specified, this must be set manually; at least prepare good error messages
 )
 
-prior = surrDAMH.distributions.Normal(mean=0, sd=1, dim=no_parameters)sd
+prior = surrDAMH.distributions.Normal(mean=0, sd=1)  # dimension-free: solver_instance below declares no_parameters
 likelihood = surrDAMH.distributions.Normal(mean=ref_observations, sd=0.1)
 
 list_of_stages = []
@@ -26,16 +24,14 @@ list_of_stages.append(surrDAMH.stages.Stage(
     time_limit=10,
 ))
 
-sf = surrDAMH.SamplingFramework(conf, prior, likelihood, list_of_stages, 
-                                solver_instance=solver_instance, # TODO: either solver_instance or solver_spec must be provided
-)
+problem = surrDAMH.Problem(prior, likelihood, solver=solver_instance)  # TODO: either a Solver instance or a SolverSpec must be provided
+run = problem.run_sampling(conf, list_of_stages)
 """
-                                surrogate_updater=surrogate_updater, # TODO: either surrogate_updater or surrogate_evaluator must be provided
-                                surrogate_initial_training_data=initial_snapshots, 
-                                surrogate_test_data=surrogate_test_data)
-                                """
-
-sf.run()
+run = problem.run_sampling(conf, list_of_stages,
+                           surrogate_updater=surrogate_updater, # TODO: either surrogate_updater or surrogate_evaluator must be provided
+                           surrogate_initial_training_data=initial_snapshots,
+                           surrogate_test_data=surrogate_test_data)
+                           """
 
 # TODO: pass arguments to html_report_extended, choose better names
-sf.write_report(observations=ref_observations)
+run.write_report(observations=ref_observations)

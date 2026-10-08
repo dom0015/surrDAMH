@@ -1,7 +1,7 @@
 # `Stage` reference
 
 `surrDAMH.stages.Stage` (`surrDAMH/stages.py`): one algorithm + proposal + stopping
-rule. `list_of_stages` is run in order by every sampler rank (or by `run_local`);
+rule. `list_of_stages` is run in order by every sampler rank (or by `run_sampling_local`);
 `stage_name(stage, i)` derives its output-directory name (`alg%04d_<MH|MH-adaptive|DAMH|DAMH-SMU>`).
 
 Proposal settings live in their own spec objects (`surrDAMH.proposals`: `RandomWalk`, `PCN`,
@@ -98,8 +98,8 @@ per-period `adaptive_stats/` trace (`docs/outputs.md`).
 
 ## Invalid combinations that raise
 
-Raised at `build_proposal`/`stage_name` time — i.e. when `SamplingFramework.run()` or
-`run_local()` actually reaches this stage, not eagerly at `Stage()`/spec construction:
+Raised at `build_proposal`/`stage_name` time — i.e. when `Problem.run_sampling()` or
+`run_sampling_local()` actually reaches this stage, not eagerly at `Stage()`/spec construction:
 
 - Unknown `algorithm` (anything other than `"MH"`/`"DAMH"`) — `ValueError` from `stage_name`,
   and it fires on every rank at start-up (stage names are assigned before role dispatch) rather
@@ -149,8 +149,8 @@ leaves `None`:
 | `Hamiltonian(adaptive=True)` | `Hamiltonian_adaptive` (`integrator="leapfrog"`) or `HamiltonianInfinite_adaptive` (`integrator="dimension_robust"`) | mean `log ε̄` | `step_size` |
 
 Before 2026-09-20 the ranks averaged their per-rank *covariances* instead, which the study
-measured disagreeing by 6–17x between ranks (`15` §2.4). `run_local` runs the same code path
-with a single row, which keeps its own adapted state exactly.
+measured disagreeing by 6–17x between ranks (`15` §2.4). `run_sampling_local` runs the same
+code path with a single row, which keeps its own adapted state exactly.
 
 ## `Stage.describe()`
 
@@ -158,5 +158,5 @@ with a single row, which keeps its own adapted state exactly.
 value (after `__post_init__`'s silent corrections — the proposal spec is shown with all its own
 fields, e.g. `proposal=RandomWalk(scale=None, adaptive=True, target_rate=None)`), marking the
 posterior-affecting ones with `*` and appending `[note]` lines for the fields that do not apply
-to the stage as configured. `SamplingFramework.run()` and `run_local()` print one block per
-stage on rank 0 at start-up — see [`configuration.md`](configuration.md#configurationdescribe--stagedescribe).
+to the stage as configured. `Problem.run_sampling()` and `run_sampling_local()` print one block
+per stage on rank 0 at start-up — see [`configuration.md`](configuration.md#configurationdescribe--stagedescribe).

@@ -16,7 +16,7 @@ from mpi4py import MPI
 from surrDAMH.configuration import Configuration
 from surrDAMH.modules.communication import ABORT_GRACE_SECONDS
 from surrDAMH.solver_specification import SolverSpec
-from surrDAMH.solvers import get_solver_from_spec
+from surrDAMH.solvers import check_observations_shape, get_solver_from_spec
 
 assert (len(sys.argv) == 3)
 solver_id = int(sys.argv[1])
@@ -41,6 +41,10 @@ try:
 
     """ INITIALIZATION OF THE SOLVER """
     solver_instance = get_solver_from_spec(solver_spec, solver_id, solver_output_dir)
+    # C2 (2026-10-08): report the declared sizes (None if not declared) to the solvers pool,
+    # which compares them with conf (CommunicationWithChild.__init__, matching gather)
+    parent_comm.gather((getattr(solver_instance, "no_parameters", None),
+                        getattr(solver_instance, "no_observations", None)), root=0)
 
     """ SOLVING INCOMING REQUESTS USING LINKED SOLVER """
     # tag is broadcasted by parent
@@ -51,6 +55,7 @@ try:
     tag = np.array(0, dtype='i')
     solver_is_active = True
     counter = 0
+    observations_shape_checked = False
     while solver_is_active:
         parent_comm.Bcast([tag, MPI.INT], root=0)
         if tag == 0:
@@ -72,6 +77,10 @@ try:
                 sent_data = result
                 solver_tag = 0
             counter += 1
+            if rank == 0 and not observations_shape_checked and solver_tag >= 0:
+                # C3 (2026-10-08): the first successful evaluation must have the configured shape
+                check_observations_shape(sent_data, conf.no_observations, type(solver_instance).__name__)
+                observations_shape_checked = True
             if rank == 0:
                 # solver_tag travels inside the pickled payload; the MPI tag is the request
                 # counter, so a negative (error) solver_tag is never used as an MPI tag (2.4)

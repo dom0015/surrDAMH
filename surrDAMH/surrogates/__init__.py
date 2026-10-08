@@ -2,10 +2,10 @@
 Surrogate models: cheap approximations of the forward model, trained during the run on the
 collector rank and used by DAMH stages and gradient-based proposals.
 
-Pass one as ``SamplingFramework(..., surrogate_updater=...)``::
+Pass one as ``problem.run_sampling(conf, stages, surrogate_updater=...)``::
 
     updater = surrDAMH.surrogates.PolynomialSklearnUpdater(
-        no_parameters=conf.no_parameters, no_observations=conf.no_observations, max_degree=3)
+        no_parameters=problem.no_parameters, no_observations=problem.no_observations, max_degree=3)
 
 - ``PolynomialSklearnUpdater``      -- least-squares polynomial; cheap, good for smooth models
 - ``RBFInterpolationUpdater``       -- radial basis function interpolation

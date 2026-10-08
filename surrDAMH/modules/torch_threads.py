@@ -19,7 +19,7 @@ for it):
 - torch already in ``sys.modules`` -> call ``torch.set_num_threads`` directly. This is the
   path actually taken in this codebase: ``surrDAMH/surrogates/__init__.py`` unconditionally
   imports ``torch_perceptron_minibatches`` (hence torch) as soon as anything does
-  ``import surrDAMH`` -- so by the time ``SamplingFramework.run()``/``run_local()`` call this
+  ``import surrDAMH`` -- so by the time ``Problem.run_sampling()``/``run_sampling_local()`` call this
   helper, torch is *always* already loaded, on every rank, in every launch mode (measured:
   ``import surrDAMH`` alone puts ``"torch"`` in ``sys.modules``). The env-var mechanism below
   is therefore not required for correctness today, but is kept as documented defence in depth
@@ -53,7 +53,7 @@ _desired_torch_threads: int | None = None
 def apply_torch_threads(conf) -> None:
     """
     Apply ``conf.torch_threads`` on this rank, once, as early as possible in
-    ``SamplingFramework.run()``/``run_local()`` -- before anything evaluates or trains a
+    ``Problem.run_sampling()``/``run_sampling_local()`` -- before anything evaluates or trains a
     network and before the run manifest is built.
 
     ``conf.torch_threads is None`` leaves torch's default alone (no-op). Otherwise: if torch
@@ -90,7 +90,7 @@ def apply_desired_torch_threads_lazy() -> None:
 
     Known limitation of this process-wide (not per-``Configuration``) state: an
     ``Updater``/``Evaluator`` is always constructed by the user's script *before*
-    ``SamplingFramework.run()``/``run_local()`` calls :func:`apply_torch_threads` for that
+    ``Problem.run_sampling()``/``run_sampling_local()`` calls :func:`apply_torch_threads` for that
     run, so its constructor sees whatever ``_desired_torch_threads`` a *previous* run in the
     same process left behind (``None`` in a fresh process -- the common case, one run per
     process/``mpiexec`` launch). For a concrete (non-``None``) ``torch_threads`` this is only
@@ -102,7 +102,7 @@ def apply_desired_torch_threads_lazy() -> None:
     can still end up with the thread count a stale earlier run's value forced on the freshly
     constructed updater/evaluator, rather than whatever the process had before that
     construction. Not a concern for the one-run-per-process launch modes this library
-    supports (a fresh ``mpiexec``/``python`` process, or one ``run_local()`` call per script);
+    supports (a fresh ``mpiexec``/``python`` process, or one ``run_sampling_local()`` call per script);
     a script that runs several sampling runs back to back in one process and wants
     ``torch_threads=None`` to mean "untouched" for every one of them should call
     ``torch.set_num_threads`` itself right before each such run instead of relying on this

@@ -17,7 +17,7 @@ For the refactor's rationale, findings and open decisions see `library_notes/REA
 | [`writing_a_solver.md`](writing_a_solver.md) | The `Solver` contract, `SolverSpec`, the solvers pool |
 | [`writing_a_surrogate.md`](writing_a_surrogate.md) | The `Updater`/`Evaluator` contract (today's) |
 | [`outputs.md`](outputs.md) | On-disk layout (format v2), the run manifest, `read_run` |
-| [`running.md`](running.md) | Process counts per role combination, `mpiexec`, `run_local`, continuation, tests |
+| [`running.md`](running.md) | Process counts per role combination, `mpiexec`, `run_sampling_local`, continuation, tests |
 
 ## Quick start
 

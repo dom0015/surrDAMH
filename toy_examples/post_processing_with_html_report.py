@@ -14,10 +14,15 @@ from solver_examples.solver_spec_examples import SolverSpecNonlinearGeneric
 import surrDAMH
 from surrDAMH.modules.tools import ensure_dir
 
-conf = surrDAMH.Configuration(output_dir="out_post_proc_example", no_parameters=3, no_observations=1,
+conf = surrDAMH.Configuration(output_dir="out_post_proc_example",
                               use_collector=False, use_solvers_pool=False, save_snapshots_to_file=True)
-solver_spec = SolverSpecNonlinearGeneric(no_parameters=conf.no_parameters, no_observations=conf.no_observations)
-prior_mean = [2.0] * conf.no_parameters
+# problem sizes: solver_spec does not declare them, but prior (3 components) and likelihood
+# (observation, length 1) do, so Problem resolves no_parameters=3, no_observations=1 from
+# those (conf.no_parameters/conf.no_observations below, used for post-processing, are filled
+# in once run_sampling resolves them).
+no_parameters, no_observations = 3, 1
+solver_spec = SolverSpecNonlinearGeneric(no_parameters=no_parameters, no_observations=no_observations)
+prior_mean = [2.0] * no_parameters
 prior = surrDAMH.distributions.PriorIndependentComponents([
     surrDAMH.distributions.NormalComponent(mu=float(mu), sigma=1.0) for mu in prior_mean
 ])
@@ -34,9 +39,8 @@ list_of_stages.append(surrDAMH.stages.Stage(algorithm="MH", proposal=surrDAMH.pr
 list_of_stages.append(surrDAMH.stages.Stage(algorithm="MH", proposal=surrDAMH.proposals.RandomWalk(scale=1.0), max_evaluations=1000))
 list_of_stages.append(surrDAMH.stages.Stage(algorithm="MH", proposal=surrDAMH.proposals.RandomWalk(scale=1.5), max_evaluations=1000))
 
-sam = surrDAMH.SamplingFramework(conf=conf, prior=prior, likelihood=likelihood,
-                                 list_of_stages=list_of_stages, solver_spec=solver_spec)
-sam.run()
+problem = surrDAMH.Problem(prior, likelihood, solver=solver_spec)
+run = problem.run_sampling(conf, list_of_stages)
 
 # Post processing:
 samples = surrDAMH.post_processing.Samples(conf.no_parameters, conf.output_dir)

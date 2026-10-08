@@ -28,8 +28,8 @@ understand. Concretely, `Distribution` is the function composition
   and written to `samples/*.csv` (when `Configuration.transform_before_saving=True`, the default).
 
 Since 2026-09-22 the internal prior is the standard normal `N(0, I)` for **every** shipped
-prior. A `Normal(mean, sd|cov)` prior is standardized automatically by `SamplingFramework`,
-`run_local` and `TestData` (`distributions.StandardizedNormal`: the chain samples
+prior. A `Normal(mean, sd|cov)` prior is standardized automatically by `Problem`,
+`run_sampling_local` and `TestData` (`distributions.StandardizedNormal`: the chain samples
 `z ~ N(0, I)` and `transform(z) = mean + L z` with `L L^T = cov`), so proposal scales,
 `lhs_scale`, `initial_samples_distribution` and pCN all refer to the same standardized
 coordinates whatever the prior. Used as a *likelihood*, `Normal` keeps its physical

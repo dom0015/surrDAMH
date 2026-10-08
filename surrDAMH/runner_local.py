@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Standalone, single-chain sampling runner (no MPI orchestration).
+Standalone, single-chain sampling runner (no MPI orchestration); the internal engine of
+``surrDAMH.Problem.run_sampling_local`` (scripts call that method, not ``run_local``).
 
 ``run_local()`` performs the same per-stage loop as
 ``surrDAMH.process_SAMPLER.run_SAMPLER``, but wires the in-process adapters from
@@ -115,9 +116,13 @@ def _get_initial_sample(conf: Configuration, prior: Distribution, no_stages: int
 
 def run_local(conf: Configuration, prior: Distribution, likelihood: Distribution, stages: List[Stage],
               solver: Solver, updater: Updater | None = None,
-              evaluator: Evaluator | None = None) -> SamplingResult:
+              evaluator: Evaluator | None = None, *, problem: Any = None) -> SamplingResult:
     """
     Run all sampling stages of a single chain in one process (no MPI roles).
+
+    Internal engine of ``surrDAMH.Problem.run_sampling_local`` (2026-10-08); not exported from
+    the package any more. Scripts use ``problem.run_sampling_local(conf, stages, ...)``, which
+    resolves the problem sizes into ``conf`` and loads continued samples before calling this.
 
     Args:
         conf: configuration; ``use_collector`` and ``use_solvers_pool`` must be
@@ -131,15 +136,19 @@ def run_local(conf: Configuration, prior: Distribution, likelihood: Distribution
             resulting evaluator is handed to DAMH stages.
         evaluator: optional fixed surrogate evaluator, used when no ``updater``
             is given (read-only, never retrained).
+        problem: the calling ``surrDAMH.Problem``, if any: its ``describe()`` is printed with
+            the settings and its resolved sizes are recorded under ``"problem"`` in the manifest.
 
     Returns:
         ``SamplingResult`` with one ``StageResult`` per stage.
     """
     check_stage_list(stages)
-    prior = standardize_prior(prior)  # same internal space as SamplingFramework (2026-09-22)
+    prior = standardize_prior(prior)  # same internal space as Problem (2026-09-22); no-op for a Problem's prior
     if conf.use_collector or conf.use_solvers_pool:
         raise ValueError("run_local() requires a configuration with use_collector=False and use_solvers_pool=False "
                          "(the local runner replaces the collector and the solvers pool)")
+    # continued samples (idempotent; Problem.run_sampling_local has normally loaded them already)
+    conf.load_continuation()
     if updater is not None and evaluator is not None:
         raise ValueError("run_local() accepts either 'updater' (surrogate is trained in process) or 'evaluator' "
                          "(fixed surrogate), not both")
@@ -149,8 +158,10 @@ def run_local(conf: Configuration, prior: Distribution, likelihood: Distribution
     # manifest["environment"]["torch_num_threads"] records the effective value).
     apply_torch_threads(conf)
 
-    # effective settings, once (WS5); same block as SamplingFramework.run() prints on rank 0
+    # effective settings, once (WS5); same block as Problem.run_sampling() prints on rank 0 (debug)
     print(conf.describe(), flush=True)
+    if problem is not None:
+        print(problem.describe(), flush=True)
     for i, stage in enumerate(stages):
         print(stage.describe(i), flush=True)
 
@@ -160,7 +171,7 @@ def run_local(conf: Configuration, prior: Distribution, likelihood: Distribution
     evaluator_provider: LocalSurrogateManager | LocalEvaluatorProvider | None = None
     if updater is not None:
         updater.set_use_gradients(conf.use_surrogate_gradients)
-        # WS6: same hook as SamplingFramework -- an updater configured with
+        # WS6: same hook as Problem.run_sampling -- an updater configured with
         # output_normalization="likelihood" takes its statistics from the likelihood here,
         # before any snapshot is added.
         apply_output_normalization_from_likelihood(updater, likelihood)
@@ -268,9 +279,11 @@ def run_local(conf: Configuration, prior: Distribution, likelihood: Distribution
         manifest = build_run_manifest(
             conf, stages, prior, likelihood, runner="local",
             solver_instance=solver, surrogate_updater=updater, surrogate_evaluator=evaluator,
-            # same snapshot as SamplingFramework uses; run_local() never mutates the flag, so
+            # same snapshot as Problem.run_sampling uses; run_local() never mutates the flag, so
             # requested == effective here (there is also no cross-rank check to run: one process)
             mpi_layout=None, use_surrogate_gradients_requested=conf.use_surrogate_gradients_requested)
+        if problem is not None:
+            manifest["problem"] = problem._manifest_entry()
         write_run_manifest(conf.output_dir, manifest)
         stage_counters = [{"name": r.name, "counter_accepted": r.counter_accepted,
                            "counter_rejected": r.counter_rejected,

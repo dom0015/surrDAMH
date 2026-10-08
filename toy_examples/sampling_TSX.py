@@ -29,13 +29,13 @@ solver_instance = SolverTSX()
 # configuration (specification of basic settings of the sampling framework),
 # since local solver instance was specified, solvers pool cannot be used,
 # the solver will be evaluated directly on Samplers:
-conf = surrDAMH.Configuration(output_dir="out_tsx", no_parameters=no_parameters, no_observations=no_observations,
+conf = surrDAMH.Configuration(output_dir="out_tsx",
                               use_solvers_pool=False, use_collector=True,
                               min_snapshots_to_update=0, min_snapshots_initial=0)
 
 # NN updater (full-batch L-BFGS preset: one batch = all accumulated snapshots, no replay,
 # fitted only by the collector's periodic train() calls):
-updater = surrDAMH.surrogates.NeuralNetworkUpdater(no_parameters=conf.no_parameters, no_observations=conf.no_observations,
+updater = surrDAMH.surrogates.NeuralNetworkUpdater(no_parameters=no_parameters, no_observations=no_observations,
                                                               hidden_layer_sizes=(48, 60), solver="lbfgs", activation="tanh", learning_rate=1e-3,
                                                               iterations_batch=100, loss_target=1e-6, device="cpu", verbose=False, seed=15,
                                                               batch_size=None, replay_ratio=0.0, train_on_added_data=False)
@@ -67,9 +67,8 @@ list_of_stages.append(Stage(algorithm="DAMH", proposal=RandomWalk(scale=0.3), ti
 # during DAMH stage, surrogate model is used but not updated:
 # list_of_stages.append(Stage(algorithm="DAMH", proposal=RandomWalk(scale=0.5), max_evaluations=500, surrogate_model_updates=False))
 
-sam = surrDAMH.SamplingFramework(conf, prior=prior, likelihood=likelihood, surrogate_updater=updater,
-                                 list_of_stages=list_of_stages, solver_instance=solver_instance)
-sam.run()
+problem = surrDAMH.Problem(prior, likelihood, solver=solver_instance)
+run = problem.run_sampling(conf, list_of_stages, surrogate_updater=updater)
 
 # post processing:
 comm_world = MPI.COMM_WORLD

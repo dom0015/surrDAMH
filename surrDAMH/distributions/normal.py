@@ -24,12 +24,20 @@ class Normal(Distribution):
                  sd: float | npt.NDArray = 1.0, dim: int | None = None):
         """
         Args:
-            mean: mean vector; a scalar is broadcast to ``dim`` components (``dim`` needed then).
-                For a likelihood this is the vector of observed data.
+            mean: mean vector; a scalar is broadcast to ``dim`` components. For a likelihood
+                this is the vector of observed data.
             cov: covariance matrix; if given, ``sd`` is ignored.
             sd: standard deviation, scalar or one value per component (used when ``cov`` is None).
-            dim: number of components when ``mean`` is a scalar.
+            dim: number of components when ``mean`` is a scalar. A scalar ``mean`` with
+                ``dim=None`` (and no ``cov``) is *dimension-free* (``dimension_free=True``):
+                ``surrDAMH.Problem`` broadcasts it to the problem's size (``with_dimension``)
+                when the solver or ``Problem(no_parameters=/no_observations=)`` supplies
+                it. Used on its own, such an object behaves as a 1-D distribution.
         """
+        # dimension-free: a scalar mean with neither dim nor cov (2026-10-08); keeps n = 1 so
+        # direct use of the object is unchanged, but Problem broadcasts it (with_dimension)
+        self.dimension_free = bool(np.isscalar(mean) and dim is None and cov is None)
+        self._init_args = {"mean": mean, "sd": sd}
         if np.isscalar(mean):
             if dim is None:
                 dim = 1
@@ -52,6 +60,16 @@ class Normal(Distribution):
             self.logpdf = self.calculate_logpdf_uncorrelated
             self.grad_logpdf = self.calculate_grad_logpdf_uncorrelated
             self.rvs = self.calculate_rvs_uncorrelated
+
+    def with_dimension(self, dim: int) -> "Normal":
+        """
+        This dimension-free ``Normal`` (scalar ``mean``, ``dim=None``) broadcast to ``dim``
+        components: ``Normal(mean, sd=sd, dim=dim)`` with the original ``mean``/``sd``.
+        A ``Normal`` that is not dimension-free is returned unchanged.
+        """
+        if not getattr(self, "dimension_free", False):
+            return self
+        return Normal(mean=self._init_args["mean"], sd=self._init_args["sd"], dim=int(dim))
 
     def calculate_logpdf_uncorrelated(self, sample):
         """Calculates logpdf of N(mean,sd) up to an additive constant."""
@@ -102,7 +120,7 @@ class StandardizedNormal(Distribution):
     """
     Internal-space view of a ``Normal`` prior: the chain samples ``z ~ N(0, I)`` and
     ``transform(z) = mean + L z`` (``L L^T = cov``, or ``L = diag(sd)``) gives the physical
-    parameters. Built automatically by ``SamplingFramework``, ``run_local`` and ``TestData``
+    parameters. Built automatically by ``Problem`` (hence ``run_sampling``, ``run_sampling_local`` and ``TestData``)
     for every ``Normal`` prior (2026-09-22, author decision), so all priors share the standard
     normal internal space that ``PriorIndependentComponents`` already used: proposal scales,
     pCN and the dimension-robust Hamiltonian proposal then mean the same thing for every prior.
@@ -153,7 +171,7 @@ def standardize_prior(prior: Distribution) -> Distribution:
     The internal-space prior the sampler works with: a ``Normal`` becomes a
     ``StandardizedNormal``; every other distribution (already internal-space by design, e.g.
     ``PriorIndependentComponents``, or an already standardized one) is returned unchanged.
-    Called by ``SamplingFramework.__init__``, ``run_local`` and ``TestData``.
+    Called by ``Problem.__init__``, ``runner_local.run_local`` (a no-op for a Problem's prior) and ``TestData``.
     """
     if isinstance(prior, Normal):
         return StandardizedNormal(prior)

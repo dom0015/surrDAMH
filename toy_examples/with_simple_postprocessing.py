@@ -28,10 +28,15 @@ PROPOSAL_SD = 0.5
 solver_spec = solver_examples.solver_spec_examples.SolverSpecExample1()
 
 # configuration (specification of basic settings of the sampling framework):
-conf = surrDAMH.Configuration(output_dir="out_simple_postproc", no_parameters=2, no_observations=1, save_snapshots_to_file=True)
+conf = surrDAMH.Configuration(output_dir="out_simple_postproc", save_snapshots_to_file=True)
+
+# problem sizes: solver_spec does not declare them, but prior (2 components) and
+# likelihood (observation, length 1) do, so Problem resolves no_parameters=2,
+# no_observations=1 from those.
+no_parameters, no_observations = 2, 1
 
 # polynominal surrogate model updater:
-updater = surrDAMH.surrogates.PolynomialSklearnUpdater(no_parameters=conf.no_parameters, no_observations=conf.no_observations)
+updater = surrDAMH.surrogates.PolynomialSklearnUpdater(no_parameters=no_parameters, no_observations=no_observations)
 
 # Gaussian prior distribution:
 prior = surrDAMH.distributions.PriorIndependentComponents([
@@ -52,9 +57,8 @@ list_of_stages.append(Stage(algorithm="DAMH", proposal=RandomWalk(scale=PROPOSAL
 # during DAMH stage, surrogate model is used but not updated:
 list_of_stages.append(Stage(algorithm="DAMH", proposal=RandomWalk(scale=PROPOSAL_SD), max_evaluations=500, surrogate_model_updates=False))
 
-sam = surrDAMH.SamplingFramework(conf, surrogate_updater=updater, prior=prior, likelihood=likelihood,
-                                 list_of_stages=list_of_stages, solver_spec=solver_spec)
-sam.run()
+problem = surrDAMH.Problem(prior, likelihood, solver=solver_spec)
+run = problem.run_sampling(conf, list_of_stages, surrogate_updater=updater)
 
 # post processing:
 comm_world = MPI.COMM_WORLD

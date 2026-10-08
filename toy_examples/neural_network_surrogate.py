@@ -26,7 +26,7 @@ rank_world = comm_world.Get_rank()
 solver_spec = solver_examples.solver_spec_examples.SolverSpecExample1(sleep_time=0.1)
 
 # configuration (specification of basic settings of the sampling framework):
-conf = surrDAMH.Configuration(output_dir="out_nn_surrogate", no_parameters=2, no_observations=1, min_snapshots_to_update=0, use_solvers_pool=False)
+conf = surrDAMH.Configuration(output_dir="out_nn_surrogate", min_snapshots_to_update=0, use_solvers_pool=False)
 
 # Gaussian prior distribution:
 prior = surrDAMH.distributions.PriorIndependentComponents([
@@ -38,9 +38,14 @@ prior = surrDAMH.distributions.PriorIndependentComponents([
 observations = surrDAMH.solvers.calculate_artificial_observations(solver_spec=solver_spec, parameters=[-2, 2])
 likelihood = surrDAMH.distributions.Normal(mean=observations, sd=1.0)
 
+# problem sizes: solver_spec does not declare them, but prior (2 components) and
+# likelihood (observations, length 1) do, so Problem resolves no_parameters=2,
+# no_observations=1 from those.
+no_parameters, no_observations = 2, 1
+
 # neural network surrogate model (full-batch L-BFGS preset: one batch = all accumulated
 # snapshots, no replay, fitted only by the collector's periodic train() calls):
-updater = surrDAMH.surrogates.NeuralNetworkUpdater(no_parameters=conf.no_parameters, no_observations=conf.no_observations,
+updater = surrDAMH.surrogates.NeuralNetworkUpdater(no_parameters=no_parameters, no_observations=no_observations,
                                                               hidden_layer_sizes=(4, ), solver="lbfgs", activation="tanh", learning_rate=1e-3,
                                                               iterations_batch=100, loss_target=1e-6, device="cpu", verbose=False,
                                                               batch_size=None, replay_ratio=0.0, train_on_added_data=False)
@@ -55,9 +60,8 @@ list_of_stages.append(Stage(algorithm="DAMH", proposal=RandomWalk(scale=0.5), ma
 list_of_stages.append(Stage(algorithm="DAMH", proposal=RandomWalk(scale=0.5), max_evaluations=50,
                       surrogate_model_updates=False, send_snapshots_to_collector=False))
 
-sam = surrDAMH.SamplingFramework(conf, surrogate_updater=updater, prior=prior, likelihood=likelihood,
-                                 list_of_stages=list_of_stages, solver_spec=solver_spec)
-sam.run()
+problem = surrDAMH.Problem(prior, likelihood, solver=solver_spec)
+run = problem.run_sampling(conf, list_of_stages, surrogate_updater=updater)
 
 # post processing:
 if rank_world == 0:

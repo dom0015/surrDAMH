@@ -193,6 +193,10 @@ class MpiEvaluatorProvider(EvaluatorProvider):
     def get_evaluator(self) -> Evaluator:
         return self.communicator.get_evaluator()
 
+    def get_newest_evaluator(self) -> Evaluator:
+        """Blocking: the collector's current evaluator (2026-09-30, see ``CommEvaluator_sampler``)."""
+        return self.communicator.get_newest_evaluator()
+
     def get_evaluator_and_terminate(self) -> Evaluator | None:
         """
         Preserve the original MPI shutdown method for orchestration code.

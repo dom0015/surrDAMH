@@ -12,7 +12,7 @@ class SolverSpec:
     the class name and the constructor arguments. Required with
     ``Configuration.use_solvers_pool=True`` (spawned solver processes import the file
     themselves); with ``use_solvers_pool=False`` you may pass either this or a ready
-    ``solver_instance`` to ``SamplingFramework``::
+    ``Solver`` instance as ``surrDAMH.Problem(..., solver=...)``::
 
         spec = SolverSpec(solver_module_path="my_solver.py", solver_module_name="my_solver",
                           solver_class_name="MySolver", solver_parameters={"my_option": 1.0})
@@ -39,7 +39,7 @@ class SolverSpec:
     # Maintainer note (M18/WS5): the path is made absolute here, on the launching rank,
     # because process_SOLVER broadcasts this object to spawned children that inherit neither
     # sys.path nor (reliably) the working directory. resolve_module_path() is also called by
-    # SamplingFramework.__init__ for subclasses that define their own __init__ and thereby
+    # Problem.__init__ for subclasses that define their own __init__ and thereby
     # skip __post_init__ (see the toy_examples SolverSpec* classes).
     solver_module_path: str
     solver_module_name: str
@@ -56,7 +56,7 @@ class SolverSpec:
         Idempotent, and safe to call from any rank that still has the launching working
         directory. Subclasses that define their own ``__init__`` (the ``toy_examples``
         ``SolverSpec*`` classes used to, before WS5) never run ``__post_init__``, which is
-        why ``SamplingFramework.__init__`` calls this explicitly as well.
+        why ``Problem.__init__`` calls this explicitly as well.
         """
         self.solver_module_path = os.path.abspath(self.solver_module_path)
         return self.solver_module_path

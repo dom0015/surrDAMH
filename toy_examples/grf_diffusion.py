@@ -22,6 +22,7 @@ from dolfinx.fem import Function
 from dolfinx.fem import Constant, dirichletbc, locate_dofs_geometrical
 from dolfinx.fem.petsc import LinearProblem
 from ufl import TestFunction, TrialFunction, dx, grad, inner
+from dolfinx import geometry
 from scipy.special import kv, gamma
 
 
@@ -60,6 +61,13 @@ class Solver_diffusion_GRF(Solver):
         self.coords = self.mesh.geometry.x
         # prepare the function space
         self.V = dfx.fem.functionspace(self.mesh, ("CG", 1))
+        # cells containing the measurement points (needed by Function.eval; computed once).
+        # Before 2026-09-28 dummy zero indices were passed, i.e. every point was evaluated by
+        # extrapolating cell 0, which made the forward map rank 2 (see library_notes/10 §3).
+        bb_tree = geometry.bb_tree(self.mesh, self.mesh.topology.dim)
+        candidates = geometry.compute_collisions_points(bb_tree, self.measurement_points)
+        colliding = geometry.compute_colliding_cells(self.mesh, candidates, self.measurement_points)
+        self.measurement_cells = np.array([colliding.links(i)[0] for i in range(self.measurement_points.shape[0])], dtype=np.int32)
         # prepare the diffusion coefficient as a Function in the function space
         self.diffusion_coefficient = Function(self.V)
 
@@ -122,8 +130,7 @@ class Solver_diffusion_GRF(Solver):
         self.solution = self.problem.solve()
 
         # solution in measurement points:
-        cells = np.zeros(self.measurement_points.shape[0], dtype=np.int32)  # dummy cell indices
-        solution_at_measurement_points = self.solution.eval(self.measurement_points, cells)
+        solution_at_measurement_points = self.solution.eval(self.measurement_points, self.measurement_cells)
 
         time.sleep(self.sleep_time)
         return np.array([solution_at_measurement_points], dtype=np.float64).ravel()
