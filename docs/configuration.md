@@ -66,6 +66,9 @@ solver-pool child's declared sizes must match `conf`, checked once at start-up, 
 | `initial_samples_distribution` | `Distribution\|None` | `None` | Source for `initial_sample_type="user_specified"`; drawn in the prior's INTERNAL (standardized) coordinates (2026-09-22). | yes, when used |
 | `continued_from_dir` | `str\|None` | `None` | Source run directory for `initial_sample_type="continued"`. | yes, when used |
 | `lhs_scale` | `float\|ndarray` | `1.0` | Spread of the LHS initial-sample design (`initial_sample_type="lhs"`), in the prior's INTERNAL (standardized) coordinates, i.e. prior standard deviations (2026-09-22). | yes, when used |
+| `stage_index_offset` | `int` | `0` | Set by `SamplingRun.continue_sampling`; leave at the default. Global index of this run's first stage in a lineage of continued runs (stage count of every earlier run); used in the stage directory names (`alg%04d_...`) and in the seeds. | **yes** |
+| `no_stages_lineage` | `int\|None` | `None` | Set by `SamplingRun.continue_sampling`; leave at the default. Total stage count of the lineage up to and including this run, used as `no_stages` in the seed formula (`surrDAMH.modules.seeds`); `None` = this run's own stage count. | **yes** |
+| `lineage_generation` | `int` | `0` | Set by `SamplingRun.continue_sampling`; leave at the default. Generation of this run in its lineage (0 = not a continuation); shifts every seed by `1_000_000 * lineage_generation` (`surrDAMH.modules.seeds`). | **yes** |
 | `min_snapshots_initial` | `int` | `1` | Snapshots needed before the first surrogate is trained. | **yes**, for DAMH-SMU (changes retrain timing → accept/reject sequence) |
 | `min_snapshots_to_update` | `int` | `0` | Further snapshots needed before each retrain. `0` (default since 2026-09-23) = retrain whenever `Updater.needs_retraining(new)` says the surrogate would change: continuously for `NeuralNetworkUpdater`, only after new snapshots for the interpolating/least-squares updaters (they never refit identical data). | **yes**, for DAMH-SMU |
 | `max_collected_snapshots_per_loop` | `int` | `1000` | Collector-side batching cap per poll loop. | **yes** — controls exactly when the surrogate is (re)trained (`surrDAMH.configuration.POSTERIOR_AFFECTING_FIELDS`), hence the DAMH-SMU accept/reject sequence |
@@ -79,6 +82,29 @@ solver-pool child's declared sizes must match `conf`, checked once at start-up, 
 Computed by `__post_init__`, not settable directly: `no_samplers`, `rank_collector`,
 `rank_solvers_pool`, `sampler_ranks`, `continued_samples` (loaded eagerly when
 `initial_sample_type="continued"`).
+
+See [`running.md`](running.md#continuing-a-run) for `SamplingRun.continue_sampling`, which sets
+`stage_index_offset`/`no_stages_lineage`/`lineage_generation` (and the initial-sample fields
+above) for you — a script calls it instead of setting any of these six fields by hand.
+
+### Fields set by `run_sampling_auto`/`run_sampling_local_auto`
+
+See [`running.md`](running.md#automatic-mode-2026-10-08) for the automatic mode
+(`surrDAMH.auto.plan_auto`, `Configuration._set_by_auto`). It may set, on the `conf` it is given:
+
+| Field | Rule |
+|---|---|
+| `initial_sample_type` | set to `"lhs"` **only if** left at the default `"prior"`; `"lhs"`/`"user_specified"`/`"continued"` given by the user are kept unchanged |
+| `use_surrogate_gradients` | set to `mode == "fast"`, whenever the plan uses a surrogate |
+| `min_snapshots_initial` | set to a size-dependent value (`max(1, min(10·d, n0·C // 2))` for an evaluation budget, `max(1, 10·d)` for a time budget) **only if** still at `Configuration`'s own default `1`; a value the user set explicitly is always kept (a note is added to the plan instead) |
+| `min_snapshots_to_update` | set to `max(20, 2·d)` **only if** still at the default `0`; otherwise kept, same rule as above |
+
+The rule is the same for all three size-dependent fields: **the user's own value always wins** —
+Auto only fills in a field the user left untouched, and the fields it actually changed are
+recorded in the manifest's `"auto"` entry (`conf_settings`, see `docs/outputs.md`) alongside a
+note for every field it left alone because the user had set it. `initial_sample_type` is the one
+exception with its own rule above (not "default vs. non-default" in general, since `"prior"` is
+itself the default it replaces).
 
 ### `Configuration.describe()` / `Stage.describe()`
 

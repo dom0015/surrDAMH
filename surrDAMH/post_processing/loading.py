@@ -23,8 +23,12 @@ from typing import Any, Iterable, List
 import numpy as np
 import pandas as pd
 
-from surrDAMH.modules.run_data import read_run, sampling_output_dir
+from surrDAMH.modules.run_data import (lineage_links, read_lineage, read_run,
+                                       sampling_output_dir)
 from surrDAMH.post_processing.html_report import SamplesReports
+from surrDAMH.post_processing.selection import (default_selection, read_selection,
+                                                selection_path, validate_selection,
+                                                write_selection)
 from surrDAMH.post_processing.statistics import (_raw_data_observation_columns,
                                                  _raw_data_parameter_columns,
                                                  _select_columns, decompress)
@@ -97,9 +101,55 @@ class Samples(SamplesReports):
 
     def __init__(self, no_parameters: int, samples_dir: str,
                  decompress_samples: bool = True, load_posterior: bool = False,
-                 debug: bool = False):
+                 debug: bool = False, include_previous: bool | None = None,
+                 selection: str | os.PathLike | dict | bool | None = None):
+        """
+        Args:
+            no_parameters: must equal the run's ``configuration.no_parameters``.
+            samples_dir: the run's output_dir (for a lineage: the NEWEST run's).
+            decompress_samples, load_posterior, debug: as before.
+            include_previous: a run made by ``SamplingRun.continue_sampling`` continues earlier
+                runs (its lineage, ``modules.run_data.read_lineage``). ``None`` (default): load the
+                whole lineage iff every run of it sampled the same ``Problem``
+                (``same_problem``), else this run only; ``True``: the whole lineage regardless
+                (``lineage_note`` then says the problem changed); ``False``: this run only.
+            selection: the (stage, chain) mask and per-chain burn-in to apply at load time
+                (``post_processing.selection``). ``None``/``False``: none, every chain is used;
+                ``True``: this run's ``post_processing_output/selection.json``, created with the
+                defaults (every chain, burn-in stages ``is_excluded`` dropped) if missing; a path:
+                that file (must exist); a dict: a selection in the file's layout. Excluded chains
+                are removed from the stage's chain lists (``chain_indices[stage]`` keeps the
+                original chain numbers, which ``chains_to_disp`` refers to everywhere), their
+                ``notes``/``subchain_stats``/``adaptive_stats`` rows and ``raw_data`` files are
+                left out too, and ``burn_in`` leading compressed rows are dropped from every kept
+                chain (``raw_data`` snapshots have no burn-in).
+        """
         self.debug = debug
-        self.run_data = read_run(samples_dir, load_raw_data=False)
+        self.lineage_note: str | None = None
+        if include_previous is None:
+            dirs, same_problem, complete = lineage_links(samples_dir, strict=False)
+            if len(dirs) > 1 and same_problem and complete:
+                self.run_data = read_lineage(samples_dir, load_raw_data=False)
+            else:
+                self.run_data = read_run(samples_dir, load_raw_data=False)
+                if not complete:
+                    self.lineage_note = (f"This run continues {dirs[0]!r}'s lineage, but an earlier run could not "
+                                         "be read; only this run is analysed.")
+                    print(f"WARNING: {self.lineage_note}", flush=True)
+                elif len(dirs) > 1:
+                    self.lineage_note = ("This run continues earlier run(s) that sampled a different Problem (or "
+                                         "were continued by hand, which does not record it); only this run is "
+                                         "analysed. Pass include_previous=True to include them.")
+        elif include_previous is True:
+            self.run_data = read_lineage(samples_dir, load_raw_data=False)
+            if not self.run_data.same_problem:
+                self.lineage_note = ("The Problem changed within this lineage (a continuation with problem=, or "
+                                     "one continued by hand): the stages below did not all sample the same "
+                                     "posterior. They are combined because include_previous=True.")
+        elif include_previous is False:
+            self.run_data = read_run(samples_dir, load_raw_data=False)
+        else:
+            raise TypeError(f"include_previous must be None, True or False, got {include_previous!r}")
         if int(no_parameters) != self.run_data.no_parameters:
             raise ValueError(
                 f"no_parameters={no_parameters} does not match the run in {samples_dir} "
@@ -110,27 +160,95 @@ class Samples(SamplesReports):
         self.samples_dir = os.path.join(self.sampling_output_dir, "samples")
         self.stage_names = list(self.run_data.stage_names)
         self.no_stages = len(self.stage_names)
+        # per stage: the sampling_output/ of the run of the lineage that wrote it
+        stage_dirs = self.run_data.stage_output_dir or [samples_dir] * self.no_stages
+        self.stage_sampling_dirs = [sampling_output_dir(d) for d in stage_dirs]
+
+        self._apply_selection(selection, samples_dir)
         self.list_of_stages = [
             StageSamples(no_parameters, stage_samples, decompress_samples, load_posterior)
-            for stage_samples in self.run_data.samples
+            for stage_samples in self._selected_samples
         ]
+        del self._selected_samples
         self.summarize()
+
+    def _apply_selection(self, selection, samples_dir: str) -> None:
+        """Resolve ``selection`` (see ``__init__``) into ``chain_indices``/``_selected_samples``."""
+        self.selection_path: str | None = None
+        self.selection_created = False
+        self.selection_content: dict | None = None
+        self.selection_mask: dict | None = None
+        if selection is True:
+            path = selection_path(samples_dir)
+            if not os.path.isfile(path):
+                write_selection(path, default_selection(self.run_data))
+                self.selection_created = True
+            self.selection_path = path
+            self.selection_content, self.selection_mask = read_selection(path, self.run_data)
+        elif isinstance(selection, dict):
+            self.selection_content = selection
+            self.selection_mask = validate_selection(selection, self.run_data, "the selection dict")
+        elif selection is not None and selection is not False:
+            path = os.path.abspath(os.fspath(selection))
+            if not os.path.isfile(path):
+                raise FileNotFoundError(f"selection file {path!r} not found")
+            self.selection_path = path
+            self.selection_content, self.selection_mask = read_selection(path, self.run_data)
+
+        self.no_chains_original = [self.run_data.no_chains(i) for i in range(self.no_stages)]
+        self.chain_indices: list[list[int]] = []
+        self.selection_burn_in: list[list[int]] = []
+        self._selected_samples = []
+        for index, name in enumerate(self.stage_names):
+            rows = self.run_data.samples[index]
+            if self.selection_mask is None:
+                self.chain_indices.append(list(range(len(rows))))
+                self.selection_burn_in.append([0] * len(rows))
+                self._selected_samples.append(rows)
+                continue
+            include = self.selection_mask[name]["include"]
+            burn_in = self.selection_mask[name]["burn_in"]
+            kept = [chain for chain in range(len(rows)) if include[chain]]
+            self.chain_indices.append(kept)
+            self.selection_burn_in.append([burn_in[chain] for chain in kept])
+            self._selected_samples.append([rows[chain][burn_in[chain]:] for chain in kept])
+
+    def _kept_rows(self, frame: pd.DataFrame, stage_index: int, by_rank: bool) -> pd.DataFrame:
+        """``frame`` without the rows of excluded chains: by ``rank_world`` (``by_rank``) or, for
+        ``notes`` (one row per chain, in rank-file order), by position."""
+        if not self._excluded_chains(stage_index) or frame.empty:
+            return frame
+        kept = self.chain_indices[stage_index]
+        if by_rank:
+            if "rank_world" not in frame.columns:
+                return frame
+            ranks = (self.run_data.chain_ranks[stage_index] if self.run_data.chain_ranks
+                     else list(range(self.no_chains_original[stage_index])))
+            kept_ranks = {int(ranks[chain]) for chain in kept}
+            return frame[frame["rank_world"].astype(int).isin(kept_ranks)].reset_index(drop=True)
+        if len(frame) != self.no_chains_original[stage_index]:
+            print(f"WARNING: notes of stage {self.stage_names[stage_index]!r} have {len(frame)} row(s) for "
+                  f"{self.no_chains_original[stage_index]} chain(s); the selection is not applied to them.",
+                  flush=True)
+            return frame
+        return frame.iloc[kept].reset_index(drop=True)
 
     def load_notes(self):
         """``notes[stage]``: one row per chain, already concatenated by ``read_run``."""
-        self.notes = [notes.copy() for notes in self.run_data.notes]
+        self.notes = [self._kept_rows(notes, i, by_rank=False).copy()
+                      for i, notes in enumerate(self.run_data.notes)]
 
     def load_subchain_stats(self):
         """``subchain_stats[stage]``: all DAMH iterations of all chains (empty for MH stages)."""
-        self.subchain_stats = [pd.DataFrame() if stats is None else stats.copy()
-                               for stats in self.run_data.subchain_stats]
+        self.subchain_stats = [pd.DataFrame() if stats is None else self._kept_rows(stats, i, by_rank=True).copy()
+                               for i, stats in enumerate(self.run_data.subchain_stats)]
 
     def load_adaptive_stats(self):
         """``adaptive_stats[stage]``: the per-period adaptation trace of every chain of an
         ``adaptive=True`` stage, empty for every stage whose proposal did not adapt
         (columns depend on the proposal class, see ``docs/outputs.md``)."""
-        self.adaptive_stats = [pd.DataFrame() if stats is None else stats.copy()
-                               for stats in self.run_data.adaptive_stats]
+        self.adaptive_stats = [pd.DataFrame() if stats is None else self._kept_rows(stats, i, by_rank=True).copy()
+                               for i, stats in enumerate(self.run_data.adaptive_stats)]
 
     def load_carry_over(self):
         """``carry_over[stage]``: ``(carry_over, summary)`` dict pair handed from this stage to
@@ -192,20 +310,18 @@ class Samples(SamplesReports):
             stages_to_disp (list of int): stages that should be included (otherwise all stages are included)
         """
         requested_chains = None if chains_to_disp is None else [int(c) for c in chains_to_disp]
-        if stages_to_disp is None:
-            stage_names = self.stage_names
-        else:
-            stage_names = [self.stage_names[i] for i in stages_to_disp]
+        stage_indices = list(range(self.no_stages)) if stages_to_disp is None else list(stages_to_disp)
         chosen_observations = np.arange(no_observations, dtype=np.int32)  # all
 
         weights_all = np.empty((0, 1))
         G_all = np.empty((0, no_observations))
         par_all = np.empty((0, self.no_parameters))
-        for stage_name in stage_names:
-            dirname = os.path.join(self.sampling_output_dir, "raw_data", stage_name)
+        for stage_index in stage_indices:
+            stage_name = self.stage_names[stage_index]
+            dirname = self._stage_data_dir(stage_index, "raw_data")
             files = [f for f in os.listdir(dirname) if os.path.isfile(os.path.join(dirname, f))]
             files.sort()
-            for i in (range(len(files)) if requested_chains is None else requested_chains):
+            for i in self._raw_chain_numbers(stage_index, len(files), requested_chains):
                 if i >= len(files):
                     print("FILE NOT AVAILABLE - chain:", i, "stage", stage_name, flush=True)
                     continue

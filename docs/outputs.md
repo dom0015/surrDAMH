@@ -28,6 +28,7 @@ sampling_output/
 solver_output/rank<k>/                     solver-defined scratch directory
 post_processing_output/
   summary.csv, report_extended.html, best_fit_solver_visualization_*.png    (written by SamplingRun.write_report)
+  selection.json                                                          (the (stage, chain) mask and burn-in, see "Selection mask" below)
 ```
 
 `<stage.name>` is `alg%04d_<MH|MH-adaptive|DAMH|DAMH-SMU>` (`stages.stage_name`), e.g.
@@ -174,16 +175,142 @@ Written by rank 0 (or by `run_sampling_local`) before role dispatch and finalize
 `manifest_version`, `format_version` (`2`), `surrdamh_version`, `runner`
 (`"mpi"`/`"local"`), timestamps, `hostname`, package versions, `git` (commit/dirty/branch),
 the full `configuration`/`stages`/`prior`/`likelihood` summaries, `surrogate`
-(updater/evaluator class + scalar hyperparameters), `solver`, `seeds` (the literal
-`seed0 = 10*(no_stages*rank+i)` formula and every per-rank/per-stage seed, plus whether
-`initial_sample_type` makes the run reproducible), `mpi` layout, `environment`
-(thread-count env vars), `unverified_options` (e.g.
-`use_surrogate_gradients was disabled by Problem.run_sampling`), and `continued_from` (with the source run's own
-manifest embedded, if it had one). Manifest writing/finalizing never aborts a run — any
-failure there is printed as a `WARNING`, not raised.
+(updater/evaluator class + scalar hyperparameters), `solver`, `seeds` (`modules.seeds.SEED_FORMULA`:
+`seed0 = 10*(no_stages*rank+i) + 1_000_000*generation` and every per-rank/per-stage seed, plus
+whether `initial_sample_type` makes the run reproducible — `generation` is 0 and `no_stages` this
+run's own stage count for a plain run, see "`lineage`" below for a continuation), `mpi` layout,
+`environment` (thread-count env vars), `unverified_options` (e.g.
+`use_surrogate_gradients was disabled by Problem.run_sampling`), `continued_from` (the OLD manual
+continuation only — `Configuration(initial_sample_type="continued", continued_from_dir=...)` —
+with the source run's own manifest embedded), and `lineage` (a continuation made by
+`SamplingRun.continue_sampling`/`continue_sampling_local`, see below). Manifest writing/finalizing
+never aborts a run — any failure there is printed as a `WARNING`, not raised.
 
 The manifest is also what makes a directory readable: `read_run` requires it and requires
 `format_version == 2`.
+
+### `lineage` (`SamplingRun.continue_sampling`, 2026-10-08)
+
+Present only on a run produced by `SamplingRun.continue_sampling`/`continue_sampling_local`
+(`modules.manifest.lineage_entry`); absent on a plain run and on one continued the old manual way
+(`initial_sample_type="continued"` set by hand) — both count as generation 0 of their own lineage
+when read back (`core._lineage_of`). Keys:
+
+| key | meaning |
+|---|---|
+| `continued_from` | absolute output directory of the run this one continues, or `null` |
+| `generation` | 0, 1, 2, ... — how many times the lineage has been continued |
+| `stage_index_offset` | stage count of every earlier run of the lineage; added to this run's local stage index for both the stage directory names and the seeds |
+| `no_stages_lineage` | total stage count of the lineage up to and including this run; the seed formula's `no_stages` |
+| `same_problem` | `true` iff this run sampled the previous run's `Problem` unchanged (`false` after `continue_sampling(problem=...)`) |
+| `same_problem_lineage` | `same_problem` held for *every* continuation of the lineage so far |
+| `chains` | `"continue"`, `"prior"` or `"lhs"` (the `chains=` argument) |
+| `initial_sample_is_carried_over` | A30 flag of this run's first stage: `true` iff the previous run's last stage had already written the state these chains start from |
+| `dirs` | absolute output directories of the whole lineage, oldest first, this run last |
+
+`modules.run_data.read_lineage(output_dir)` follows `continued_from` recursively and returns one
+`RunData` with every per-stage list concatenated in lineage order (new `RunData` fields:
+`output_dirs`, `stage_output_dir`, `same_problem`, `generation`, `manifests`, `chain_ranks`; stage
+names must be unique across the lineage — a lineage made with the old manual continuation is not,
+and raises `RunFormatError` naming `include_previous=False` as the fix).
+`post_processing.Samples(..., include_previous=...)` is the read side most scripts use — see
+"`include_previous` and the lineage" below.
+
+### `auto` (`Problem.run_sampling_auto`/`run_sampling_local_auto`, 2026-10-08)
+
+Present only on a run started with the automatic mode (`surrDAMH.auto.AutoPlan.manifest_entry()`;
+see `docs/running.md#automatic-mode-2026-10-08`); absent otherwise. Also exposed as `run.auto`
+(`SamplingRun.auto`). Keys:
+
+| key | meaning |
+|---|---|
+| `mode` | `"robust"` or `"fast"` |
+| `budget` | the `budget=` argument (total exact evaluations, including the held-out set), or `null` if `time_limit=` was given instead |
+| `time_limit` | the `time_limit=` argument (seconds), or `null` if `budget=` was given |
+| `no_samplers` | number of chains the plan was built for (1 for `run_sampling_local_auto`) |
+| `per_chain_budget` | exact evaluations per chain after subtracting the held-out set, or `null` for a time budget |
+| `test_data_size` | held-out prior-draw points generated (0 if none) |
+| `warm_up` | `{"evaluations": n0}` or `{"time_limit": t0}` for the excluded MH warm-up stage, or `null` for the single-MH-stage layout |
+| `chunks` | number of DAMH-SMU chunks after the warm-up (0 for the single-MH-stage layout) |
+| `stage_names` | the resolved stage directory names, in order (same as `[s.name for s in run.stages]`) |
+| `proposal` | `repr()` of the chunks' proposal spec (`RandomWalk(...)`/`Hamiltonian(...)`), or of the single MH stage's, or `null` |
+| `surrogate` | `"none"`, or `{"class", "default", "hparams"}` for the updater actually used (`default=True` for the built-in `NeuralNetworkUpdater`) |
+| `conf_settings` | the `Configuration` fields Auto set (see `docs/configuration.md`) |
+| `notes` | human-readable reasons for every decision that is not the plain rule (e.g. "use_collector=False: ...", "min_snapshots_initial=7 set by the user is kept") |
+
+JSON-safe (`json.dumps` round-trips it). The plan is also printed once at start-up (rank 0 /
+local, `AutoPlan.describe()`) before the stage list itself.
+
+## Selection mask (`post_processing_output/selection.json`, 2026-10-08)
+
+`SamplingRun.write_report()` reads samples through a per-(stage, chain) mask with per-chain
+burn-in, applied at load time by `post_processing.Samples`/`post_processing/selection.py`. The
+file lives in the NEWEST run's own `post_processing_output/`, even when the report covers a whole
+lineage (`include_previous`, below):
+
+```json
+{"format": 1,
+ "lineage": ["<dir0>", "<dir1>"],
+ "stages": [{"name": "alg0000_MH-adaptive", "output_dir": "<dir0>", "is_excluded": true,
+             "include": [0, 0, 0, 0], "burn_in": [0, 0, 0, 0]},
+            {"name": "alg0001_DAMH-SMU", "output_dir": "<dir0>", "is_excluded": false,
+             "include": [1, 1, 1, 1], "burn_in": [0, 0, 0, 0]}],
+ "recommended": null,
+ "note": "..."}
+```
+
+- `include[c]` / `burn_in[c]` are indexed by the chain's **original** rank number (the position
+  of its `rank%04d` file), not its position after an earlier exclusion.
+  `include`: `1` = use this chain's samples of this stage, `0` = drop them.
+- `burn_in[c]`: leading **compressed** rows (not raw iterations) dropped from that chain's
+  `samples/<stage>/rank%04d.csv` at load time, for chains that are kept. `raw_data` snapshots have
+  no burn-in applied.
+- `recommended` is reserved for the (not yet implemented) verdict diagnostics' suggestions and
+  stays `null` until then.
+
+`write_report(selection=None)` (the default) creates the file, if missing, with every chain of
+every stage included **except** stages with `Stage.is_excluded=True` (burn-in stages), which get
+`include=0` for every chain — **this drops `is_excluded` stages from the default report
+entirely**, which is new: before the selection mask existed, `is_excluded` only affected the
+`+1`/`+0` multiplicity rule above, and such a stage still appeared in every report and
+`summary.csv`. The file is then read and applied on this and every later call, so editing it by
+hand and calling `SamplingRun.load(output_dir).write_report()` again re-runs the post-processing
+with the edit. `write_report(selection=<path>)` uses that file instead (must exist);
+`write_report(selection=False)` ignores any file and uses every chain with no burn-in (the
+pre-selection behaviour). A stage whose every chain ends up excluded is left out of the report
+with a printed note instead of crashing; if *every* stage ends up excluded, `write_report` raises
+`ValueError`. The run manifest is never modified by any of this — `selection.json` is the only
+record of what was dropped.
+
+Excluding a chain also drops its rows from `notes`/`subchain_stats`/`adaptive_stats` (filtered by
+`rank_world`) and its entry from `chain_indices`, so `chains_to_disp` (which refers to ORIGINAL
+rank numbers everywhere) and the acceptance counters of `summary.csv` stay consistent.
+
+The report's last section, **"Selection and re-run"**, shows a stage x chain table of
+`include`/`burn_in`, lists the excluded pairs in prose ("excluded by the user: ...", "excluded as
+burn-in stages: ..."), the absolute path of `selection.json`, and the re-run snippet:
+
+```python
+import surrDAMH
+surrDAMH.SamplingRun.load("<output_dir>").write_report()
+```
+
+plus a note that `problem=` can be passed to `load` to restore the sections that need the prior or
+a solver (prior overlay, parameter names, posterior field statistics, best-fit solver
+visualization).
+
+## `include_previous` and the lineage
+
+`post_processing.Samples(no_parameters, samples_dir, include_previous=None, ...)` and
+`SamplingRun.write_report(include_previous=None, ...)` decide how much of a lineage is loaded:
+
+| `include_previous` | What is loaded |
+|---|---|
+| `None` (default) | the whole lineage (`read_lineage`) iff `same_problem` holds for every link of it; otherwise this run alone (`read_run`), with a note in the report explaining why |
+| `True` | the whole lineage regardless — the report then notes that the problem changed, if it did |
+| `False` | this run alone |
+
+`summary.csv` then has one row per loaded stage (every stage of the lineage, or just this run's).
 
 ## Reading outputs
 

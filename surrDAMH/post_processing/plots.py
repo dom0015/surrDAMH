@@ -79,11 +79,15 @@ class SamplesPlots(SamplesStatistics):
             for idi, i in enumerate(parameters_to_disp):
                 axis = axes[idi]
                 # one trace per displayed chain, concatenated over the displayed stages
-                all_x = {s: np.zeros((0,)) for s in self._resolve_chains(stages_to_disp[0], chains_to_disp)}
+                # (keyed by the ORIGINAL chain number, so a chain stays one trace across the
+                # stages of a lineage or a selection that removed it from some stage)
+                all_x = {self.chain_indices[stages_to_disp[0]][s]: np.zeros((0,))
+                         for s in self._resolve_chains(stages_to_disp[0], chains_to_disp)}
                 for idj, j in enumerate(stages_to_disp):
                     for s in self._resolve_chains(j, chains_to_disp):
+                        chain = self.chain_indices[j][s]
                         tmp = self._decompressed_samples(j)[s][burn_in[idj][s]:, i]
-                        all_x[s] = np.concatenate((all_x.get(s, np.zeros((0,))), tmp))
+                        all_x[chain] = np.concatenate((all_x.get(chain, np.zeros((0,))), tmp))
                 for s in sorted(all_x):
                     chain = all_x[s]
                     if average:
@@ -357,7 +361,7 @@ class SamplesPlots(SamplesStatistics):
         if grid_interp is None:
             grid_interp = grid
         requested_chains = None if chains_to_disp is None else [int(c) for c in chains_to_disp]
-        stage_names = self._get_stage_names(stages_to_disp)
+        stage_indices = list(range(self.no_stages)) if stages_to_disp is None else list(stages_to_disp)
 
         if not self._raw_data_available(stages_to_disp=stages_to_disp):
             return self._placeholder_figure(
@@ -371,14 +375,15 @@ class SamplesPlots(SamplesStatistics):
         weights_all = np.empty((0, len_grid))
         G_all = np.empty((0, len_grid))
         # param_all = np.empty((0, self.no_parameters))
-        for stage_name in stage_names:
-            dirname = os.path.join(self.sampling_output_dir, "raw_data", stage_name)
+        for stage_index in stage_indices:
+            stage_name = self.stage_names[stage_index]
+            dirname = self._stage_data_dir(stage_index, "raw_data")
             if not os.path.isdir(dirname):
                 print("hist_G DIRECTORY NOT AVAILABLE:", dirname)
                 continue
             files = [f for f in os.listdir(dirname) if os.path.isfile(os.path.join(dirname, f))]
             files.sort()
-            for i in (range(len(files)) if requested_chains is None else requested_chains):
+            for i in self._raw_chain_numbers(stage_index, len(files), requested_chains):
                 if i >= len(files):
                     print("hist_G FILE NOT AVAILABLE - chain:", i, "stage", stage_name)
                     continue
@@ -718,7 +723,8 @@ class SamplesPlots(SamplesStatistics):
         stats = stats.copy()
         if "rank_world" not in stats.columns:
             stats["rank_world"] = 0
-        ranks = sorted(int(r) for r in stats["rank_world"].unique())
+        # from the unfiltered trace: chain labels stay the original ones after a selection
+        ranks = self._adaptive_ranks(stage_idx)
         chain_of_rank = {rank: position for position, rank in enumerate(ranks)}
         if chains_to_disp is not None:
             wanted = {ranks[int(c)] for c in chains_to_disp if 0 <= int(c) < len(ranks)}

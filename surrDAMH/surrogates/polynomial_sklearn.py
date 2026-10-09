@@ -175,3 +175,80 @@ class PolynomialSklearnUpdater(Updater):  # initiated by COLLECTOR
                 self.model.fit(self.par, self.obs, ridge__sample_weight=sample_weight)
             self.num_snapshots_current = self.num_snapshots
         return PolynomialSklearnEvaluator(self.no_parameters, self.no_observations, self.model)
+
+    # --- persistence (2026-10-08): makes the updater restorable by SurrogateRestart and
+    # surrogates.reuse.SurrogateReused, so a continued run (SamplingRun.continue_sampling) can start
+    # from it. The state is the stored snapshots plus the constructor arguments; the ridge fit is
+    # deterministic, so it is redone from the snapshots on the first get_evaluator().
+
+    def get_initial_snapshots(self) -> list[npt.NDArray] | None:
+        """The restored snapshots after ``load_state``/``load_training_data``, else ``None``."""
+        if not getattr(self, "training_data_loaded", False):
+            return None
+        return [self.par.copy(), self.obs.copy(), self.mul.copy()]
+
+    def save_training_data(self, path: str) -> None:
+        """Stored snapshots to an ``.npz`` (same keys as the neural-network updater's file)."""
+        import os
+        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+        np.savez(path, parameters=self.par, observations=self.obs, multiplicity=self.mul,
+                 no_parameters=self.no_parameters, no_observations=self.no_observations,
+                 num_snapshots=self.par.shape[0])
+
+    def load_training_data(self, path: str) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Replace the stored snapshots by the ones in ``path`` (as written by ``save_training_data``)."""
+        with np.load(path) as loaded:
+            parameters = np.asarray(loaded["parameters"], dtype=float).reshape(-1, self.no_parameters)
+            observations = np.asarray(loaded["observations"], dtype=float).reshape(-1, self.no_observations)
+            multiplicity = (np.asarray(loaded["multiplicity"], dtype=float).reshape(-1, 1)
+                            if "multiplicity" in loaded else np.ones((parameters.shape[0], 1)))
+        self.par, self.obs, self.mul = parameters, observations, multiplicity
+        self.num_snapshots = self.no_snapshots = parameters.shape[0]
+        self.num_snapshots_current = 0
+        self.degree_current = -1
+        self.model = None
+        self.training_data_loaded = self.num_snapshots > 0
+        return parameters, observations, multiplicity
+
+    def save_state(self, checkpoint_path: str, data_path: str | None = None,
+                   save_optimizer: bool = True) -> None:
+        """Constructor arguments to ``checkpoint_path`` (``torch.save`` of plain values, the format
+        ``SurrogateReused`` reads) and the snapshots to ``data_path``."""
+        import os
+        import torch
+        os.makedirs(os.path.dirname(os.path.abspath(checkpoint_path)), exist_ok=True)
+        torch.save({"format_version": 1, "surrogate_type": type(self).__name__,
+                    "updater_hparams": {"no_parameters": self.no_parameters,
+                                        "no_observations": self.no_observations,
+                                        "max_degree": int(self.max_degree), "alpha": float(self.alpha),
+                                        "weighting": self.weighting},
+                    "training_summary": {"num_snapshots": int(self.num_snapshots)}}, checkpoint_path)
+        if data_path is not None:
+            self.save_training_data(data_path)
+
+    def load_state(self, checkpoint_path: str, data_path: str | None = None,
+                   load_optimizer: bool = True) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
+        """Restore the snapshots of a ``save_state`` checkpoint; the updater is then
+        ``pretrained_ready`` (the collector fits and hands out an evaluator before the first
+        new snapshot arrives)."""
+        import torch
+        checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
+        if checkpoint.get("surrogate_type") != type(self).__name__:
+            raise ValueError(f"Checkpoint surrogate type {checkpoint.get('surrogate_type')!r} is "
+                             f"incompatible with {type(self).__name__}")
+        hparams = checkpoint.get("updater_hparams", {})
+        for name in ("no_parameters", "no_observations"):
+            if int(hparams.get(name, getattr(self, name))) != getattr(self, name):
+                raise ValueError(f"Checkpoint {name}={hparams.get(name)} differs from the updater's "
+                                 f"{getattr(self, name)}")
+        if data_path is None:
+            return None
+        loaded = self.load_training_data(data_path)
+        self.pretrained_ready = self.num_snapshots > 0
+        return loaded
+
+    def supports_state_persistence(self) -> bool:
+        return True
+
+    def supports_training_data_persistence(self) -> bool:
+        return True

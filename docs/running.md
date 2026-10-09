@@ -22,6 +22,99 @@ call `run_sampling`, just under a single rank (`use_collector=False`, `use_solve
 one process); see "Single process / no MPI at all" below for the no-MPI-at-all alternative,
 `run_sampling_local`.
 
+## Automatic mode (2026-10-08)
+
+**Status (2026-10-09): preliminary.** Every DAMH step targets the exact posterior for the surrogate installed at that moment, and the proposal adaptation diminishes; but the on-the-fly retraining of the network is an adaptive component whose ergodicity argument (`library_notes/18_damh_smu_validity_proof_2026-09-22.md`) needs a bounded surrogate (A4) and diminishing updates (A5), and neither the Polyak averaging of received weights (note 25 S3), the prior-truncation decision (D4) nor the exact safety kernel (S2) is implemented yet. Treat Auto as "exact per installed surrogate, with retraining whose theoretical justification is pending"; all its numbers are placeholders until the validation plan of note 25 §6 has run.
+
+Instead of writing an explicit stage list by hand, `Problem.run_sampling_auto` /
+`run_sampling_local_auto` pick a stage layout and a surrogate from a budget
+(`surrDAMH/auto.py::plan_auto`; design in `library_notes/25_robust_by_default_roadmap_2026-10-08.md`
+§5):
+
+```python
+run = problem.run_sampling_auto(conf, budget=80_000, mode="robust")        # MPI, collective call
+run = problem.run_sampling_auto(conf, time_limit=3600.0, mode="fast")      # wall-clock budget instead
+run = problem.run_sampling_local_auto(conf, budget=20_000, mode="robust")  # one chain, one process
+```
+
+Give exactly one of `budget=`/`time_limit=` (`ValueError` otherwise, before any MPI call).
+`budget` is the TOTAL number of **exact** model evaluations over the whole run — every sampler
+chain plus the held-out test set below, not per chain. `time_limit` is wall-clock seconds for the
+whole run instead, used to size the stages' `Stage.time_limit` rather than
+`Stage.max_evaluations`.
+
+**Both modes sample the exact posterior** — the difference is only how fast the chain mixes on a
+hard problem, never whether it is biased:
+
+- `mode="robust"` (default): the DAMH chunks propose with an adaptive `RandomWalk()`.
+- `mode="fast"`: the DAMH chunks propose with `Hamiltonian(num_steps=30,
+  integrator="dimension_robust", mass=1.0)` on the surrogate's gradients — usually far more
+  efficient, but it may mix slowly (or diverge more often) on a hard/non-smooth problem, where
+  `"robust"` is the safer default. Needs a gradient-capable surrogate and
+  `Configuration(use_surrogate_gradients=True, transform_before_surrogate=False)` (both the
+  defaults) — `ValueError` otherwise, naming the fix.
+
+**Every number below is a PLACEHOLDER** picked before validation (note 25 §6 will tune them); do
+not rely on the exact constants staying as they are. Let `d` = `problem.no_parameters`, `C` = the
+number of chains (`conf.no_samplers`, 1 for a local run), `B` = the per-chain evaluation budget
+after subtracting the held-out set (below) and dividing by `C`:
+
+- If `B < 50·d` evaluations per chain, or the run has no collector
+  (`conf.use_collector=False`, so no surrogate can be trained): **one** adaptive-random-walk MH
+  stage runs with the whole budget, with a note explaining why — a surrogate trained on fewer
+  points than that does not pay.
+- Otherwise: an **excluded** MH warm-up stage (adaptive random walk) of
+  `n0 = clip(20·d, 0.05·B, 0.25·B)` evaluations per chain, burn-in only (dropped from the default
+  report, see `docs/outputs.md`'s selection mask), followed by **4 DAMH-SMU chunks**
+  (`subchain_length=1`, the mode's proposal) sharing the remaining `B - n0` evaluations as evenly
+  as possible (the remainder goes to the last chunk). There is **no frozen stage** — every chunk
+  keeps retraining the surrogate.
+- With `time_limit=` instead of `budget=`, the same shares apply to wall time: the warm-up gets
+  `0.15 * time_limit` and the 4 chunks `0.85 * time_limit / 4` each (`Stage.time_limit=`, no
+  evaluation cap); a note says the `20·d` warm-up floor cannot be enforced against a clock, so a
+  too-short `time_limit` may leave the first surrogate undertrained.
+
+**Surrogate automation**: unless `surrogate_updater=` overrides it, a surrogate-using plan gets a
+`NeuralNetworkUpdater(hidden_layer_sizes=(64, 64), activation="silu", solver="adamw", seed=0)`
+(`output_normalization="likelihood"` wired as usual). A **held-out test set** is generated only
+when the plan uses a surrogate (not for the single-MH-stage case above), `problem.solver_instance`
+is an in-process `Solver` (not a `SolverSpec`, where no rank but the solver-pool children hold a
+solver — a note says so) and no `surrogate_test_data=` override is given; its size
+is `min(256, max(2·d, 0.02·budget))` for an evaluation budget or `min(256, max(2·d, 64))` for a
+time budget, **subtracted from `budget`** (an explicit `surrogate_test_data=` is used as given and
+NOT subtracted). For an MPI run it is generated **on the collector rank only**, inside
+`run_sampling`, so no sampler spends an evaluation on it; for `run_sampling_local_auto` it is
+generated before the run. Either way it is saved to
+`sampling_output/surrogate_test_data.npz`/`surrogate_quality_test.csv` as usual — except
+`run_sampling_local_auto` does not monitor surrogate quality with it (the local runner has no
+quality-monitoring loop), so there the set is only saved for a later run to reuse.
+`use_surrogate_gradients` is set to `mode == "fast"`. `min_snapshots_initial` defaults to
+`max(1, min(10·d, n0*C // 2))` for an evaluation budget (`max(1, 10*d)` for a time budget) and
+`min_snapshots_to_update` to `max(20, 2*d)` — **but only if the user left them at `Configuration`'s
+own defaults** (`1` and `0`); a value the user set explicitly is always kept, with a note in the
+plan instead of being overwritten.
+
+**What Auto sets on `conf`** (recorded under `conf_settings` below): `initial_sample_type="lhs"`,
+but only if it was left at the default `"prior"` (a user's `"lhs"`/`"user_specified"`/`"continued"`
+is kept); `use_surrogate_gradients`; `min_snapshots_initial`/`min_snapshots_to_update` as above.
+
+**Expert overrides**: `surrogate_updater=` (an already-constructed `Updater`; `mode="fast"` then
+needs one with `supports_gradients()`) and `surrogate_test_data=` (a `TestData` or the
+`(parameters, observations)` tuple `run_sampling` already accepts — used as given, not
+subtracted from the budget, not generated).
+
+The resolved plan is printed once at start-up (rank 0 / local, `AutoPlan.describe()`), and the
+explicit stage list it produced — `run.stages` — is what actually runs; an expert can read it off
+and copy it into a plain `run_sampling(conf, stages, ...)` call. It is also recorded in
+`run_manifest.json` under `"auto"` and as `run.auto` (keys: `mode`, `budget`, `time_limit`,
+`no_samplers`, `per_chain_budget`, `test_data_size`, `warm_up`, `chunks`, `stage_names`,
+`proposal`, `surrogate`, `conf_settings`, `notes` — see `docs/outputs.md`).
+
+**Not implemented yet**: `continue_sampling_auto` (an automatic continuation of a finished Auto
+run) does not exist; `conf`'s lineage fields (`stage_index_offset`, `no_stages_lineage`,
+`lineage_generation`) must stay at their defaults, or `plan_auto` raises `ValueError` (Auto is not
+a continuation). See `toy_examples/auto_mode_example.py`.
+
 ## Process counts and roles
 
 `Configuration.__post_init__` derives roles from `MPI.COMM_WORLD`'s size (`size`) and
@@ -91,6 +184,10 @@ API — in case you need to read the implementation.) See `docs/writing_a_surrog
 
 ## Continuation
 
+This is the low-level mechanism; for continuing a finished `SamplingRun` with lineage stage
+numbering, generation-shifted seeds, carried proposal state and automatic surrogate/test-data
+reuse, use `SamplingRun.continue_sampling(_local)` instead — see "Continuing a run" below.
+
 Every stage (MPI or local) writes `sampling_output/last_sample/<stage>/rank%04d.npz`
 after it finishes. To continue from it:
 
@@ -103,6 +200,123 @@ conf = surrDAMH.Configuration(..., initial_sample_type="continued",
 requires at least as many saved chains as the new run's `no_samplers`, and warns (does
 not error) if there are more than needed (only the first `no_samplers`, sorted by
 filename, are used).
+
+## Continuing a run
+
+`SamplingRun.continue_sampling(_local)` continues a finished run (the `SamplingRun` returned by
+`problem.run_sampling(_local)`, or rebuilt by `SamplingRun.load(output_dir, problem)`) under a
+fresh `Configuration`/stage list, carrying over everything a hand-written restart would otherwise
+have to wire up itself: chain states, stage numbering and seeds, the tuned proposal, and the
+surrogate with its held-out test data.
+
+```python
+previous = problem.run_sampling(conf_a, stages_a, surrogate_updater=updater)   # or run_sampling_local,
+                                                                               # or SamplingRun.load(dir, problem)
+run_b = previous.continue_sampling(conf_b, stages_b,
+                                   chains="continue",                # "continue" | "prior" | "lhs"
+                                   problem=None,                     # a different Problem, same sizes
+                                   surrogate_updater=None, surrogate_evaluator=None,
+                                   surrogate_initial_training_data=None, surrogate_test_data=None,
+                                   surrogate_restart=None)            # MPI, collective like run_sampling
+run_b = previous.continue_sampling_local(conf_b, stages_b, chains="continue", problem=None,
+                                         surrogate_updater=None, surrogate_evaluator=None)
+```
+
+`conf_b` is a fresh `Configuration` with its own `output_dir` (must differ from every output
+directory already in the lineage, else `ValueError`). Its initial-sample fields
+(`initial_sample_type`, `continued_from_dir`) and the three lineage fields
+(`stage_index_offset`, `no_stages_lineage`, `lineage_generation`, see `docs/configuration.md`) are
+set by `continue_sampling` itself — leave them at their defaults, or it raises `ValueError`.
+
+**What is reused by default** (true for every `chains=` choice unless stated otherwise):
+
+- **Chain states** — only with `chains="continue"` (the default): every chain of `run_b` starts
+  from `previous`'s `sampling_output/last_sample/` (its last stage's state). `previous` must have
+  at least as many saved chains as `conf_b.no_samplers` (the existing `load_last_samples` rule:
+  fewer is an error, more drops the extra ones with a warning); no `last_sample/` at all raises
+  `FileNotFoundError`.
+- **Carried proposal state** — always, regardless of `chains=`: the proposal carry-over of every
+  adaptive stage of the whole lineage so far (oldest first, later stages win) is merged and handed
+  to `stages_b`'s first stage, so `RandomWalk(scale=None)` / `PCN(beta=None)` /
+  `Hamiltonian(step_size=None)` pick up the tuned value instead of the prior-derived default. This
+  is about the posterior, not the chain state, so it applies even when `chains="prior"`/`"lhs"`
+  draws fresh starting points.
+- **Surrogate, via `surrogates.reuse.SurrogateReused`** — if neither `surrogate_updater=` nor
+  `surrogate_evaluator=` is given: a checkpoint saved in `previous`'s `sampling_output/`
+  (`surrogate_checkpoint.pt` + `surrogate_training_data.npz`) is restored, so a DAMH/Hamiltonian
+  first stage in `stages_b` needs no MH warm-up. With `conf_b.use_collector=False` the restored
+  surrogate becomes a fixed evaluator instead. Only **`NeuralNetworkUpdater`** and
+  **`PolynomialSklearnUpdater`** implement state persistence (`Updater.supports_state_persistence()`
+  — `RBFInterpolationUpdater` and `KDTreeUpdater` do not): a continuation of one of those starts
+  with **no surrogate at all**, so a DAMH/Hamiltonian first stage then fails through the usual
+  start-up deadlock check (finding 2.2) instead of silently starting cold. If `previous` holds
+  training data but no checkpoint, `continue_sampling` raises `ValueError` naming the fix
+  (`surrogate_updater=<an updater>` together with
+  `surrogate_restart=SurrogateRestart(..., mode="data")`).
+- **Held-out test data** — `surrDAMH.TestData.reuse(previous.output_dir)` if a set was saved
+  there and `surrogate_test_data=` is not given; the set used is saved into `run_b` as well, so the
+  lineage stays self-contained.
+
+**A plain run's surrogate state is NOT saved automatically** — only a run produced by
+`continue_sampling(_local)` saves it at the end (`core._save_surrogate_state_of`, gated by the
+private `_save_surrogate_state` flag that only `_prepare_continuation` sets). To make a *first*
+run's surrogate state reusable by a later continuation, call, right after
+`problem.run_sampling(...)` returns (on the collector rank of an MPI run):
+
+```python
+surrDAMH.SurrogateRestart(state_dir=os.path.join(conf_a.output_dir, "sampling_output")).save(updater)
+```
+
+See `toy_examples/continue_sampling_example.py` for this in context.
+
+**`chains=`**:
+
+| `chains` | Initial state of each chain of `run_b` |
+|---|---|
+| `"continue"` (default) | `previous`'s last state |
+| `"prior"` | drawn from the prior, with the generation-shifted seeds below (not `previous`'s starting points) |
+| `"lhs"` | a fresh Latin-hypercube design, same shift |
+
+**`problem=`**: a different `Problem` for `run_b` — typically new observed data with the same
+forward model. Its `no_parameters`/`no_observations` must equal `previous`'s (`ValueError` naming
+both sets of sizes otherwise); the manifest then records `"same_problem": false`. Omit it to keep
+`previous`'s `Problem` (`"same_problem": true`).
+
+**Stage numbering**: `stages_b` is numbered after every earlier stage of the lineage, so e.g. a
+two-stage `previous` continued by a one-stage `run_b` gets stage directory `alg0002_...`
+(`stages.stage_name`), not `alg0000_...` again — stage names stay unique across the whole lineage,
+which is what lets `post_processing.read_lineage` concatenate them unambiguously.
+
+**Seeds**: every seed of `run_b` additionally shifts by `1_000_000 * generation`
+(`modules/seeds.py`, `GENERATION_SEED_STRIDE`), where `generation` is `previous.generation + 1` (0
+for a plain run) — so no random stream of an earlier run of the lineage is ever reused, including
+the initial-sample draw that `chains="continue"` otherwise does not need. This requires
+`10 * no_stages_lineage * no_samplers < 1_000_000` for the whole lineage (`SEED_STRIDE *
+no_stages_lineage * no_samplers < GENERATION_SEED_STRIDE`) — i.e. the lineage's total stage count
+times its sampler count must stay under 100,000 — or two generations' seed ranges would overlap
+(not checked at run time).
+
+`SamplingRun.load(output_dir, problem)` rebuilds a `SamplingRun` for a new Python session from
+`<output_dir>/sampling_output/run_manifest.json`, including its `.lineage` (output directories,
+oldest first) and `.generation`; the result supports both `continue_sampling(_local)` and
+`write_report()`. `problem=` is optional for `write_report()` (sections that need the prior or a
+solver are then marked "Not available") but required for `continue_sampling(_local)` if the
+original `Problem` object is gone — `ValueError` otherwise, naming the fix.
+
+**Error cases** (raised identically on every rank, before any MPI call): `chains` not one of
+`"continue"`/`"prior"`/`"lhs"`; `conf_b` sets `initial_sample_type`/`continued_from_dir` or any of
+`stage_index_offset`/`no_stages_lineage`/`lineage_generation` itself; `conf_b.output_dir` equal to
+a directory already in the lineage; `problem=`'s sizes disagree with `previous`'s; previous run has
+no manifest (`FileNotFoundError`); `chains="continue"` with no `last_sample/` in `previous`
+(`FileNotFoundError`); surrogate training data without a checkpoint in `previous` (see above).
+
+`continue_sampling_local` follows the same defaults/rules for one chain in this process
+(`Problem.run_sampling_local`): a restored surrogate is trained further in process via the
+`surrogate_updater` argument; there is no held-out test data and no `surrogate_restart=` keyword
+here (load training data into an updater yourself with `updater.load_training_data(path)` first).
+
+See `docs/outputs.md` for the manifest's `"lineage"` entry, `read_lineage`, and the report's
+selection mask (`post_processing_output/selection.json`).
 
 ## Surrogate restart
 

@@ -94,7 +94,8 @@ class SamplesReports(SamplesPlots):
                             configuration: Any | None = None,
                             ranking_mode: Literal["l2", "posterior", "likelihood"] = "l2",
                             pool_mode_note: str | None = None,
-                            stages: List[Any] | None = None):
+                            stages: List[Any] | None = None,
+                            selection_section: bool | None = None):
         """
         Creates an extended report in HTML format containing all available post-processing tools,
         including visualizations and statistics for combined stages and individual stages separately.
@@ -132,7 +133,15 @@ class SamplesReports(SamplesPlots):
                 labels / an unexplained "not supplied" message.
             stages (list | None): the run's ``Stage`` objects (or dicts), rendered in the
                 "Sampling Stages" section. If None, the ``stages`` list recorded in
-                ``run_manifest.json`` is used (2026-09-21).
+                ``run_manifest.json`` is used (2026-09-21) -- for a lineage, every run's list.
+            selection_section (bool | None): append the "Selection and re-run" section (the
+                selection mask table, the excluded pairs, the selection file and the re-run
+                snippet) as the last section. ``None``: only when a selection is applied to
+                this ``Samples``; ``SamplingRun.write_report`` always passes ``True``.
+
+        Lineage and selection (2026-10-08): stages whose every chain was removed by the
+        selection are left out of ``stages_to_disp`` with a note in section 1; for a lineage of
+        continued runs the configuration section lists its runs (and ``lineage_note``).
 
         Layout (2026-09-21): every top-level section and every per-stage block is a
         ``<details>`` element that is COLLAPSED when the file is opened; the "Expand all" /
@@ -158,6 +167,14 @@ class SamplesReports(SamplesPlots):
         from io import BytesIO
         # Initialize stages to display
         stages_to_disp = self._resolve_stages(stages_to_disp)
+        skipped_stages = self._fully_excluded_stages(stages_to_disp)
+        stages_to_disp = [stage for stage in stages_to_disp if stage not in skipped_stages]
+        if not stages_to_disp:
+            raise ValueError("every displayed stage has all of its chains excluded by the selection"
+                             + (f" ({self.selection_path})" if getattr(self, "selection_path", None) else "")
+                             + "; nothing to report.")
+        if selection_section is None:
+            selection_section = getattr(self, "selection_mask", None) is not None
         observation_data_available = self._raw_data_available(stages_to_disp=stages_to_disp)
         if chains_to_disp is None:
             chains_note = ''
@@ -364,9 +381,12 @@ class SamplesReports(SamplesPlots):
         manifest = dict(getattr(self.run_data, "manifest", None) or {})
         stage_specs = [get_stage_items(spec) for spec in (stages or [])]
         stages_source = "the stage list passed to this report"
+        output_dirs = list(getattr(self.run_data, "output_dirs", None) or [])
         if not stage_specs:
-            stage_specs = [dict(spec) for spec in (manifest.get("stages") or []) if isinstance(spec, dict)]
-            stages_source = "sampling_output/run_manifest.json"
+            stage_specs = (self.run_data.stage_specs if hasattr(self.run_data, "stage_specs") else
+                           [dict(spec) for spec in (manifest.get("stages") or []) if isinstance(spec, dict)])
+            stages_source = ("sampling_output/run_manifest.json" if len(output_dirs) <= 1 else
+                             "the run_manifest.json of every run of the lineage")
         configuration_items = get_configuration_items(configuration)
         configuration_source = "the configuration object passed to this report"
         if not configuration_items:
@@ -442,6 +462,20 @@ class SamplesReports(SamplesPlots):
         else:
             html_parts.append('        <p class="description" style="color: orange;">No configuration was '
                               'recorded for this run and none was passed to the report.</p>')
+        if len(output_dirs) > 1:
+            # 2026-10-08: a lineage of continued runs (Samples(include_previous=...))
+            html_parts.append('        <h3>Lineage</h3>')
+            html_parts.append(f'        <p class="description">This report combines {len(output_dirs)} runs, '
+                              'each continuing the previous one (SamplingRun.continue_sampling); the '
+                              'configuration above is that of the newest run, and section 6 (surrogate quality) '
+                              'shows the newest run\'s files only. Runs, oldest first:</p>')
+            html_parts.extend(key_value_table(
+                [(index, f"{directory} (stages "
+                         + ", ".join(name for name, owner in zip(self.stage_names, self.run_data.stage_output_dir)
+                                     if owner == directory) + ")")
+                 for index, directory in enumerate(output_dirs)], "#", "output_dir", formatter=str))
+        if getattr(self, "lineage_note", None):
+            html_parts.append(f'        <p class="description" style="color: orange;">{escape(self.lineage_note)}</p>')
         if run_provenance:
             html_parts.append('        <h3>Run provenance</h3>')
             html_parts.extend(key_value_table(run_provenance, "field", "value", formatter=str))
@@ -514,6 +548,8 @@ class SamplesReports(SamplesPlots):
             html_parts.append('            <li><a href="#best_fits">Best-fit analysis</a></li>')
         if field_statistics:
             html_parts.append('            <li><a href="#field_statistics">Posterior field statistics</a></li>')
+        if selection_section:
+            html_parts.append('            <li><a href="#selection">Selection and re-run</a></li>')
         html_parts.append('        </ul>')
         html_parts.append('    </details>')
         
@@ -525,6 +561,11 @@ class SamplesReports(SamplesPlots):
         html_parts.append('        For DAMH stages, the table also includes the mean within-subchain surrogate acceptance rate, the fraction of subchains that produced a changed proposal, and the exact outer acceptance conditional on a changed proposal. ')
         html_parts.append('        These counters are whole-stage totals over every chain, also when the rest of the report is restricted to a subset of chains.</p>')
         html_parts.append(self.summary.to_html(classes='summary-table'))
+        if skipped_stages:
+            html_parts.append('        <p class="description" style="color: orange;">Skipped: every chain of stage(s) '
+                              + escape(', '.join(self.stage_names[i] for i in skipped_stages))
+                              + ' is excluded by the selection (see "Selection and re-run"); they appear in no '
+                              'section of this report.</p>')
         html_parts.append('    </details>')
 
         # 2. OVERALL ANALYSIS (COMBINED STAGES)
@@ -1021,7 +1062,7 @@ class SamplesReports(SamplesPlots):
                         # last logged period of every chain: the values the stage ended with
                         counter = next((c for c in ("n", "m") if c in trace.columns), None)
                         if "rank_world" in trace.columns:
-                            ranks = sorted(int(r) for r in trace["rank_world"].unique())
+                            ranks = self._adaptive_ranks(stage_idx)  # unfiltered: original chain labels
                             chain_of_rank = {rank: position for position, rank in enumerate(ranks)}
                             last_rows = trace.groupby("rank_world", sort=True).tail(1).copy()
                             last_rows.insert(0, "chain", [chain_of_rank[int(r)] for r in last_rows["rank_world"]])
@@ -1119,6 +1160,10 @@ class SamplesReports(SamplesPlots):
         html_parts.append('        });')
         html_parts.append('    })();')
         html_parts.append('    </script>')
+        if selection_section:
+            # 2026-10-08: the last section (after the script, like the best-fit visualization
+            # block SamplingRun.write_report inserts -- that one goes in front of this one)
+            html_parts.extend(self._selection_section_html(skipped_stages))
         html_parts.append('</body>')
         html_parts.append('</html>')
         
@@ -1132,3 +1177,76 @@ class SamplesReports(SamplesPlots):
         print(f"Extended HTML report saved to: {output_file}")
         return output_file
 
+    def _selection_section_html(self, skipped_stages: List[int]) -> List[str]:
+        """The "Selection and re-run" section of ``html_report_extended`` (2026-10-08)."""
+        import json
+        from html import escape
+        parts = ['    <details class="section" id="selection">',
+                 '        <summary><h2>Selection and re-run</h2></summary>']
+        mask = getattr(self, "selection_mask", None)
+        path = getattr(self, "selection_path", None)
+        output_dir = os.path.abspath(self.run_data.output_dir)
+        if mask is None:
+            parts.append('        <p class="description">No selection was applied: every chain of every stage '
+                         'is used, without burn-in (<code>selection=False</code>).</p>')
+        else:
+            if path:
+                created = " (created with the defaults by this report)" if getattr(self, "selection_created", False) else ""
+                parts.append(f'        <p class="description">Selection file{escape(created)}: '
+                             f'<code>{escape(path)}</code></p>')
+            else:
+                parts.append('        <p class="description">The selection was passed in memory (a dict); '
+                             'no file records it.</p>')
+            parts.append('        <p class="description">include: 1 = the chain\'s samples of this stage are '
+                         'used, 0 = dropped; burn_in: leading compressed rows dropped from that chain at load '
+                         'time. Chains are numbered by their rank files (original numbers). Dropped chains are '
+                         'also left out of the counters in section 1 and of the raw-snapshot sections (best '
+                         'fits, observation histograms), which get no burn-in.</p>')
+            specs = {name: flag for name, flag in zip(self.stage_names, self._is_excluded_flags())}
+            max_chains = max(self.no_chains_original or [0])
+            header = ''.join(f'<th>chain {c}</th>' for c in range(max_chains))
+            parts.append('        <div style="overflow-x: auto;">')
+            parts.append('        <table class="summary-table selection-table">')
+            parts.append(f'            <tr><th>stage</th><th>is_excluded</th>{header}</tr>')
+            user_excluded, stage_excluded = [], []
+            for index, name in enumerate(self.stage_names):
+                entry = mask[name]
+                cells = []
+                for chain in range(max_chains):
+                    if chain >= len(entry["include"]):
+                        cells.append('<td></td>')
+                        continue
+                    include, burn_in = entry["include"][chain], entry["burn_in"][chain]
+                    cells.append(f'<td>include={include}, burn_in={burn_in}</td>')
+                    if not include:
+                        (stage_excluded if specs.get(name) else user_excluded).append(f"{name} chain {chain}")
+                parts.append(f'            <tr><td>{escape(name)}</td><td>{specs.get(name, False)}</td>'
+                             + ''.join(cells) + '</tr>')
+            parts.append('        </table>')
+            parts.append('        </div>')
+            parts.append('        <p class="description">excluded by the user: '
+                         + escape('; '.join(user_excluded) if user_excluded else 'none') + '.</p>')
+            parts.append('        <p class="description">excluded as burn-in stages: '
+                         + escape('; '.join(stage_excluded) if stage_excluded else 'none') + '.</p>')
+            if skipped_stages:
+                parts.append('        <p class="description">Stages left out of this report because all their '
+                             'chains are excluded: '
+                             + escape(', '.join(self.stage_names[i] for i in skipped_stages)) + '.</p>')
+        parts.append('        <p class="description">To change the selection, edit the file and re-run the '
+                     'post-processing:</p>')
+        parts.append('        <pre>import surrDAMH\n'
+                     f'surrDAMH.SamplingRun.load({escape(json.dumps(output_dir), quote=False)}).write_report()</pre>')
+        parts.append('        <p class="description">Pass <code>problem=</code> to <code>SamplingRun.load</code> '
+                     'to restore the sections that need the prior or a solver (prior overlay, parameter names, '
+                     'posterior field statistics, best-fit solver visualization).</p>')
+        parts.append('    </details>')
+        return parts
+
+    def _is_excluded_flags(self) -> List[bool]:
+        """``Stage.is_excluded`` per stage (from the selection content, else the manifests)."""
+        content = getattr(self, "selection_content", None) or {}
+        recorded = {entry.get("name"): bool(entry.get("is_excluded", False))
+                    for entry in (content.get("stages") or []) if isinstance(entry, dict)}
+        specs = {spec.get("name"): bool(spec.get("is_excluded", False))
+                 for spec in getattr(self.run_data, "stage_specs", [])}
+        return [recorded.get(name, specs.get(name, False)) for name in self.stage_names]

@@ -16,6 +16,10 @@ ordinary inheritance. This package is the facade: every name that was importable
     from surrDAMH.post_processing import Samples
     samples = Samples(no_parameters, output_dir)   # output_dir CONTAINS sampling_output/
 
+``Samples(..., include_previous=None, selection=None)`` also reads a lineage of continued runs
+(``read_lineage``) and applies a (stage, chain) selection mask (``post_processing.selection``,
+2026-10-08).
+
 ``Samples.find_best_fits`` and ``Samples.calculate_gelman_rubin`` are methods of
 ``Samples`` (defined in ``statistics.py``), not module-level functions.
 """
@@ -28,7 +32,7 @@ matplotlib.use("Agg")
 
 from surrDAMH.modules.manifest import RunFormatError  # noqa: E402
 from surrDAMH.modules.run_data import (RunData, raw_data_columns,  # noqa: E402
-                                       read_run, sampling_output_dir)
+                                       read_lineage, read_run, sampling_output_dir)
 from surrDAMH.post_processing.base import SamplesBase  # noqa: E402
 from surrDAMH.post_processing.loading import Samples, StageSamples  # noqa: E402
 from surrDAMH.post_processing.plots import (SamplesPlots,  # noqa: E402
@@ -44,7 +48,7 @@ __all__ = [
     # facade
     "Samples", "StageSamples",
     # format-v2 reader, re-exported so user scripts need only this import
-    "read_run", "RunData", "RunFormatError", "raw_data_columns", "sampling_output_dir",
+    "read_run", "read_lineage", "RunData", "RunFormatError", "raw_data_columns", "sampling_output_dir",
     # statistics
     "Autocorrelation", "rank_best_fit_candidates", "decompress",
     "autocorr_FM", "auto_window",

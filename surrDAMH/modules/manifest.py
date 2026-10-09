@@ -31,7 +31,8 @@ from typing import Any
 import numpy as np
 
 from surrDAMH.modules.seeds import (ALGORITHM_SEED_OFFSET, PROPOSAL_SEED_OFFSET,
-                                    SEED_FORMULA, initial_sample_seed, stage_seed0)
+                                    SEED_FORMULA, generation_seed_offset, initial_sample_seed,
+                                    seed_no_stages, stage_seed0)
 
 from surrDAMH.modules.tools import ensure_dir
 
@@ -232,18 +233,23 @@ def _seeds_dict(conf: Any, stages: list) -> dict[str, Any]:
     initial_sample_type = conf.initial_sample_type
     per_rank = []
     no_stages = len(stages)
+    # a continued run (SamplingRun.continue_sampling) numbers its stages after the earlier runs
+    # of its lineage: global stage index offset + i, no_stages = the lineage's stage count
+    offset = int(getattr(conf, "stage_index_offset", 0) or 0)
+    no_stages_seed = seed_no_stages(getattr(conf, "no_stages_lineage", None), no_stages)
+    generation_offset = generation_seed_offset(getattr(conf, "lineage_generation", 0))
     for rank in range(conf.no_samplers):
         for i in range(no_stages):
-            seed0 = stage_seed0(no_stages, rank, i)
+            seed0 = stage_seed0(no_stages_seed, rank, offset + i) + generation_offset
             per_rank.append({
                 "rank": rank,
-                "stage_index": i,
+                "stage_index": offset + i,  # global (lineage) index, = i for a plain run
                 "seed0": seed0,
                 "proposal_seed": seed0 + PROPOSAL_SEED_OFFSET,
                 "algorithm_seed": seed0 + ALGORITHM_SEED_OFFSET,
                 # per-CHAIN, not per-stage (the initial sample is drawn once, before the
                 # stage loop), hence the same value in every stage entry of a rank:
-                "initial_sample_seed": initial_sample_seed(no_stages, rank),
+                "initial_sample_seed": initial_sample_seed(no_stages_seed, rank) + generation_offset,
             })
     # G4 (2026-09-17): "prior" and "user_specified" draw their initial sample from
     # np.random.default_rng(initial_sample_seed(no_stages, rank)), so every
@@ -253,7 +259,7 @@ def _seeds_dict(conf: Any, stages: list) -> dict[str, Any]:
     reproducible = True
     seeds: dict[str, Any] = {
         "formula": SEED_FORMULA,
-        "lhs_seed": 0 if initial_sample_type == "lhs" else None,
+        "lhs_seed": generation_offset if initial_sample_type == "lhs" else None,
         "initial_sample_type": initial_sample_type,
         "initial_sample_reproducible": reproducible,
         "per_rank": per_rank,
@@ -274,6 +280,38 @@ def _continued_from(conf: Any) -> dict[str, Any] | None:
         except Exception:
             source_manifest = None
     return {"dir": source_dir, "source_manifest": source_manifest}
+
+
+def lineage_entry(conf: Any, stages: list, *, continued_from: str | None = None,
+                  previous_dirs: list[str] | None = None, generation: int = 0,
+                  same_problem: bool = True, same_problem_lineage: bool = True,
+                  chains: str | None = None, initial_sample_is_carried_over: bool = False) -> dict[str, Any]:
+    """
+    The manifest's ``"lineage"`` entry (2026-10-08): where this run sits in a chain of runs
+    continued with ``SamplingRun.continue_sampling``. Written for continued runs only; a plain
+    run's manifest has no ``"lineage"`` key and counts as generation 0 of its own lineage
+    (``continued_from=None``, ``dirs=[<this run>]``, see ``core._lineage_of``).
+
+    Keys: ``continued_from`` (absolute dir of the previous run or ``None``), ``generation``
+    (0, 1, 2, ...), ``stage_index_offset``/``no_stages_lineage`` (as used for the stage names and
+    seeds), ``same_problem`` (this run sampled the previous run's ``Problem``),
+    ``same_problem_lineage`` (``same_problem`` held for every continuation of the lineage),
+    ``chains`` (``"continue"``/``"prior"``/``"lhs"``, ``None`` for a plain run),
+    ``initial_sample_is_carried_over`` (A30 flag of the first stage), ``dirs`` (absolute output
+    dirs of the whole lineage, oldest first, this run last).
+    """
+    offset = int(getattr(conf, "stage_index_offset", 0) or 0)
+    return {
+        "continued_from": os.path.abspath(continued_from) if continued_from is not None else None,
+        "generation": int(generation),
+        "stage_index_offset": offset,
+        "no_stages_lineage": seed_no_stages(getattr(conf, "no_stages_lineage", None), len(stages)),
+        "same_problem": bool(same_problem),
+        "same_problem_lineage": bool(same_problem_lineage),
+        "chains": chains,
+        "initial_sample_is_carried_over": bool(initial_sample_is_carried_over),
+        "dirs": [os.path.abspath(d) for d in (previous_dirs or [])] + [os.path.abspath(conf.output_dir)],
+    }
 
 
 def _unverified_options(conf: Any, use_surrogate_gradients_requested: bool | None) -> list[str]:
@@ -354,6 +392,6 @@ def finalize_run_manifest(output_dir: str, extra: dict | None = None) -> None:
         json.dump(manifest, f, indent=2, sort_keys=True, default=str)
 
 
-__all__ = ["build_run_manifest", "write_run_manifest", "finalize_run_manifest",
+__all__ = ["build_run_manifest", "write_run_manifest", "finalize_run_manifest", "lineage_entry",
           "MANIFEST_VERSION", "FORMAT_VERSION", "RunFormatError",
           "samples_columns", "raw_data_columns"]

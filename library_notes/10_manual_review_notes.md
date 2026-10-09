@@ -1244,3 +1244,71 @@ finding-by-finding version and `09_improvement_plan.md` §1/§4/§6 for the work
 `library_notes/`, `tests/`, `pytest.ini`, `run_tests.sh`, `CHANGELOG.md` and `CLAUDE.md` were
 untracked as of 2026-09-17; per CLAUDE.md this session makes no git commits — committing (or
 not) any of this remains the author's call, as it always was.
+
+## 2026-10-08 — Problem split, continuation, lineage report (flagged for the author's review)
+
+Implemented (uncommitted, `working_Kuba`), all byte-identical for plain runs (md5 of samples/notes vs pre-change
+references; local and 2-rank MPI), unit+validation suite green, MPI suite with only the 3 pre-existing failures:
+
+- `SamplingFramework` -> `Problem(prior, likelihood, solver)` + `run_sampling`/`run_sampling_local` -> `SamplingRun`
+  (`write_report`, `load`). Sizes resolved explicit > solver instance > prior/likelihood dimension; dimension-free
+  `Normal(mean=scalar)` broadcast; checks C2 (child declared sizes, new gather in `process_CHILD`/`process_SOLVER`)
+  and C3 (first-evaluation shape). `Configuration(output_dir, no_parameters=None, no_observations=None, ...)`.
+- `SamplingRun.continue_sampling(_local)(conf, stages, chains=..., problem=..., surrogate_*)`: lineage stage numbering
+  (`alg%04d` continues), seeds `+ 1_000_000 * generation` (disjoint from earlier runs while
+  `10 * no_stages_lineage * no_samplers < 1e6`), carry-over of the last adaptive state, surrogate reuse from the
+  checkpoint, test data reuse, A30 flag across runs. New `Configuration` fields `stage_index_offset`,
+  `no_stages_lineage`, `lineage_generation` (set by `continue_sampling` only).
+- Lineage report (`include_previous`, default = lineage iff same Problem throughout) and the selection mask
+  `post_processing_output/selection.json` (`write_report(selection=...)`, re-run via `SamplingRun.load(dir).write_report()`).
+
+Items the author should look at:
+1. **Pre-existing MPI test failures** b5/b11/b12 (`test_mpi_posterior.py`): they expect carry-over lines that
+   `process_SAMPLER` prints only with `conf.debug=True` since c518457. Fix = `debug=True` in the three drivers or
+   ungate the print. Not touched.
+2. **Behaviour change in reports**: `is_excluded` stages are now dropped from the default report (selection default
+   include=0). Numbers change for runs with such stages. Pass `selection=False` for the old content.
+3. **`LocalSurrogateManager`** no longer re-adds snapshots an updater already restored (a reused network in a local
+   run was trained on its data twice before). Behaviour change for that pattern only.
+4. **Seed decision taken by the manager** (not the author): generation offset 1e6 per continuation; `chains="lhs"`
+   in a continuation draws a new design (LHS seed shifted). Old manual `initial_sample_type="continued"` unchanged.
+5. **Surrogate persistence**: `PolynomialSklearnUpdater` gained `save_state`/`load_state`; RBF and k-d tree have none,
+   so a continuation of such a run starts without a surrogate (a DAMH first stage is refused by the deadlock check).
+   Plain runs do not auto-save their surrogate; continued runs do. `SurrogateRestart.save()` is a silent no-op with
+   zero snapshots.
+6. `SamplingRun.load(dir)` without a `Problem` then `continue_sampling(problem=...)` records `same_problem=False`
+   even if it is the same problem (pass `problem` to `load` instead).
+7. Docs agent fixed a stray token in `toy_examples/sampling_diffusion_grf_simplified.py` (`...dim=no_parameters)sd`).
+8. Specs used for the work: `<scratchpad>/API_SPEC_{problem_split,continuation,lineage_report}.md` (session
+   scratchpad, not in the repo); the decisions they encode are in the chat of 2026-10-08.
+
+### 2026-10-08 (later) — automatic mode `run_sampling_auto` / `run_sampling_local_auto` (flagged)
+
+Implemented per note 25 §5 with today's components (no S1/S2 yet): `surrDAMH/auto.py` (planner `plan_auto`, constants
+documented as placeholders), `Problem.run_sampling_auto(conf, budget|time_limit, mode="robust"|"fast",
+surrogate_updater=, surrogate_test_data=)`, manifest `auto` entry, `run.auto`. Tests: 25 unit + 3 MPI; suites green;
+plain paths byte-identical. Smoke run on the GRF problem (d=20, 6000 evaluations, 2 chains, default network): both modes
+complete; robust pre-rejects ~70 %, fast ~20 %; posterior means differ at the Monte-Carlo level of that budget
+(not a validation — note 25 §6 is the plan). Items:
+1. **Placeholder numbers** (`auto.py` constants): warm-up `clip(20d, 5 %, 25 %)`, 4 chunks, `50d` per-chain floor,
+   held-out `min(256, max(2d, 2 % budget))`, `min_snapshots_initial = min(10d, n0·C/2)`, `min_snapshots_to_update =
+   max(20, 2d)`, network `(64, 64)` silu adamw seed 0, Hamiltonian `num_steps=30` dimension_robust. All chosen by the
+   manager; to be tuned by the validation plan.
+2. Auto sets `initial_sample_type="lhs"` when the user left `"prior"`; keeps user-set `min_snapshots_*`; **fast mode
+   raises** on `use_surrogate_gradients=False` / `transform_before_surrogate=True` (deviation from the spec: a note
+   would not have prevented the run-time failure).
+3. Held-out data are generated on the collector only and only with an in-process solver (pool mode: none, a note);
+   the local runner saves but does not monitor them.
+4. The default network is constructed on every rank (only the collector trains it) — as in user scripts.
+5. `continue_sampling_auto` does not exist; Auto refuses lineage fields.
+6. **Report bug fixed (found by the auto example):** `write_report` raised `IndexError` when the first stage was not
+   displayed (`stages_to_disp=[1,…]`, or an `is_excluded` warm-up dropped by the default selection). Pre-existing;
+   fixed in `core._write_report_rank0` (the in-memory summary keeps all stages); regression tests in
+   `tests/unit/test_report_stage_subset.py`. The lineage tests had not caught it because they pass
+   `include_expensive_sections=False`.
+7. **Auto is preliminary (author's question 2026-10-09):** exact per installed surrogate, but the NN retraining is an
+   adaptive component without A4/A5 (note 18); S2/S3/D4 not implemented. Stated now in `docs/running.md` and the
+   CHANGELOG. Whole-process matrix 2026-10-09 (`<scratchpad>/matrix_driver2.py`, linear-Gaussian, closed form): plain,
+   continuation (lineage), auto robust, auto fast × {Solver instance (-n 3), SolverSpec + pool (-n 4)} all complete with
+   reports; every posterior mean within 0.05 posterior sd of the exact one; instance and pool chains byte-equal for
+   the plain run. In pool mode Auto has no held-out set (noted in `run.auto["notes"]`).

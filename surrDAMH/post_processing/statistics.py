@@ -271,13 +271,15 @@ class SamplesStatistics(SamplesBase):
         burn_in = self._burn_in_for(stages_to_disp, burn_in)
 
         chain_data = []
-        for chain_idx in self._resolve_chains(stages_to_disp[0], chains_to_disp):
+        for chain, positions in self._chains_across_stages(stages_to_disp, chains_to_disp):
             chain_samples = np.zeros((0, self.no_parameters))
             for idj, stage_idx in enumerate(stages_to_disp):
-                if chain_idx >= self.list_of_stages[stage_idx].no_chains:
-                    # a stage may have been written by fewer chains than the first one
+                position = positions[idj]
+                if position is None:
+                    # a stage may have been written by fewer chains than another one, or the
+                    # selection removed this chain from it
                     continue
-                tmp = self._decompressed_samples(stage_idx)[chain_idx][burn_in[idj][chain_idx]:, :]
+                tmp = self._decompressed_samples(stage_idx)[position][burn_in[idj][position]:, :]
                 chain_samples = np.concatenate((chain_samples, tmp))
             if chain_samples.shape[0] >= 2:
                 chain_data.append(chain_samples)
@@ -326,14 +328,13 @@ class SamplesStatistics(SamplesBase):
         observation_columns = _raw_data_observation_columns(np.arange(no_observations))
 
         for stage_idx in stage_indices:
-            stage_name = self.stage_names[stage_idx]
-            dirname = os.path.join(self.sampling_output_dir, "raw_data", stage_name)
+            dirname = self._stage_data_dir(stage_idx, "raw_data")
             if not os.path.isdir(dirname):
                 continue
 
             files = [f for f in os.listdir(dirname) if os.path.isfile(os.path.join(dirname, f))]
             files.sort()
-            for chain_idx in (range(len(files)) if requested_chains is None else requested_chains):
+            for chain_idx in self._raw_chain_numbers(stage_idx, len(files), requested_chains):
                 if chain_idx >= len(files):
                     continue
                 path_samples = os.path.join(dirname, files[chain_idx])
@@ -439,14 +440,13 @@ class SamplesStatistics(SamplesBase):
         }[normalized_mode]
 
         for stage_idx in stage_indices:
-            stage_name = self.stage_names[stage_idx]
-            dirname = os.path.join(self.sampling_output_dir, "raw_data", stage_name)
+            dirname = self._stage_data_dir(stage_idx, "raw_data")
             if not os.path.isdir(dirname):
                 continue
 
             files = [f for f in os.listdir(dirname) if os.path.isfile(os.path.join(dirname, f))]
             files.sort()
-            for chain_idx in (range(len(files)) if requested_chains is None else requested_chains):
+            for chain_idx in self._raw_chain_numbers(stage_idx, len(files), requested_chains):
                 if chain_idx >= len(files):
                     continue
                 path_samples = os.path.join(dirname, files[chain_idx])
@@ -593,7 +593,10 @@ class Autocorrelation:
         self.stages_to_disp = samples._resolve_stages(stages_to_disp)
         self.stages = [samples.list_of_stages[i] for i in self.stages_to_disp]
         # P7: the chains come from the stages actually analysed, not from global stage 0.
-        self.chains_to_disp = samples._resolve_chains(self.stages_to_disp[0], chains_to_disp)
+        # 2026-10-08: a chain is identified by its ORIGINAL number across the analysed stages
+        # (lineages and selection masks can give stages different chain lists).
+        chains = samples._chains_across_stages(self.stages_to_disp, chains_to_disp)
+        self.chains_to_disp = [chain for chain, _ in chains]
         self.no_chains = len(self.chains_to_disp)
         # burn_in is indexed [position in stages_to_disp][chain index within that stage],
         # the same convention as Samples._burn_in_for, so a chain subset stays consistent.
@@ -607,7 +610,10 @@ class Autocorrelation:
             end = stage.length
             stage_samples = samples._decompressed_samples(self.stages_to_disp[idx_stage])
 
-            for idx, i in enumerate(self.chains_to_disp):
+            for idx, (_, positions) in enumerate(chains):
+                i = positions[idx_stage]
+                if i is None:
+                    continue
                 x = stage_samples[i][begin[i]:end[i], :]
                 self.samples_all_stages[idx] = np.concatenate((self.samples_all_stages[idx], x))
 

@@ -9,6 +9,8 @@ single :class:`RunData` object: the run manifest, the per-stage/per-chain ``samp
 ``raw_data`` tables, ``notes``, ``subchain_stats``, ``last_sample`` and the collector's
 ``surrogate_quality*.csv``. It is the only place in the library that knows the on-disk
 column layout; ``surrDAMH.post_processing.Samples`` is a facade on top of it.
+``read_lineage(output_dir)`` (2026-10-08) reads a run made by ``SamplingRun.continue_sampling``
+together with every run it continues, as one ``RunData`` (stages concatenated, oldest first).
 
 Format v2 in one paragraph: every CSV has a header row; ``samples`` is
 ``multiplicity, par_0..par_{p-1}, log_posterior``; ``raw_data`` is rectangular,
@@ -42,6 +44,7 @@ STAGE_DATA_NAMES = ("samples", "raw_data", "notes", "subchain_stats", "adaptive_
                     "last_sample")
 
 _STAGE_INDEX_PATTERN = re.compile(r"^alg(\d+)_")
+_RANK_FILE_PATTERN = re.compile(r"^rank(\d+)\.")
 
 
 @dataclass
@@ -79,6 +82,13 @@ class RunData:
     surrogate_quality: pd.DataFrame | None
     surrogate_quality_test: pd.DataFrame | None
     raw_data_loaded: bool = field(default=True)
+    # lineage of continued runs (2026-10-08, read_lineage); for read_run: this run alone
+    output_dirs: list[str] = field(default_factory=list)       # oldest first, this run last
+    stage_output_dir: list[str] = field(default_factory=list)  # [stage] -> output_dir of its run
+    same_problem: bool = field(default=True)    # every link of the lineage sampled the same Problem
+    generation: int = field(default=0)          # the newest run's generation (0 = not a continuation)
+    manifests: list[dict] = field(default_factory=list)        # one per run in output_dirs
+    chain_ranks: list[list[int]] = field(default_factory=list)  # [stage][chain] -> rank of its file
 
     @property
     def no_stages(self) -> int:
@@ -91,6 +101,13 @@ class RunData:
     def no_chains(self, stage_index: int) -> int:
         """Number of chains that wrote a ``samples`` file for this stage."""
         return len(self.samples[stage_index])
+
+    @property
+    def stage_specs(self) -> list[dict]:
+        """The ``stages`` entries of every run's manifest, concatenated in lineage order."""
+        manifests = self.manifests or [self.manifest]
+        return [dict(spec) for manifest in manifests for spec in (manifest.get("stages") or [])
+                if isinstance(spec, dict)]
 
 
 # ---------------------------------------------------------------------------------------
@@ -208,6 +225,15 @@ def _read_last_sample(dirname: str) -> np.ndarray:
     return np.vstack(rows)
 
 
+def _ranks_of(paths: list[str]) -> list[int]:
+    """Rank number of each ``rank%04d.*`` file (its position if a name does not parse)."""
+    ranks = []
+    for position, path in enumerate(paths):
+        match = _RANK_FILE_PATTERN.match(os.path.basename(path))
+        ranks.append(int(match.group(1)) if match else position)
+    return ranks
+
+
 def _read_optional_csv(path: str) -> pd.DataFrame | None:
     if not os.path.isfile(path):
         return None
@@ -253,6 +279,7 @@ def read_run(output_dir: str, load_raw_data: bool = True) -> RunData:
     expected_raw_data_columns = raw_data_columns(no_parameters, no_observations)
 
     samples: list[list[np.ndarray]] = []
+    chain_ranks: list[list[int]] = []
     notes: list[pd.DataFrame] = []
     subchain_stats: list[pd.DataFrame | None] = []
     adaptive_stats: list[pd.DataFrame | None] = []
@@ -261,11 +288,13 @@ def read_run(output_dir: str, load_raw_data: bool = True) -> RunData:
     last_sample: dict[str, np.ndarray] = {}
 
     for stage_name in stage_names:
+        sample_files = _rank_files(os.path.join(sampling_dir, "samples", stage_name))
         stage_samples = [
             _read_csv_with_header(path, expected_samples_columns).to_numpy(dtype=float)
-            for path in _rank_files(os.path.join(sampling_dir, "samples", stage_name))
+            for path in sample_files
         ]
         samples.append(stage_samples)
+        chain_ranks.append(_ranks_of(sample_files))
 
         notes.append(_concat_rank_csvs(os.path.join(sampling_dir, "notes", stage_name)))
 
@@ -310,8 +339,141 @@ def read_run(output_dir: str, load_raw_data: bool = True) -> RunData:
         surrogate_quality_test=_read_optional_csv(
             os.path.join(sampling_dir, "surrogate_quality_test.csv")),
         raw_data_loaded=load_raw_data,
+        output_dirs=[output_dir],
+        stage_output_dir=[output_dir] * len(stage_names),
+        same_problem=True,
+        generation=int((manifest.get("lineage") or {}).get("generation", 0) or 0),
+        manifests=[manifest],
+        chain_ranks=chain_ranks,
     )
 
 
-__all__ = ["RunData", "read_run", "RunFormatError", "sampling_output_dir",
+# ---------------------------------------------------------------------------------------
+# lineages of continued runs (2026-10-08)
+# ---------------------------------------------------------------------------------------
+def _previous_link(manifest: dict) -> tuple[str | None, bool]:
+    """
+    ``(previous output_dir, same_problem)`` of one run, ``(None, True)`` for a run that is not a
+    continuation. ``SamplingRun.continue_sampling`` records the link in ``manifest["lineage"]``;
+    the old manual continuation (``Configuration(initial_sample_type="continued",
+    continued_from_dir=...)``) only in ``manifest["continued_from"]["dir"]``, without saying
+    whether the problem was the same -- such a link counts as ``same_problem=False``.
+    """
+    entry = manifest.get("lineage")
+    if isinstance(entry, dict) and entry.get("continued_from"):
+        return str(entry["continued_from"]), bool(entry.get("same_problem", True))
+    manual = manifest.get("continued_from")
+    if isinstance(manual, dict) and manual.get("dir"):
+        return str(manual["dir"]), False
+    return None, True
+
+
+def lineage_links(output_dir: str, strict: bool = True) -> tuple[list[str], bool, bool]:
+    """
+    Walk the lineage of ``output_dir`` backwards through the run manifests.
+
+    Returns:
+        ``(dirs, same_problem, complete)``: the output directories oldest first (this run last),
+        whether every link has ``same_problem=True``, and whether the walk reached the first run
+        (``False`` only with ``strict=False``, when an earlier directory has no readable
+        manifest -- e.g. it was moved -- and the walk stopped there).
+
+    Raises:
+        RunFormatError: (``strict=True``) an earlier run of the lineage cannot be read, or the
+            links form a cycle.
+    """
+    current = os.path.abspath(str(output_dir))
+    dirs = [current]
+    seen = {os.path.realpath(current)}
+    same_problem = True
+    manifest = _read_manifest(current)
+    while True:
+        previous, same = _previous_link(manifest)
+        if previous is None:
+            return list(reversed(dirs)), same_problem, True
+        previous = os.path.abspath(previous)
+        if os.path.realpath(previous) in seen:
+            raise RunFormatError(f"{current}: the lineage links form a cycle at {previous!r}.")
+        try:
+            manifest = _read_manifest(previous)
+        except RunFormatError as exc:
+            if strict:
+                raise RunFormatError(
+                    f"{current} continues {previous!r}, which cannot be read as a run of its lineage: "
+                    f"{exc} Read this run alone with include_previous=False.") from exc
+            return list(reversed(dirs)), same_problem and same, False
+        same_problem = same_problem and same
+        current = previous
+        dirs.append(current)
+        seen.add(os.path.realpath(current))
+
+
+def read_lineage(output_dir: str, load_raw_data: bool = True) -> RunData:
+    """
+    Read a run together with every run it continues (``SamplingRun.continue_sampling``,
+    recursively through ``manifest["lineage"]["continued_from"]``) into ONE :class:`RunData`.
+
+    Per-stage lists are the concatenation of the runs' lists, oldest run first; the stage names
+    are unique across the lineage because a continuation numbers its stages after the earlier
+    ones. ``manifest``/``output_dir``/``surrogate_quality*`` are those of the newest run;
+    ``output_dirs``, ``stage_output_dir``, ``manifests``, ``same_problem`` and ``generation``
+    describe the lineage. A run that is not a continuation gives the same data as
+    :func:`read_run` (plus these fields).
+
+    Raises:
+        RunFormatError: a run of the lineage cannot be read; the runs disagree on
+            ``no_parameters``/``no_observations``; or two runs use the same stage name (a lineage
+            made with the old manual continuation, ``initial_sample_type="continued"`` without a
+            stage-index offset) -- read the newest run alone with ``read_run`` /
+            ``Samples(..., include_previous=False)`` then.
+    """
+    dirs, same_problem, _ = lineage_links(output_dir, strict=True)
+    runs = [read_run(directory, load_raw_data=load_raw_data) for directory in dirs]
+    newest = runs[-1]
+    for run in runs[:-1]:
+        if (run.no_parameters, run.no_observations) != (newest.no_parameters, newest.no_observations):
+            raise RunFormatError(
+                f"lineage of {newest.output_dir}: {run.output_dir} has no_parameters={run.no_parameters}, "
+                f"no_observations={run.no_observations} but {newest.output_dir} has "
+                f"no_parameters={newest.no_parameters}, no_observations={newest.no_observations}.")
+    owner: dict[str, str] = {}
+    for run in runs:
+        for name in run.stage_names:
+            if name in owner:
+                raise RunFormatError(
+                    f"lineage of {newest.output_dir}: stage name {name!r} is used by both {owner[name]} and "
+                    f"{run.output_dir} (a lineage made with the old manual continuation, without a "
+                    f"stage-index offset); read this run alone with include_previous=False.")
+            owner[name] = run.output_dir
+    last_sample: dict[str, np.ndarray] = {}
+    for run in runs:
+        last_sample.update(run.last_sample)
+    return RunData(
+        output_dir=newest.output_dir,
+        manifest=newest.manifest,
+        no_parameters=newest.no_parameters,
+        no_observations=newest.no_observations,
+        stage_names=[name for run in runs for name in run.stage_names],
+        samples_columns=newest.samples_columns,
+        samples=[stage for run in runs for stage in run.samples],
+        notes=[stage for run in runs for stage in run.notes],
+        subchain_stats=[stage for run in runs for stage in run.subchain_stats],
+        adaptive_stats=[stage for run in runs for stage in run.adaptive_stats],
+        carry_over=[stage for run in runs for stage in run.carry_over],
+        raw_data_columns=newest.raw_data_columns,
+        raw_data=[stage for run in runs for stage in run.raw_data],
+        last_sample=last_sample,
+        surrogate_quality=newest.surrogate_quality,
+        surrogate_quality_test=newest.surrogate_quality_test,
+        raw_data_loaded=load_raw_data,
+        output_dirs=[run.output_dir for run in runs],
+        stage_output_dir=[run.output_dir for run in runs for _ in run.stage_names],
+        same_problem=same_problem,
+        generation=newest.generation,
+        manifests=[run.manifest for run in runs],
+        chain_ranks=[ranks for run in runs for ranks in run.chain_ranks],
+    )
+
+
+__all__ = ["RunData", "read_run", "read_lineage", "lineage_links", "RunFormatError", "sampling_output_dir",
            "samples_columns", "raw_data_columns"]

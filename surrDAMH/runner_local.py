@@ -47,7 +47,8 @@ from surrDAMH.modules.continuation import save_carry_over, save_last_sample
 from surrDAMH.modules.manifest import (build_run_manifest, finalize_run_manifest,
                                        write_run_manifest)
 from surrDAMH.modules.proposal_builder import build_proposal
-from surrDAMH.modules.seeds import initial_sample_seed, stage_seed0
+from surrDAMH.modules.seeds import (generation_seed_offset, initial_sample_seed, seed_no_stages,
+                                    stage_seed0)
 from surrDAMH.modules.torch_threads import apply_torch_threads
 from surrDAMH.solvers import Solver
 from surrDAMH.stages import Stage, stage_name, check_stage_list
@@ -101,9 +102,11 @@ def _get_initial_sample(conf: Configuration, prior: Distribution, no_stages: int
     (``initial_sample_seed(no_stages, 0)``, G4), so chain-0 reproduction also holds for
     ``initial_sample_type="prior"``/``"user_specified"``.
     """
-    generator = np.random.default_rng(initial_sample_seed(no_stages, LOCAL_RANK_WORLD))
+    generation_offset = generation_seed_offset(getattr(conf, "lineage_generation", 0))
+    generator = np.random.default_rng(initial_sample_seed(no_stages, LOCAL_RANK_WORLD) + generation_offset)
     if conf.initial_sample_type == "lhs":
-        initial_samples = lhs.lhs_normal(loc=prior.mean, scale=conf.lhs_scale, n=conf.no_samplers, seed=0)
+        initial_samples = lhs.lhs_normal(loc=prior.mean, scale=conf.lhs_scale, n=conf.no_samplers,
+                                         seed=generation_offset)
         return alg.Sample(parameters=initial_samples[LOCAL_RANK_WORLD])
     if conf.initial_sample_type == "user_specified":
         assert conf.initial_samples_distribution is not None, "if initial_sample_type == 'user_specified', initial_samples_distribution must be specified"
@@ -116,7 +119,9 @@ def _get_initial_sample(conf: Configuration, prior: Distribution, no_stages: int
 
 def run_local(conf: Configuration, prior: Distribution, likelihood: Distribution, stages: List[Stage],
               solver: Solver, updater: Updater | None = None,
-              evaluator: Evaluator | None = None, *, problem: Any = None) -> SamplingResult:
+              evaluator: Evaluator | None = None, *, problem: Any = None,
+              initial_carry_over: dict | None = None, initial_sample_is_carried_over: bool = False,
+              lineage: dict | None = None, auto: dict | None = None) -> SamplingResult:
     """
     Run all sampling stages of a single chain in one process (no MPI roles).
 
@@ -138,6 +143,14 @@ def run_local(conf: Configuration, prior: Distribution, likelihood: Distribution
             is given (read-only, never retrained).
         problem: the calling ``surrDAMH.Problem``, if any: its ``describe()`` is printed with
             the settings and its resolved sizes are recorded under ``"problem"`` in the manifest.
+        initial_carry_over: merged proposal carry-over of the earlier runs of a lineage; seeds
+            the hand-over dict of the stage loop (``SamplingRun.continue_sampling_local``).
+        initial_sample_is_carried_over: A30 flag of the first stage (the initial state was
+            already written by the previous run).
+        lineage: the manifest's ``"lineage"`` entry of a continued run (``None``: a plain run,
+            no entry is written).
+        auto: the manifest's ``"auto"`` entry of an automatic run (``Problem.run_sampling_local_auto``;
+            ``None``: no entry is written).
 
     Returns:
         ``SamplingResult`` with one ``StageResult`` per stage.
@@ -163,7 +176,7 @@ def run_local(conf: Configuration, prior: Distribution, likelihood: Distribution
     if problem is not None:
         print(problem.describe(), flush=True)
     for i, stage in enumerate(stages):
-        print(stage.describe(i), flush=True)
+        print(stage.describe(int(getattr(conf, "stage_index_offset", 0) or 0) + i), flush=True)
 
     observation_provider = LocalSolverAdapter(solver)
 
@@ -186,20 +199,29 @@ def run_local(conf: Configuration, prior: Distribution, likelihood: Distribution
         evaluator_provider = LocalEvaluatorProvider(evaluator)
 
     no_stages = len(stages)
-    initial_sample = _get_initial_sample(conf, prior, no_stages)
+    # lineage numbering (continue_sampling_local); 0 / len(stages) for a plain run
+    stage_index_offset = int(getattr(conf, "stage_index_offset", 0) or 0)
+    no_stages_seed = seed_no_stages(getattr(conf, "no_stages_lineage", None), no_stages)
+    initial_sample = _get_initial_sample(conf, prior, no_stages_seed)
     print("Local sampler - initial sample:", initial_sample.parameters, flush=True)
 
     result = SamplingResult()
     # merged carry-over of the adaptive stages so far, exactly as in process_SAMPLER
-    carried: dict = {}
+    carried: dict = dict(initial_carry_over) if initial_carry_over else {}
     # A30 (see AlgorithmBase's docstring); set exactly as in process_SAMPLER
-    initial_sample_is_carried_over = False
+    initial_sample_is_carried_over = bool(initial_sample_is_carried_over)
+    if initial_carry_over:
+        for key, value in sorted(initial_carry_over.items()):
+            print("Local sampler - carry-over from the previous run", key + ":",
+                  np.asarray(value, dtype=float).ravel().tolist(), flush=True)
 
     for i, stage in enumerate(stages):
-        seed0 = stage_seed0(no_stages, LOCAL_RANK_WORLD, i)
+        i_global = stage_index_offset + i
+        seed0 = (stage_seed0(no_stages_seed, LOCAL_RANK_WORLD, i_global)
+                 + generation_seed_offset(getattr(conf, "lineage_generation", 0)))
 
         proposal = build_proposal(stage=stage, conf=conf, prior=prior, seed=seed0+1,
-                                  carried=carried, stage_index=i)
+                                  carried=carried, stage_index=i_global)
 
         # choice of services for this stage (mirrors process_SAMPLER):
         snapshot_collector_stage = surrogate_manager if stage.send_snapshots_to_collector else None
@@ -215,7 +237,7 @@ def run_local(conf: Configuration, prior: Distribution, likelihood: Distribution
         else:
             observation_provider_stage = observation_provider
 
-        stage.name = stage_name(stage, i)
+        stage.name = stage_name(stage, i_global)
         alg_class = alg.Algorithm_MH if stage.algorithm == "MH" else alg.Algorithm_DAMH
 
         alg_instance = alg_class(proposal=proposal,
@@ -284,6 +306,10 @@ def run_local(conf: Configuration, prior: Distribution, likelihood: Distribution
             mpi_layout=None, use_surrogate_gradients_requested=conf.use_surrogate_gradients_requested)
         if problem is not None:
             manifest["problem"] = problem._manifest_entry()
+        if lineage is not None:  # continued runs only; a plain run's manifest is unchanged
+            manifest["lineage"] = lineage
+        if auto is not None:  # automatic runs only
+            manifest["auto"] = auto
         write_run_manifest(conf.output_dir, manifest)
         stage_counters = [{"name": r.name, "counter_accepted": r.counter_accepted,
                            "counter_rejected": r.counter_rejected,

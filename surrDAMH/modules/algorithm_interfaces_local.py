@@ -284,7 +284,11 @@ class LocalSurrogateManager(SnapshotCollector, EvaluatorProvider):
         if initial_snapshots is not None:
             parameters, observations, multiplicity = initial_snapshots
             if len(parameters) > 0:
-                self.updater.add_data(parameters, observations, multiplicity)
+                # same rule as process_COLLECTOR: an updater that restored these snapshots itself
+                # (training_data_loaded, set by load_state/load_training_data) already holds them,
+                # so they are counted but not added a second time (2026-10-08)
+                if not getattr(self.updater, "training_data_loaded", False):
+                    self.updater.add_data(parameters, observations, multiplicity)
                 self.no_snapshots_total = int(len(parameters))
                 self._maybe_update_evaluator()
 

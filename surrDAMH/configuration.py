@@ -25,6 +25,7 @@ POSTERIOR_AFFECTING_FIELDS: frozenset[str] = frozenset({
     "min_snapshots_initial", "min_snapshots_to_update",
     "max_collected_snapshots_per_loop", "use_surrogate_gradients", "initial_sample_type",
     "initial_samples_distribution", "continued_from_dir", "lhs_scale", "use_collector",
+    "stage_index_offset", "no_stages_lineage", "lineage_generation",
 })
 
 #: How deep :func:`normalize_for_comparison` descends into containers/objects before it gives up
@@ -206,6 +207,18 @@ class Configuration:
         lhs_scale: Spread of the Latin-hypercube design in the INTERNAL (standardized)
             coordinates of the prior, i.e. in prior standard deviations; used only when
             ``initial_sample_type="lhs"``. Default: ``1.0``. (posterior-affecting)
+        stage_index_offset: Set by ``SamplingRun.continue_sampling``; leave at the default.
+            Global index of this run's first stage in a lineage of continued runs (number of
+            stages of all earlier runs); used in the stage directory names (``alg%04d_...``)
+            and in the seeds. Default: ``0``. (posterior-affecting)
+        no_stages_lineage: Set by ``SamplingRun.continue_sampling``; leave at the default.
+            Total number of stages of the lineage up to and including this run, used as
+            ``no_stages`` in the seed formula (``surrDAMH.modules.seeds``); ``None`` = this
+            run's own number of stages. Default: ``None``. (posterior-affecting)
+        lineage_generation: Set by ``SamplingRun.continue_sampling``; leave at the default.
+            Generation of this run in its lineage (0 = not a continuation); shifts every seed
+            by ``1_000_000 * lineage_generation`` (``surrDAMH.modules.seeds``). Default: ``0``.
+            (posterior-affecting)
         min_snapshots_initial: Minimum number of snapshots collected before the first
             surrogate model is trained. Default: ``1``. (posterior-affecting)
         min_snapshots_to_update: New snapshots that must have arrived since the last
@@ -271,6 +284,11 @@ class Configuration:
     initial_samples_distribution: Distribution | None = None
     continued_from_dir: str | None = None
     lhs_scale: float | npt.NDArray = 1.0
+
+    # --- lineage (set by SamplingRun.continue_sampling; leave at the default) ---
+    stage_index_offset: int = 0
+    no_stages_lineage: int | None = None
+    lineage_generation: int = 0
 
     # --- surrogate training ---
     min_snapshots_initial: int = 1
@@ -359,6 +377,28 @@ class Configuration:
                     f"Configuration({name}={current}) does not match the problem's {name}={value} "
                     f"(see Problem.describe()); remove {name} from Configuration or make the two agree")
             self._requested_posterior_fields[name] = getattr(self, name)
+
+    def _set_by_continuation(self, **values: Any) -> None:
+        """
+        Set fields on behalf of ``SamplingRun.continue_sampling`` (initial-sample and lineage
+        fields), keeping the requested-value snapshot of the posterior-affecting ones in step,
+        so the cross-rank check compares what the run really uses.
+        """
+        for name, value in values.items():
+            if not hasattr(self, name):
+                raise AttributeError(f"Configuration has no field {name!r}")
+            setattr(self, name, value)
+            if name in POSTERIOR_AFFECTING_FIELDS:
+                self._requested_posterior_fields[name] = value
+
+    def _set_by_auto(self, **values: Any) -> None:
+        """
+        Set fields on behalf of ``Problem.run_sampling_auto``/``run_sampling_local_auto``
+        (``surrDAMH.auto.AutoPlan.conf_settings``), keeping the requested-value snapshot of the
+        posterior-affecting ones in step (same pattern as :meth:`_set_by_continuation`), so the
+        cross-rank check and the manifest see what the run really uses.
+        """
+        self._set_by_continuation(**values)
 
     def load_continuation(self) -> None:
         """

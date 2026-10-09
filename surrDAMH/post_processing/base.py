@@ -56,6 +56,11 @@ class SamplesBase:
     notes: List[pd.DataFrame]
     subchain_stats: List[pd.DataFrame]
     adaptive_stats: List[pd.DataFrame]  # empty DataFrame for a stage whose proposal did not adapt
+    # lineage / selection (2026-10-08, see Samples.__init__)
+    stage_sampling_dirs: List[str]      # [stage] -> sampling_output/ of the run that wrote it
+    chain_indices: List[List[int]]      # [stage] -> original chain numbers kept by the selection
+    no_chains_original: List[int]       # [stage] -> chains (rank files) before the selection
+    lineage_note: str | None
 
     def _resolve_stages(self, stages_to_disp: Iterable | None) -> List[int]:
         """
@@ -141,18 +146,22 @@ class SamplesBase:
 
     def _resolve_chains(self, stage_index: int, chains_to_disp: Iterable | None) -> List[int]:
         """
-        Chain indices of stage ``stage_index`` to include, honouring ``chains_to_disp``
-        (WS9b, finding P5: the argument is never silently ignored).
+        POSITIONS (in ``list_of_stages[stage_index]``'s chain lists) of the chains of stage
+        ``stage_index`` to include, honouring ``chains_to_disp`` (WS9b, finding P5: the
+        argument is never silently ignored).
 
-        ``None`` means every chain of that stage -- the behaviour of every method before
-        WS9b, and still the default everywhere.
+        ``chains_to_disp`` holds ORIGINAL chain numbers (the position of the chain's
+        ``rank%04d`` file in its stage, 2026-10-08); a chain removed by the selection mask is
+        simply not included. ``None`` means every kept chain of that stage. Without a selection
+        positions and original numbers coincide, so this is the behaviour of WS9b unchanged.
 
         Raises:
             IndexError: a requested chain does not exist in this stage.
         """
-        no_chains = self.list_of_stages[stage_index].no_chains
+        kept = self.chain_indices[stage_index]
         if chains_to_disp is None:
-            return list(range(no_chains))
+            return list(range(len(kept)))
+        no_chains = self.no_chains_original[stage_index]
         chains = [int(chain) for chain in chains_to_disp]
         out_of_range = [chain for chain in chains if not 0 <= chain < no_chains]
         if out_of_range:
@@ -160,7 +169,65 @@ class SamplesBase:
                 f"chains_to_disp={chains} requests chain(s) {out_of_range} but stage "
                 f"{self.stage_names[stage_index]!r} has {no_chains} chain(s) (0..{no_chains - 1})."
             )
-        return chains
+        position = {chain: index for index, chain in enumerate(kept)}
+        return [position[chain] for chain in chains if chain in position]
+
+    def _chains_across_stages(self, stages: List[int], chains_to_disp: Iterable | None
+                              ) -> List[tuple[int, List[int | None]]]:
+        """
+        Chains followed across several stages (traces, autocorrelation, R-hat), identified by
+        their ORIGINAL number: ``[(chain, [position in each of stages, or None]), ...]``.
+
+        ``None`` = every chain kept in at least one of the stages, in increasing order;
+        otherwise ``chains_to_disp`` in its own order, validated against the stage with the most
+        chains. Without a selection and with equal chain counts (a single run) this is
+        ``_resolve_chains(stages[0], chains_to_disp)`` with the same position in every stage.
+        """
+        if chains_to_disp is None:
+            chains = sorted(set().union(*(self.chain_indices[stage] for stage in stages)))
+        else:
+            widest = max(stages, key=lambda stage: self.no_chains_original[stage])
+            self._resolve_chains(widest, chains_to_disp)  # IndexError for an unknown chain
+            chains = [int(chain) for chain in chains_to_disp]
+        position_maps = [{chain: index for index, chain in enumerate(self.chain_indices[stage])}
+                         for stage in stages]
+        result = []
+        for chain in chains:
+            positions = [positions_of.get(chain) for positions_of in position_maps]
+            if any(position is not None for position in positions):
+                result.append((chain, positions))
+        return result
+
+    def _stage_data_dir(self, stage_index: int, data_name: str) -> str:
+        """``<sampling_output of the stage's own run>/<data_name>/<stage name>``."""
+        return os.path.join(self.stage_sampling_dirs[stage_index], data_name, self.stage_names[stage_index])
+
+    def _raw_chain_numbers(self, stage_index: int, no_files: int,
+                           requested_chains: List[int] | None) -> List[int]:
+        """``raw_data`` file indices (= original chain numbers) to read for one stage: every file,
+        or ``requested_chains``, minus the chains removed by the selection mask."""
+        chains = list(range(no_files)) if requested_chains is None else list(requested_chains)
+        excluded = self._excluded_chains(stage_index)
+        if not excluded:
+            return chains
+        return [chain for chain in chains if chain not in excluded]
+
+    def _excluded_chains(self, stage_index: int) -> set:
+        """Original chain numbers of this stage removed by the selection (empty without one)."""
+        return set(range(self.no_chains_original[stage_index])) - set(self.chain_indices[stage_index])
+
+    def _adaptive_ranks(self, stage_index: int) -> List[int]:
+        """Sorted ``rank_world`` values of the stage's UNFILTERED ``adaptive_stats``: chain
+        position ``i`` of the adaptation plots/tables is ``ranks[i]``, also after a selection."""
+        stats = self.run_data.adaptive_stats[stage_index]
+        if stats is None or stats.empty or "rank_world" not in stats.columns:
+            return [0]
+        return sorted(int(r) for r in stats["rank_world"].unique())
+
+    def _fully_excluded_stages(self, stages: Iterable[int]) -> List[int]:
+        """Stages (of ``stages``) that have chains but whose every chain the selection removed."""
+        return [stage for stage in stages
+                if self.no_chains_original[stage] > 0 and not self.chain_indices[stage]]
 
     def _get_stage_names(self, stages_to_disp: List[int] | None = None):
         if stages_to_disp is None:
@@ -168,9 +235,9 @@ class SamplesBase:
         return [self.stage_names[i] for i in stages_to_disp]
 
     def _raw_data_available(self, stages_to_disp: List[int] | None = None):
-        stage_names = self._get_stage_names(stages_to_disp)
-        for stage_name in stage_names:
-            dirname = os.path.join(self.sampling_output_dir, "raw_data", stage_name)
+        stage_indices = range(self.no_stages) if stages_to_disp is None else stages_to_disp
+        for stage_index in stage_indices:
+            dirname = self._stage_data_dir(stage_index, "raw_data")
             if not os.path.isdir(dirname):
                 continue
             files = [f for f in os.listdir(dirname) if os.path.isfile(os.path.join(dirname, f))]

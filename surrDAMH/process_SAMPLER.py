@@ -21,7 +21,8 @@ from surrDAMH.modules.communication import recv_initial_surrogate_availability
 from surrDAMH.modules import algorithms as alg
 from surrDAMH.modules import lhs_normal as lhs
 from surrDAMH.modules.proposal_builder import build_proposal
-from surrDAMH.modules.seeds import initial_sample_seed, stage_seed0
+from surrDAMH.modules.seeds import (generation_seed_offset, initial_sample_seed, seed_no_stages,
+                                    stage_seed0)
 from surrDAMH.solvers import Solver
 from surrDAMH.stages import Stage, stage_name
 from surrDAMH.surrogates.parent import Evaluator
@@ -29,7 +30,19 @@ from surrDAMH.modules.continuation import save_carry_over, save_last_sample
 
 
 def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distribution, list_of_stages: List[Stage],
-                solver_instance: Solver | None, surrogate_evaluator: Evaluator | None):
+                solver_instance: Solver | None, surrogate_evaluator: Evaluator | None,
+                initial_carry_over: dict | None = None, initial_sample_is_carried_over: bool = False):
+    """
+    Sampler role: run every stage of this rank's chain.
+
+    ``initial_carry_over`` (merged ``Proposal.carry_over()`` of earlier runs of a lineage) seeds
+    the hand-over dict every stage's proposal builder consumes, and
+    ``initial_sample_is_carried_over`` is the A30 flag for the FIRST stage (the initial state
+    was already written by the previous run). Both are set by ``SamplingRun.continue_sampling``
+    only; the defaults reproduce a plain run exactly. ``conf.stage_index_offset`` /
+    ``conf.no_stages_lineage`` shift the stage names and seeds of a continued run
+    (``modules/seeds.py``).
+    """
     comm_world = MPI.COMM_WORLD
     rank_world = comm_world.Get_rank()
     comm_sampler = comm_world.Split(color=0, key=rank_world)
@@ -56,11 +69,17 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
         commSnapshot = None
 
     no_stages = len(list_of_stages)
+    # lineage numbering (continue_sampling); 0 / len(list_of_stages) for a plain run
+    stage_index_offset = int(getattr(conf, "stage_index_offset", 0) or 0)
+    no_stages_seed = seed_no_stages(getattr(conf, "no_stages_lineage", None), no_stages)
 
     # choice of initial sample:
-    initial_sample_generator = np.random.default_rng(initial_sample_seed(no_stages, rank_world))
+    generation_offset = generation_seed_offset(getattr(conf, "lineage_generation", 0))
+    initial_sample_generator = np.random.default_rng(initial_sample_seed(no_stages_seed, rank_world)
+                                                     + generation_offset)
     if conf.initial_sample_type == "lhs":
-        initial_samples = lhs.lhs_normal(loc=prior.mean, scale=conf.lhs_scale, n=conf.no_samplers, seed=0)
+        initial_samples = lhs.lhs_normal(loc=prior.mean, scale=conf.lhs_scale, n=conf.no_samplers,
+                                         seed=generation_offset)
         initial_sample = alg.Sample(parameters=initial_samples[rank_world])
     elif conf.initial_sample_type == "user_specified":
         assert conf.initial_samples_distribution is not None, "if initial_sample_type == 'user_specified', initial_samples_distribution must be specified"
@@ -76,10 +95,15 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
     # Merged carry-over of every adaptive stage so far, keyed by Stage field name
     # ("scale", "beta", "step_size" -- the spec step fields); consumed by build_proposal
     # for every stage field left None (2026-09-20).
-    carried: dict = {}
+    carried: dict = dict(initial_carry_over) if initial_carry_over else {}
     # A30: True once a previous stage has written this chain's current state to its samples
-    # file, so the next stage must not count that state again in its first row.
-    initial_sample_is_carried_over = False
+    # file, so the next stage must not count that state again in its first row (for the first
+    # stage of a continued run: the previous run's last stage wrote it).
+    initial_sample_is_carried_over = bool(initial_sample_is_carried_over)
+    if initial_carry_over:
+        for key, value in sorted(initial_carry_over.items()):
+            print('Sampler at rank', rank_world, 'carry-over from the previous run', key + ':',
+                  np.asarray(value, dtype=float).ravel().tolist(), flush=True)
 
     first_stage = list_of_stages[0]
     first_stage_needs_surrogate = (first_stage.algorithm == "DAMH"
@@ -99,11 +123,12 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
                 " min_snapshots_initial.")
 
     for i, stage in enumerate(list_of_stages):
-        seed0 = stage_seed0(no_stages, rank_world, i)
+        i_global = stage_index_offset + i
+        seed0 = stage_seed0(no_stages_seed, rank_world, i_global) + generation_offset
 
         # choice of proposal distribution for this stage:
         my_Prop = build_proposal(stage=stage, conf=conf, prior=prior, seed=seed0+1,
-                                 carried=carried, stage_index=i)
+                                 carried=carried, stage_index=i_global)
 
         # choice of communicators for this stage:
         if stage.send_snapshots_to_collector:
@@ -132,7 +157,7 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
             commSolver_stage = commSolver
 
         # choice of algorithm for this stage (stage_name raises for an unknown algorithm):
-        stage.name = stage_name(stage, i)
+        stage.name = stage_name(stage, i_global)
         alg_class = alg.Algorithm_MH if stage.algorithm == 'MH' else alg.Algorithm_DAMH
 
         # run sampling algorithm:
