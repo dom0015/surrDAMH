@@ -46,8 +46,9 @@ from surrDAMH.modules.algorithm_interfaces_local import (LocalEvaluatorProvider,
 from surrDAMH.modules.continuation import describe_initial_sample_type, save_carry_over, save_last_sample
 from surrDAMH.modules.manifest import (build_run_manifest, finalize_run_manifest,
                                        write_run_manifest)
-from surrDAMH.modules.proposal_builder import build_proposal
-from surrDAMH.modules.seeds import (generation_seed_offset, initial_sample_seed, seed_no_stages,
+from surrDAMH.modules.proposal_builder import build_exact_step_proposal, build_proposal
+from surrDAMH.modules.seeds import (EXACT_PROPOSAL_SEED_OFFSET, EXACT_STEP_SEED_OFFSET,
+                                    generation_seed_offset, initial_sample_seed, seed_no_stages,
                                     stage_seed0)
 from surrDAMH.modules.torch_threads import apply_torch_threads
 from surrDAMH.solvers import Solver
@@ -68,6 +69,13 @@ class StageResult:
     counter_accepted: int
     counter_rejected: int
     counter_prerejected: int
+    counter_out_of_bounds: int = 0  # proposals outside the prior bound, rejected unevaluated (S0)
+    # S2 (2026-10-09), DAMH stages only: exact steps (all / accepted), audited pre-rejected
+    # proposals and the audits with log L - log L~ > AUDIT_HIDDEN_NATS
+    counter_exact_steps: int = 0
+    counter_exact_accepted: int = 0
+    counter_audited: int = 0
+    counter_audit_hidden: int = 0
 
 
 @dataclass
@@ -205,6 +213,8 @@ def run_local(conf: Configuration, prior: Distribution, likelihood: Distribution
     initial_sample = _get_initial_sample(conf, prior, no_stages_seed)
     print(f"Local sampler started with {describe_initial_sample_type(conf)} initial sample"
           + (f": {initial_sample.parameters}" if conf.debug else ""), flush=True)
+    # bounded prior (S0): the chain must start inside the box
+    alg.check_initial_sample_in_box(prior, initial_sample.parameters, f"chain {LOCAL_RANK_WORLD} (local run)")
 
     result = SamplingResult()
     # merged carry-over of the adaptive stages so far, exactly as in process_SAMPLER
@@ -223,6 +233,11 @@ def run_local(conf: Configuration, prior: Distribution, likelihood: Distribution
 
         proposal = build_proposal(stage=stage, conf=conf, prior=prior, seed=seed0+1,
                                   carried=carried, stage_index=i_global)
+        # S2: the exact step's own random walk (seed0 + 5), only when the stage uses it
+        exact_proposal = None
+        if stage.algorithm == "DAMH" and stage.exact_step_probability > 0.0:
+            exact_proposal = build_exact_step_proposal(conf=conf, prior=prior, seed=seed0 + EXACT_PROPOSAL_SEED_OFFSET,
+                                                       carried=carried, stage_index=i_global)
 
         # choice of services for this stage (mirrors process_SAMPLER):
         snapshot_collector_stage = surrogate_manager if stage.send_snapshots_to_collector else None
@@ -252,7 +267,9 @@ def run_local(conf: Configuration, prior: Distribution, likelihood: Distribution
                                  initial_sample=initial_sample,
                                  rank_world=LOCAL_RANK_WORLD,
                                  seed=seed0+2,
-                                 initial_sample_is_carried_over=initial_sample_is_carried_over)
+                                 initial_sample_is_carried_over=initial_sample_is_carried_over,
+                                 exact_step_seed=seed0 + EXACT_STEP_SEED_OFFSET,
+                                 exact_proposal=exact_proposal)
         alg_instance.run()
 
         # carry-over of the adapted proposal for the next stage (2026-09-20). One chain, so the
@@ -286,11 +303,19 @@ def run_local(conf: Configuration, prior: Distribution, likelihood: Distribution
                                                 current=alg_instance.current,
                                                 counter_accepted=alg_instance.counter_accepted,
                                                 counter_rejected=alg_instance.counter_rejected,
-                                                counter_prerejected=alg_instance.counter_prerejected))
+                                                counter_prerejected=alg_instance.counter_prerejected,
+                                                counter_out_of_bounds=alg_instance.counter_out_of_bounds,
+                                                counter_exact_steps=alg_instance.counter_exact_steps,
+                                                counter_exact_accepted=alg_instance.counter_exact_accepted,
+                                                counter_audited=alg_instance.counter_audited,
+                                                counter_audit_hidden=alg_instance.counter_audit_hidden))
         print("Stage", stage.name, "finished - acc/rej/prerej samples:", alg_instance.counter_accepted,
               alg_instance.counter_rejected, alg_instance.counter_prerejected,
               "- non-finite proposals:", alg_instance.counter_nonfinite_proposals,
-              "- refused non-finite evaluators:", alg_instance.counter_nonfinite_evaluators, flush=True)
+              "- refused non-finite evaluators:", alg_instance.counter_nonfinite_evaluators,
+              "- out-of-bounds proposals:", alg_instance.counter_out_of_bounds,
+              f"- exact steps: {alg_instance.counter_exact_accepted}/{alg_instance.counter_exact_steps} accepted",
+              f"- audited: {alg_instance.counter_audited} (hidden: {alg_instance.counter_audit_hidden})", flush=True)
 
     if evaluator_provider is not None:
         evaluator_provider.close()

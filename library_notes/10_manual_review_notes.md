@@ -1323,3 +1323,31 @@ complete; robust pre-rejects ~70 %, fast ~20 %; posterior means differ at the Mo
    `chains_in_posterior`; `write_report` now returns the full `Samples` (masked subset via `.posterior_view()`).
    Numbers unchanged for runs without exclusions (regression tests + manual check). `summary.csv` autocorr/CpUS are over
    all chains (the HTML 4.4/4.8 use the posterior). Removed the `print("Stages:", ...)` line from `calculate_CpUS`.
+
+### 2026-10-09 — S0 bounded prior `Problem(prior_bound=8.0)` (flagged for the author's review)
+
+1. **`notes` CSV is not byte-identical:** the spec appends the column `out_of_bounds`; plain runs keep `samples`,
+   `raw_data`, `subchain_stats`, `last_sample` byte-identical and the first five `notes` columns byte-identical (always
+   `out_of_bounds=0` there). `Samples.summarize` used to drop the LAST notes column assuming it was `seed`; now drops
+   `seed` by name, so the summary/HTML table gains an `out_of_bounds` column.
+2. **Priors other than Normal / PriorIndependentComponents / GaussianMixture / FromScipy(multivariate_normal)** now
+   raise `ValueError` at `Problem(...)` unless `prior_bound=None` (spec named only FromScipy; no guessing from
+   `mean`/`get_covariance()` was added). Two stub-prior tests in `tests/unit/test_problem.py` now pass `prior_bound=None`.
+3. **Spec figure corrected:** removed mass for R = 8 is `d * 1.24e-15` = 1.2e-13 at d = 100, slightly ABOVE the spec's
+   "below 1e-13 for d <= 100"; docs state the exact figure.
+4. **Fix beyond the spec (DAMH):** a sub-chain none of whose steps was evaluated (all non-finite or out of bounds) right
+   after a new evaluator arrived left the chain state scored with the OLD surrogate for the next sub-chain (stale
+   `log L~(x)` in its first ratio -> the DA correction did not telescope under one surrogate). Pre-existing for the
+   non-finite case, much likelier with a small box; now carried over (`_surrogate_rescore_pending`). Cannot occur in a
+   run without such proposals (byte identity holds). Test `test_prior_bound.py::test_damh_rescores_...`.
+5. Sub-chain out-of-box steps each write a `prerejected` raw_data row (tag -3) — with a tiny box and a large scale,
+   `raw_data` grows by up to `subchain_length` rows per outer iteration (manual MPI check: 8587 such rows in 40 evals).
+10. **S2 implemented (2026-10-09, author decisions in chat):** `Stage.exact_step_probability`, `Stage.audit_prerejected`
+    (DAMH only; MH resets with a warning); own adaptive random walk for the exact step (seed `seed0+5`, not pooled/carried);
+    kernel-choice/audit stream `seed0+4`; `subchain_stats.kernel`, `notes` columns `exact_steps, exact_accepted, audited,
+    audit_hidden`, `raw_data` state type `audited`; audits count toward `max_evaluations`; Auto chunks use 0.05 / 0.05
+    (placeholders). Byte-identical with both fields 0 (42 md5s). Items for the author: (a) the placeholder weights;
+    (b) one audit draw per pre-rejected iteration even when nothing is auditable (keeps the stream simple);
+    (c) `Samples.load_snapshots` keeps `audited` rows with its approximate row-position weights; (d) the non-finite
+    warning inside an exact step names the stage proposal's class, not the exact random walk; (e) the exact step scores
+    with the installed evaluator and does not poll for a newer one (the next sub-chain does).

@@ -16,6 +16,8 @@ by G4 on 2026-09-17)::
     proposal_seed         = seed0 + 1     # build_proposal
     algorithm_seed        = seed0 + 2     # AlgorithmBase._generator (acceptance draws)
     initial_sample_seed   = seed0(rank, 0) + 3   # initial sample of the chain (G4)
+    exact_step_seed       = seed0 + 4     # S2: "which kernel" + audit draws (AlgorithmBase._generator_exact)
+    exact_proposal_seed   = seed0 + 5     # S2: the exact step's own random walk
 
 The stride of 10 leaves room for further per-stage streams; the initial-sample seed uses
 stage 0's ``seed0`` because the initial sample is drawn once per chain, before the stage
@@ -43,13 +45,20 @@ SEED_STRIDE = 10  # seeds of consecutive (rank, stage) pairs are SEED_STRIDE apa
 PROPOSAL_SEED_OFFSET = 1
 ALGORITHM_SEED_OFFSET = 2
 INITIAL_SAMPLE_SEED_OFFSET = 3
+#: S2 (2026-10-09): per-(chain, stage) stream of the DAMH exact-step choice and of the audit of
+#: pre-rejected proposals (``AlgorithmBase._generator_exact``). Drawn from only when
+#: ``Stage.exact_step_probability > 0`` or ``Stage.audit_prerejected > 0``.
+EXACT_STEP_SEED_OFFSET = 4
+#: S2: the exact step's own adaptive random walk (built only when ``exact_step_probability > 0``).
+EXACT_PROPOSAL_SEED_OFFSET = 5
 #: Added (times the lineage generation) to every seed of a continued run, so its streams are
 #: disjoint from those of all earlier runs of its lineage as long as every run has
 #: ``SEED_STRIDE * no_stages_lineage * no_samplers < GENERATION_SEED_STRIDE`` (2026-10-08).
 GENERATION_SEED_STRIDE = 1_000_000
 
 SEED_FORMULA = ("seed0 = 10*(no_stages*rank_world + i) + 1000000*generation; proposal_seed = seed0+1; "
-                "algorithm_seed = seed0+2; initial_sample_seed = 10*no_stages*rank_world + 3 + 1000000*generation; "
+                "algorithm_seed = seed0+2; exact_step_seed = seed0+4; exact_proposal_seed = seed0+5; "
+                "initial_sample_seed = 10*no_stages*rank_world + 3 + 1000000*generation; "
                 "lhs_seed = 1000000*generation; continued runs: i = stage_index_offset + local index, "
                 "no_stages = no_stages_lineage, generation = lineage generation (0 for a plain run)")
 
@@ -75,5 +84,5 @@ def initial_sample_seed(no_stages: int, rank_world: int) -> int:
 
 
 __all__ = ["SEED_STRIDE", "PROPOSAL_SEED_OFFSET", "ALGORITHM_SEED_OFFSET",
-           "INITIAL_SAMPLE_SEED_OFFSET", "SEED_FORMULA", "stage_seed0", "initial_sample_seed",
+           "INITIAL_SAMPLE_SEED_OFFSET", "EXACT_STEP_SEED_OFFSET", "EXACT_PROPOSAL_SEED_OFFSET", "SEED_FORMULA", "stage_seed0", "initial_sample_seed",
            "seed_no_stages", "GENERATION_SEED_STRIDE", "generation_seed_offset"]

@@ -389,6 +389,10 @@ class SamplesPlots(SamplesStatistics):
                     continue
                 path_samples = os.path.join(dirname, files[i])
                 df_samples = pd.read_csv(path_samples)
+                # S2 (2026-10-09): an audited pre-rejected proposal was evaluated but is neither a chain
+                # state nor an extra proposal (its pre-rejected row is already there); drop its row
+                # before the row positions below are turned into multiplicities
+                df_samples = df_samples[df_samples["state_type"] != "audited"].reset_index(drop=True)
                 types = df_samples["state_type"]
                 idx = np.ones(len(types), dtype=bool)
                 idx[types == "prerejected"] = 0

@@ -327,7 +327,9 @@ class Samples(SamplesReports):
         # create pandas data frame containing sums of dataframes in self.notes:
         summary = pd.DataFrame()
         for notes in self.notes:
-            summary = pd.concat([summary, notes.iloc[:, :-1].sum()], axis=1)
+            # every counter column, by name: "seed" is not a counter (it was the last column until
+            # out_of_bounds was appended after it, S0 2026-10-09; older runs lack out_of_bounds)
+            summary = pd.concat([summary, notes.drop(columns=["seed"], errors="ignore").sum()], axis=1)
         # transpose data frame:
         summary = summary.T
         # name the rows with self.stage_names:

@@ -172,7 +172,10 @@ class SamplesStatistics(SamplesBase):
                 (None = every chain). The ``accepted``/``rejected``/``sum`` counters the
                 ratio comes from are whole-stage totals either way.
         """
-        ratio_evaluated = (self.summary["accepted"] + self.summary["rejected"]) / self.summary["sum"]
+        evaluated = self.summary["accepted"] + self.summary["rejected"]
+        if "audited" in self.summary.columns:  # S2 (2026-10-09): audits are exact evaluations too (0 without)
+            evaluated = evaluated + self.summary["audited"].fillna(0)
+        ratio_evaluated = evaluated / self.summary["sum"]
         # add column to summary:
         self.summary["ratio_eval"] = ratio_evaluated
         autocorr_stages = np.zeros((self.no_stages,))

@@ -22,12 +22,47 @@ from surrDAMH.modules.algorithm_interfaces import (AlgorithmConfiguration,
 from surrDAMH.modules.manifest import raw_data_columns, samples_columns
 from surrDAMH.modules.monitoring import SamplingOutputMonitor
 from surrDAMH.modules.proposals import Proposal
+from surrDAMH.modules.seeds import ALGORITHM_SEED_OFFSET, EXACT_STEP_SEED_OFFSET
 from surrDAMH.solvers import check_observations_shape
 from surrDAMH.stages import Stage
 
 #: ``Sample.solver_tag`` of a proposal that was never handed to the solver because its
 #: parameters are not all finite (2026-09-20, see ``AlgorithmBase._reject_nonfinite_proposal``).
 SOLVER_TAG_NONFINITE_PROPOSAL = -2
+#: ``Sample.solver_tag`` of a proposal that was never evaluated (neither solver nor surrogate)
+#: because it lies outside the prior bound ``Problem(prior_bound=R)`` (S0, 2026-10-09, see
+#: ``AlgorithmBase._reject_out_of_bounds_proposal``).
+SOLVER_TAG_OUT_OF_BOUNDS = -3
+#: S2 (2026-10-09): an audited pre-rejected proposal whose exact log-likelihood exceeds the
+#: surrogate's by more than this many nats is counted in ``notes`` as ``audit_hidden`` -- the
+#: surrogate hid a region of high exact posterior there (note 22 §4, the P6 statistic).
+AUDIT_HIDDEN_NATS = 5.0
+#: ``state_type`` of a ``raw_data`` row written by the audit of a pre-rejected proposal (S2).
+STATE_TYPE_AUDITED = "audited"
+#: ``notes`` columns appended by S2 (after ``out_of_bounds``); readers select columns by name.
+S2_NOTES_COLUMNS: tuple[str, ...] = ("exact_steps", "exact_accepted", "audited", "audit_hidden")
+
+
+def check_initial_sample_in_box(prior: Distribution, parameters: npt.NDArray, chain: str) -> None:
+    """
+    Start-up check of the bounded prior (S0): ``parameters`` (an initial chain state, internal
+    space) must lie in ``prior.internal_box`` (set by ``Problem``; ``None`` = unbounded).
+
+    Raises:
+        RuntimeError: naming ``chain`` and the first coordinate outside the box.
+    """
+    box = getattr(prior, "internal_box", None)
+    if box is None:
+        return
+    lower, upper = box
+    parameters = np.asarray(parameters, dtype=float)
+    outside = np.flatnonzero(~((lower <= parameters) & (parameters <= upper)))
+    if outside.size:
+        i = int(outside[0])
+        raise RuntimeError(
+            f"{chain}: the initial state lies outside the prior bound: coordinate {i} = {float(parameters[i])!r} is not "
+            f"in [{float(lower[i])!r}, {float(upper[i])!r}] (internal space; {outside.size} coordinate(s) outside). Start the chain "
+            "inside the box, widen Problem(prior_bound=...) or pass prior_bound=None")
 
 
 @dataclass
@@ -45,6 +80,9 @@ class Sample:
     #   -2 (SOLVER_TAG_NONFINITE_PROPOSAL) - the proposal itself was not finite, so the solver
     #                                   was NEVER CALLED for it; ``observations`` are zero-filled.
     #                                   Reserved by the library: a user solver must not return it.
+    #   -3 (SOLVER_TAG_OUT_OF_BOUNDS) - the proposal lies outside the prior bound, so NOTHING
+    #                                   (solver or surrogate) was evaluated; ``observations`` are
+    #                                   NaN-filled. Reserved by the library as well.
     # A failed sample gets ``log_likelihood = -inf`` (``_compute_log_posterior_terms``) with a
     # finite ``log_prior``, so it is always rejected, and ``_handle_rejection`` does not forward
     # it to the surrogate collector (items B4/C2/C3). A failed INITIAL sample is a fatal error
@@ -131,7 +169,16 @@ class AlgorithmBase:
                  conf: AlgorithmConfiguration, prior: Distribution, likelihood: Distribution,
                  observation_provider: ObservationProvider, snapshot_collector: SnapshotCollector | None = None,
                  evaluator_provider: EvaluatorProvider | None = None, seed: int = 0,
-                 initial_sample_is_carried_over: bool = False) -> None:
+                 initial_sample_is_carried_over: bool = False, exact_step_seed: int | None = None,
+                 exact_proposal: Proposal | None = None) -> None:
+        """
+        ``seed`` seeds the acceptance stream (``seed0 + 2``). ``exact_step_seed`` (S2) seeds the
+        stream of the DAMH exact-step choice and of the audit draws (``seed0 + 4``; default:
+        derived from ``seed`` by the same offsets); ``exact_proposal`` is the exact step's own
+        proposal, required by a DAMH stage with ``exact_step_probability > 0`` (both runners build
+        it with ``proposal_builder.build_exact_step_proposal``). Nothing is drawn from the S2
+        stream unless one of the two S2 stage fields is > 0.
+        """
         self.stage = stage
         self.proposal = proposal
         self.current = initial_sample
@@ -160,12 +207,31 @@ class AlgorithmBase:
         # evaluators that were refused because they predicted non-finite values (item D)
         self.counter_nonfinite_evaluators = 0
         self._nonfinite_evaluator_warning_emitted = False
+        # bounded prior (S0, 2026-10-09): (lower, upper) in the internal space, set by Problem on
+        # the internal prior; None = unbounded. Proposals outside are rejected unevaluated and
+        # counted here (outer chain and every sub-chain step of a DAMH stage).
+        self.internal_box = getattr(self.prior, "internal_box", None)
+        self.counter_out_of_bounds = 0
+        # DAMH: the evaluator changed but no sub-chain step has re-scored the chain state with
+        # it yet (every step of that sub-chain was non-finite or out of bounds)
+        self._surrogate_rescore_pending = False
         # A30: was the initial state of this stage already written (and counted) by the
         # previous stage? If so, its row here must not add the state itself again.
         self.initial_sample_is_carried_over = initial_sample_is_carried_over
         self._first_state_row_pending = True
         self.proposed: Sample
         self._generator = np.random.RandomState(seed)
+        # S2 (2026-10-09): exact step + audit of pre-rejected proposals (DAMH only). Creating the
+        # RandomState draws nothing; it is drawn from only when a S2 field is > 0.
+        if exact_step_seed is None:
+            exact_step_seed = int(seed) - ALGORITHM_SEED_OFFSET + EXACT_STEP_SEED_OFFSET
+        self.exact_step_seed = int(exact_step_seed)
+        self._generator_exact = np.random.RandomState(self.exact_step_seed)
+        self.exact_proposal = exact_proposal
+        self.counter_exact_steps = 0
+        self.counter_exact_accepted = 0
+        self.counter_audited = 0
+        self.counter_audit_hidden = 0
         self.monitor = SamplingOutputMonitor(
             output_dir=self.conf.output_dir,
             stage=stage,
@@ -225,6 +291,7 @@ class AlgorithmBase:
                 "outer_proposed_changed",
                 "outer_accepted",
                 "rank_world",
+                "kernel",  # S2 (2026-10-09), appended last: 0 = delayed-acceptance step, 1 = exact step
             ],
             condition=self.stage.save_to_file and self.stage.algorithm == "DAMH",
         )
@@ -274,9 +341,37 @@ class AlgorithmBase:
         self.counter_nonfinite_proposals += 1
         self._warn_about_nonfinite_proposal()
 
+    def _parameters_are_in_box(self, parameters: npt.NDArray) -> bool:
+        """Inside the prior bound (always True when unbounded); deterministic, no random draws."""
+        if self.internal_box is None:
+            return True
+        lower, upper = self.internal_box
+        return bool(np.all(lower <= parameters) and np.all(parameters <= upper))
+
+    def _reject_out_of_bounds_proposal(self, sample: Sample) -> None:
+        """
+        Mark a proposal outside the prior bound as "never evaluated" (S0, 2026-10-09).
+
+        The target is the prior truncated to the box, so such a proposal has target density 0
+        and is rejected with probability 1: no solver call, no surrogate call, nothing sent to
+        the collector (``solver_tag = SOLVER_TAG_OUT_OF_BOUNDS`` is negative, so
+        ``_handle_rejection`` keeps it away), NaN observation blocks in ``raw_data``.
+        """
+        sample.observations = np.full(self.no_observations, np.nan)
+        sample.solver_tag = SOLVER_TAG_OUT_OF_BOUNDS
+        sample.log_likelihood, sample.log_prior = self._compute_log_posterior_terms(
+            sample.parameters,
+            sample.observations,
+            sample.solver_tag,
+        )
+        self.counter_out_of_bounds += 1
+
     def _evaluate_proposed_sample(self) -> None:
         if not self._parameters_are_finite(self.proposed):
             self._reject_nonfinite_proposal(self.proposed)
+            return
+        if not self._parameters_are_in_box(self.proposed.parameters):
+            self._reject_out_of_bounds_proposal(self.proposed)
             return
         self._evaluate_sample(self.proposed)
 
@@ -305,9 +400,13 @@ class AlgorithmBase:
                                   observations: npt.NDArray | None,
                                   observations_approx: npt.NDArray | None,
                                   log_likelihood: float | None,
-                                  log_prior: float | None) -> None:
+                                  log_prior: float | None,
+                                  parameters: npt.NDArray | None = None) -> None:
         """
         Record one proposed state in ``raw_data`` (format v2, rectangular).
+
+        ``parameters`` defaults to ``self.proposed.parameters`` (a DAMH sub-chain proposal
+        rejected as out of bounds passes its own).
 
         ``observations`` is the EXACT model block and ``observations_approx`` the surrogate
         block; both are always present as ``conf.no_observations`` columns and NaN-filled
@@ -319,10 +418,12 @@ class AlgorithmBase:
         the SURROGATE one for ``prerejected`` rows (documented in ``docs/outputs.md``).
         """
         if self.conf.save_snapshots_to_file:
+            if parameters is None:
+                parameters = self.proposed.parameters
             if self.conf.transform_before_saving:
-                row: List[Any] = [state_type] + list(self.prior.transform(self.proposed.parameters))
+                row: List[Any] = [state_type] + list(self.prior.transform(parameters))
             else:
-                row = [state_type] + list(self.proposed.parameters)
+                row = [state_type] + list(parameters)
             row += [tag]
             row += self._observation_block(observations)
             row += self._observation_block(observations_approx)
@@ -448,9 +549,15 @@ class AlgorithmBase:
     def _finalize_run(self) -> None:
         self._record_current_sample()
         self._write_adaptation_stats()
-        self.monitor(data_name="notes", row=["accepted", "rejected", "pre-rejected", "sum", "seed"], condition=self.stage.save_to_file)
+        # out_of_bounds (S0, 2026-10-09) and the S2 counters are appended last: readers select
+        # notes columns by name
+        self.monitor(data_name="notes", row=["accepted", "rejected", "pre-rejected", "sum", "seed", "out_of_bounds",
+                                             *S2_NOTES_COLUMNS],
+                     condition=self.stage.save_to_file)
         no_all = self.counter_accepted + self.counter_rejected + self.counter_prerejected
-        notes = [self.counter_accepted, self.counter_rejected, self.counter_prerejected, no_all, self.seed]
+        notes = [self.counter_accepted, self.counter_rejected, self.counter_prerejected, no_all, self.seed,
+                 self.counter_out_of_bounds, self.counter_exact_steps, self.counter_exact_accepted,
+                 self.counter_audited, self.counter_audit_hidden]
         self.monitor(data_name="notes", row=notes, condition=self.stage.save_to_file)
         self.monitor.close_files()
 
@@ -674,12 +781,14 @@ class Algorithm_MH(AlgorithmBase):  # initiated by SAMPLERs
             assert self.current.log_likelihood is not None
             assert self.proposed.log_prior is not None
             assert self.current.log_prior is not None
-            if self.proposed.solver_tag == SOLVER_TAG_NONFINITE_PROPOSAL:
+            if self.proposed.solver_tag in (SOLVER_TAG_NONFINITE_PROPOSAL, SOLVER_TAG_OUT_OF_BOUNDS):
                 # The proposal is not finite (2026-09-20, item A). get_log_acceptance_probability
                 # is skipped on purpose: a Hamiltonian's momentum term would be NaN and the
                 # decision below would then depend on NaN comparisons. Probability 0 is also the
                 # correct signal for the dual averaging -- Stan scores a divergent transition as
                 # alpha = 0 -- so adapt() below receives -inf.
+                # Outside the prior bound (S0): the truncated target's indicator is 0 there, so
+                # the exact acceptance probability is 0 as well; one uniform is still drawn below.
                 log_acceptance_prob_exact = -np.inf
             else:
                 likelihood_part, prior_part = self.proposal.get_log_acceptance_probability(
@@ -787,10 +896,16 @@ class Algorithm_DAMH(AlgorithmBase):  # initiated by SAMPLERs
         """
         counter_subchain_accepted = 0
         subchain_current = self.current.copy()
+        # S2: the last proposal the surrogate itself rejected (finite, inside the box, scored with
+        # the frozen evaluator) -- the candidate of the audit of a pre-rejected iteration
+        self._last_surrogate_rejected: Sample | None = None
         correction_log_ratio = 0.0
         subchain_log_acceptance_probabilities: list[float] = []
-        # refresh once per sub-chain, then keep the surrogate fixed until the sub-chain ends:
-        bool_evaluator_changed = self._refresh_surrogate_evaluator_if_needed()
+        # refresh once per sub-chain, then keep the surrogate fixed until the sub-chain ends;
+        # a re-scoring left pending by a sub-chain none of whose steps was evaluated (all
+        # non-finite or out of bounds) is done now, so the cached surrogate terms of the chain
+        # state always belong to the installed evaluator:
+        bool_evaluator_changed = self._refresh_surrogate_evaluator_if_needed() or self._surrogate_rescore_pending
         for _ in range(self.stage.subchain_length):
             subchain_proposed = self._propose_new_sample(subchain_current.parameters)
             if not self._parameters_are_finite(subchain_proposed):
@@ -805,6 +920,22 @@ class Algorithm_DAMH(AlgorithmBase):  # initiated by SAMPLERs
                 # the draw is kept so that a sub-chain step consumes exactly one uniform
                 # whether or not the proposal was finite; log(u) < -inf is never true
                 self._draw_acceptance_decision(-np.inf)
+                continue
+            if not self._parameters_are_in_box(subchain_proposed.parameters):
+                # Outside the prior bound (S0, 2026-10-09): the truncated surrogate target is 0
+                # there, so the step is rejected with probability 1 -- no surrogate call, scored
+                # as -inf, one uniform consumed exactly as for a non-finite proposal. The sub-chain
+                # therefore never leaves the box and neither does the outer proposal. Logged in
+                # raw_data as "prerejected" with tag -3 and NaN observation blocks.
+                self.counter_out_of_bounds += 1
+                subchain_log_acceptance_probabilities.append(-np.inf)
+                self._draw_acceptance_decision(-np.inf)
+                _, log_prior = self._compute_log_posterior_terms(
+                    subchain_proposed.parameters, np.full(self.no_observations, np.nan), SOLVER_TAG_OUT_OF_BOUNDS)
+                self._record_proposed_snapshot(state_type="prerejected", tag=SOLVER_TAG_OUT_OF_BOUNDS,
+                                               observations=None, observations_approx=None,
+                                               log_likelihood=-np.inf, log_prior=log_prior,
+                                               parameters=subchain_proposed.parameters)
                 continue
             self._evaluate_surrogate_transition( # evaluate surrogate for current, subchain_surrent, subchain_proposed
                 subchain_current=subchain_current,
@@ -830,18 +961,123 @@ class Algorithm_DAMH(AlgorithmBase):  # initiated by SAMPLERs
                 correction_log_ratio += likelihood_part
                 counter_subchain_accepted += 1
                 subchain_current = subchain_proposed.copy()
+            else:
+                self._last_surrogate_rejected = subchain_proposed
 
+        self._surrogate_rescore_pending = bool_evaluator_changed
         return (subchain_current, counter_subchain_accepted, correction_log_ratio,
                 subchain_log_acceptance_probabilities)
 
+    def _exact_iteration(self) -> bool:
+        """
+        One EXACT Metropolis-Hastings step (S2, ``Stage.exact_step_probability``); returns whether
+        the proposal was accepted.
+
+        The proposal comes from the exact step's own random walk ``self.exact_proposal`` (never
+        from the stage proposal, so a Hamiltonian stage proposal's momenta and the stage
+        proposal's adaptation are untouched). A non-finite or out-of-box proposal is rejected
+        unevaluated (tags -2 / -3) as in ``Algorithm_MH``. Otherwise it is first scored with the
+        INSTALLED surrogate -- so that, if it is accepted, the chain state carries surrogate terms
+        of the installed evaluator, which the next sub-chain's first ratio relies on (note 24
+        §4.4), and so that its ``raw_data`` row has both observation blocks (``log L - log L~`` at
+        a point chosen independently of the surrogate) -- then with the exact model, and accepted
+        with the exact likelihoods and priors (the acceptance stream as for every other
+        decision). The evaluator is not polled here; the next sub-chain does that.
+        """
+        assert self.exact_proposal is not None
+        self.proposed = Sample(parameters=self.exact_proposal.propose_sample(self.current.parameters))
+        if self._parameters_are_finite(self.proposed) and self._parameters_are_in_box(self.proposed.parameters):
+            self.proposed.observations_approx = cast(npt.NDArray, self._get_surrogate_observations(self.proposed.parameters))
+            self.proposed.log_likelihood_approx, _ = self._compute_log_posterior_terms(
+                self.proposed.parameters, self.proposed.observations_approx)
+        self._evaluate_proposed_sample()
+        assert self.proposed.log_likelihood is not None and self.current.log_likelihood is not None
+        assert self.proposed.log_prior is not None and self.current.log_prior is not None
+        if self.proposed.solver_tag in (SOLVER_TAG_NONFINITE_PROPOSAL, SOLVER_TAG_OUT_OF_BOUNDS):
+            log_acceptance_prob_exact = -np.inf  # as in Algorithm_MH.run; one uniform is still drawn
+        else:
+            likelihood_part, prior_part = self.exact_proposal.get_log_acceptance_probability(
+                self.proposed.log_likelihood,
+                self.current.log_likelihood,
+                self.proposed.log_prior,
+                self.current.log_prior,
+            )
+            log_acceptance_prob_exact = likelihood_part + prior_part
+        proposed_parameters = self.proposed.parameters
+        accepted = self._draw_acceptance_decision(log_acceptance_prob_exact)
+        if accepted:
+            self._handle_acceptance()
+        else:
+            self._handle_rejection()
+        # the exact step's own random walk adapts on the exact outcome; the stage proposal does not
+        self.exact_proposal.adapt(proposed_sample=proposed_parameters,
+                                  log_acceptance_probability=log_acceptance_prob_exact,
+                                  current_sample=self.current.parameters)
+        self.counter_exact_steps += 1
+        self.counter_exact_accepted += int(accepted)
+        return accepted
+
+    def _audit_prerejected(self) -> None:
+        """
+        Audit of a pre-rejected iteration (S2, ``Stage.audit_prerejected``): evaluate the exact
+        model at the sub-chain's last surrogate-rejected proposal. The chain state and the
+        decision are untouched (the chain's law is unchanged); the evaluation is written to
+        ``raw_data`` as an ``audited`` row (both observation blocks, the EXACT log-likelihood) and
+        sent to the collector as a snapshot with multiplicity 0, exactly like a rejected
+        proposal (not when the solver failed, not in a stage with
+        ``send_snapshots_to_collector=False``). ``counter_audit_hidden`` counts the audits with
+        ``log L(y) - log L~(y) > AUDIT_HIDDEN_NATS``. A sub-chain without such a proposal (every
+        step non-finite or outside the box) has nothing to audit.
+        """
+        candidate = self._last_surrogate_rejected
+        if candidate is None:
+            return
+        audited = candidate.copy()
+        log_likelihood_approx = audited.log_likelihood_approx
+        self._evaluate_sample(audited)
+        self.counter_audited += 1
+        assert audited.log_likelihood is not None and log_likelihood_approx is not None
+        if audited.log_likelihood - log_likelihood_approx > AUDIT_HIDDEN_NATS:
+            self.counter_audit_hidden += 1
+        if not audited.solver_tag < 0:
+            self.send_to_collector(sample=audited, multiplicity=0)
+        self._record_proposed_snapshot(state_type=STATE_TYPE_AUDITED, tag=audited.solver_tag,
+                                       observations=audited.observations,
+                                       observations_approx=audited.observations_approx,
+                                       log_likelihood=audited.log_likelihood,
+                                       log_prior=audited.log_prior,
+                                       parameters=audited.parameters)
+
     def run(self) -> None:
+        exact_step_probability = float(getattr(self.stage, "exact_step_probability", 0.0) or 0.0)
+        audit_probability = float(getattr(self.stage, "audit_prerejected", 0.0) or 0.0)
+        if exact_step_probability > 0.0 and self.exact_proposal is None:
+            raise ValueError(f"stage {self.stage.name}: exact_step_probability={exact_step_probability} needs the exact "
+                             "step's proposal (exact_proposal=..., built by the runners with "
+                             "proposal_builder.build_exact_step_proposal)")
         for i in range(self.stage.max_samples):
             self.proposal.choose_group()  # only for block proposal, does nothing for non-block proposal
+            # S2: the "which kernel" draw; nothing is drawn from this stream when the field is 0
+            if exact_step_probability > 0.0 and self._generator_exact.uniform() < exact_step_probability:
+                outer_accepted = self._exact_iteration()
+                self.monitor(
+                    data_name="subchain_stats",
+                    row=[i, self.stage.subchain_length, 0, np.nan, 0.0, 1, int(outer_accepted), self.rank_world, 1],
+                    condition=self.stage.save_to_file and self.stage.algorithm == "DAMH",
+                )
+                if time.time() - self.time_start > self.stage.time_limit:
+                    break
+                if (self.counter_rejected + self.counter_accepted + self.counter_audited) >= self.stage.max_evaluations:
+                    break
+                continue
             (subchain_current, counter_subchain, correction_log_ratio,
              subchain_log_acceptance_probabilities) = self._propose_new_sample_using_subchain()
             self.proposed = subchain_current.copy()
             outer_accepted = False
             if counter_subchain > 0:  # at least one proposal of the subchain was accepted
+                # every sub-chain step is checked against the prior bound, so its end state is inside
+                assert self._parameters_are_in_box(self.proposed.parameters), \
+                    "DAMH sub-chain ended outside the prior bound"
                 self._evaluate_proposed_sample()
                 assert self.proposed.log_likelihood is not None
                 assert self.current.log_likelihood is not None
@@ -909,6 +1145,9 @@ class Algorithm_DAMH(AlgorithmBase):  # initiated by SAMPLERs
                                                observations_approx=self.proposed.observations_approx,
                                                log_likelihood=self.proposed.log_likelihood_approx,
                                                log_prior=self.proposed.log_prior)
+                # S2: audit (one draw per pre-rejected iteration, only when the field is > 0)
+                if audit_probability > 0.0 and self._generator_exact.uniform() < audit_probability:
+                    self._audit_prerejected()
             self.monitor(
                 data_name="subchain_stats",
                 row=[
@@ -920,13 +1159,15 @@ class Algorithm_DAMH(AlgorithmBase):  # initiated by SAMPLERs
                     int(counter_subchain > 0),
                     int(outer_accepted),
                     self.rank_world,
+                    0,  # kernel: delayed-acceptance step (S2)
                 ],
                 condition=self.stage.save_to_file and self.stage.algorithm == "DAMH",
             )
             if time.time() - self.time_start > self.stage.time_limit:
                 break
             print(f"Progress: {i}, accepted: {self.counter_accepted}, rejected: {self.counter_rejected}, prerejected: {self.counter_prerejected}", end="\r", flush=True)
-            if (self.counter_rejected + self.counter_accepted) >= self.stage.max_evaluations:
+            # audits are solver calls too (S2); counter_audited is 0 without audits
+            if (self.counter_rejected + self.counter_accepted + self.counter_audited) >= self.stage.max_evaluations:
                 break
         self._finalize_run()
 

@@ -24,7 +24,12 @@ PLACEHOLDER chosen before validation (note 25 §6 will tune them, the warm-up sh
 * ``mode="robust"``: the chunks use an adaptive ``RandomWalk()``; ``mode="fast"``:
   ``Hamiltonian(num_steps=30, integrator="dimension_robust", mass=1.0)`` with a dual-averaged step.
 
-Not covered here (later steps of note 25): the safety components S1/S2, the carry-over of the
+* S2 safety components (2026-10-09): every DAMH chunk runs an exact random-walk step with
+  probability ``AUTO_EXACT_STEP_PROBABILITY`` and audits a pre-rejected proposal with probability
+  ``AUTO_AUDIT_PREREJECTED`` (``Stage.exact_step_probability`` / ``Stage.audit_prerejected``); both
+  spend exact evaluations inside the chunk budgets, the per-chain budget rule is unchanged.
+
+Not covered here (later steps of note 25): the safety component S1, the carry-over of the
 Welford statistics across chunks, ``continue_sampling_auto`` (an automatic continuation).
 """
 
@@ -66,6 +71,9 @@ TEST_DATA_TIME_BUDGET = 64
 TEST_DATA_SEED = 25347
 #: Hamiltonian proposal of the fast mode
 FAST_NUM_STEPS = 30
+#: S2 placeholders: ``Stage.exact_step_probability`` and ``Stage.audit_prerejected`` of every DAMH chunk
+AUTO_EXACT_STEP_PROBABILITY = 0.05
+AUTO_AUDIT_PREREJECTED = 0.05
 #: default network of the automatic mode
 DEFAULT_NETWORK_HPARAMS: dict[str, Any] = {"hidden_layer_sizes": (64, 64), "activation": "silu",
                                            "solver": "adamw", "seed": 0}
@@ -150,6 +158,9 @@ class AutoPlan:
             "chunks": int(self.chunks),
             "stage_names": self.stage_names(),
             "proposal": repr(self.proposal) if self.proposal is not None else None,
+            # S2 settings of the DAMH chunks (None for a single MH stage)
+            "exact_step_probability": AUTO_EXACT_STEP_PROBABILITY if self.chunks else None,
+            "audit_prerejected": AUTO_AUDIT_PREREJECTED if self.chunks else None,
             "surrogate": _json_safe(self.surrogate),
             "conf_settings": _json_safe(dict(self.conf_settings)),
             "notes": list(self.notes),
@@ -182,6 +193,9 @@ class AutoPlan:
             lines.append(f"  {self.chunks} DAMH-SMU chunks (sub-chain length 1), {unit} per chain: "
                          f"{', '.join(f'{c:g}' if isinstance(c, float) else str(c) for c in chunk_sizes)}")
             lines.append(f"  chunk proposal: {self.proposal!r}")
+            lines.append(f"  chunk safety (S2): exact random-walk step with probability {AUTO_EXACT_STEP_PROBABILITY:g}, "
+                         f"audit of pre-rejected proposals with probability {AUTO_AUDIT_PREREJECTED:g} "
+                         "(both spend evaluations of the chunk budget)")
         if isinstance(self.surrogate, dict):
             hparams = ", ".join(f"{k}={v!r}" for k, v in self.surrogate.get("hparams", {}).items())
             origin = "default" if self.surrogate.get("default") else "given"
@@ -341,7 +355,9 @@ def plan_auto(problem: "Problem", conf: "Configuration", *, budget: int | None, 
             for k in range(chunks):
                 evaluations = per_chunk + (remainder if k == chunks - 1 else 0)
                 stages.append(Stage(algorithm="DAMH", proposal=chunk_proposal(), subchain_length=1,
-                                    surrogate_model_updates=True, max_evaluations=evaluations))
+                                    surrogate_model_updates=True, max_evaluations=evaluations,
+                                    exact_step_probability=AUTO_EXACT_STEP_PROBABILITY,
+                                    audit_prerejected=AUTO_AUDIT_PREREJECTED))
         else:
             assert time_limit is not None
             t0 = WARM_UP_TIME_SHARE * time_limit
@@ -350,7 +366,9 @@ def plan_auto(problem: "Problem", conf: "Configuration", *, budget: int | None, 
             stages = [Stage(algorithm="MH", proposal=RandomWalk(), time_limit=t0, burn_in=True)]
             for _ in range(chunks):
                 stages.append(Stage(algorithm="DAMH", proposal=chunk_proposal(), subchain_length=1,
-                                    surrogate_model_updates=True, time_limit=t_chunk))
+                                    surrogate_model_updates=True, time_limit=t_chunk,
+                                    exact_step_probability=AUTO_EXACT_STEP_PROBABILITY,
+                                    audit_prerejected=AUTO_AUDIT_PREREJECTED))
             notes.append(f"time budget: the warm-up floor of {WARM_UP_PER_DIMENSION}*d = {WARM_UP_PER_DIMENSION * d} "
                          "evaluations per chain cannot be enforced; a too short time_limit leaves the first "
                          "surrogate undertrained")
@@ -416,4 +434,5 @@ def plan_auto(problem: "Problem", conf: "Configuration", *, budget: int | None, 
                     surrogate=_surrogate_summary(updater, default_updater))
 
 
-__all__ = ["plan_auto", "AutoPlan", "AutoTestDataRequest", "AUTO_MODES"]
+__all__ = ["plan_auto", "AutoPlan", "AutoTestDataRequest", "AUTO_MODES", "AUTO_EXACT_STEP_PROBABILITY",
+           "AUTO_AUDIT_PREREJECTED"]

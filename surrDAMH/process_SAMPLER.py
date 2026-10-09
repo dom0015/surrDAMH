@@ -20,8 +20,9 @@ from surrDAMH.modules.algorithm_interfaces_mpi import (MpiEvaluatorProvider,
 from surrDAMH.modules.communication import recv_initial_surrogate_availability
 from surrDAMH.modules import algorithms as alg
 from surrDAMH.modules import lhs_normal as lhs
-from surrDAMH.modules.proposal_builder import build_proposal
-from surrDAMH.modules.seeds import (generation_seed_offset, initial_sample_seed, seed_no_stages,
+from surrDAMH.modules.proposal_builder import build_exact_step_proposal, build_proposal
+from surrDAMH.modules.seeds import (EXACT_PROPOSAL_SEED_OFFSET, EXACT_STEP_SEED_OFFSET,
+                                    generation_seed_offset, initial_sample_seed, seed_no_stages,
                                     stage_seed0)
 from surrDAMH.solvers import Solver
 from surrDAMH.stages import Stage, stage_name
@@ -92,6 +93,8 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
         initial_sample = alg.Sample(parameters=rvs_with_generator(prior, initial_sample_generator))
     print(f"Sampler at rank {rank_world} started with {describe_initial_sample_type(conf)} initial sample"
           + (f": {initial_sample.parameters}" if conf.debug else ""), flush=True)
+    # bounded prior (S0): the chain must start inside the box (RuntimeError -> job-wide abort)
+    alg.check_initial_sample_in_box(prior, initial_sample.parameters, f"chain {rank_world} (sampler rank {rank_world})")
 
     # Merged carry-over of every adaptive stage so far, keyed by Stage field name
     # ("scale", "beta", "step_size" -- the spec step fields); consumed by build_proposal
@@ -130,6 +133,11 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
         # choice of proposal distribution for this stage:
         my_Prop = build_proposal(stage=stage, conf=conf, prior=prior, seed=seed0+1,
                                  carried=carried, stage_index=i_global)
+        # S2: the exact step's own random walk (seed0 + 5), only when the stage uses it
+        exact_proposal = None
+        if stage.algorithm == "DAMH" and stage.exact_step_probability > 0.0:
+            exact_proposal = build_exact_step_proposal(conf=conf, prior=prior, seed=seed0 + EXACT_PROPOSAL_SEED_OFFSET,
+                                                       carried=carried, stage_index=i_global)
 
         # choice of communicators for this stage:
         if stage.send_snapshots_to_collector:
@@ -173,7 +181,9 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
                                  initial_sample=initial_sample,
                                  rank_world=rank_world,
                                  seed=seed0+2,
-                                 initial_sample_is_carried_over=initial_sample_is_carried_over)
+                                 initial_sample_is_carried_over=initial_sample_is_carried_over,
+                                 exact_step_seed=seed0 + EXACT_STEP_SEED_OFFSET,
+                                 exact_proposal=exact_proposal)
         alg_instance.run()
 
         # cross-rank hand-over of the adapted proposal (2026-09-20, `16` §5 item 2): the chains
@@ -229,7 +239,10 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
         print('Stage', alg_instance.stage.name, 'at MPI rank', rank_world, 'finished - acc/rej/prerej samples:',
               alg_instance.counter_accepted, alg_instance.counter_rejected, alg_instance.counter_prerejected,
               '- non-finite proposals:', alg_instance.counter_nonfinite_proposals,
-              '- refused non-finite evaluators:', alg_instance.counter_nonfinite_evaluators, flush=True)
+              '- refused non-finite evaluators:', alg_instance.counter_nonfinite_evaluators,
+              '- out-of-bounds proposals:', alg_instance.counter_out_of_bounds,
+              f'- exact steps: {alg_instance.counter_exact_accepted}/{alg_instance.counter_exact_steps} accepted',
+              f'- audited: {alg_instance.counter_audited} (hidden: {alg_instance.counter_audit_hidden})', flush=True)
         comm_sampler.Barrier()
     f = getattr(commSolver, "terminate", None)
     if callable(f):

@@ -47,6 +47,25 @@ defined "up to an additive constant" for the same reason (see
 and `FromScipy` skip the transform (identity) and work directly in what is then a single
 space.
 
+## Bounded prior (`prior_bound`, 2026-10-09)
+
+`Problem(prior, likelihood, solver, prior_bound=8.0)` makes the sampled posterior proportional to
+`1_B(u) p(u) L(u)`, where `B = {u : |u_i - m_i| <= R s_i}` is a box in the internal space (`R` =
+`prior_bound`; `m`, `s` = per-coordinate centre and scale of the internal prior: `0` and `1` for
+`Normal` and `PriorIndependentComponents`, the mixture mean/sd for `GaussianMixture`, `mean` and
+`sqrt(diag(cov))` for `FromScipy(multivariate_normal(...))`; any other prior needs
+`prior_bound=None`). A proposal outside `B` is rejected before anything is evaluated — no solver
+call, no surrogate call, nothing sent to the collector (solver tag `-3`, `out_of_bounds` in
+`notes`) — in MH, in every DAMH sub-chain step and for every proposal (random walk, pCN,
+Hamiltonian): the target's indicator multiplies the acceptance ratio and nothing else changes,
+so this is a valid MH step for the truncated target. `prior.logpdf` stays the untruncated
+density: the truncation's normalising constant cancels in every ratio. For a standard-normal
+internal prior and `R = 8` the removed prior mass is `1 - (1 - 2 Φ(-8))^d ≈ d · 1.24e-15`, i.e.
+about `1.2e-13` at `d = 100`. The bounded target is the assumption the ergodicity
+arguments of the samplers rest on (`library_notes/18_*`, A1); `prior_bound=None` samples the
+unbounded prior as before, without that guarantee. Every chain must start inside `B`
+(`RuntimeError` at start-up). Held-out `TestData` and the LHS design are not clipped to `B`.
+
 ## Metropolis-Hastings (MH)
 
 Standard MH (`Algorithm_MH`): propose `y ~ Q(x, ·)`, evaluate the exact model at `y`,

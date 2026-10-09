@@ -239,4 +239,19 @@ def build_proposal(stage: Stage, conf: "Configuration", prior: Distribution, see
     return my_Prop
 
 
-__all__ = ["build_proposal"]
+def build_exact_step_proposal(conf: "Configuration", prior: Distribution, seed: int,
+                              carried: dict | None = None, stage_index: int | None = None) -> Proposal:
+    """
+    The exact step's own proposal of a DAMH stage with ``Stage.exact_step_probability > 0``
+    (S2, 2026-10-09): the spec ``RandomWalk()`` -- adaptive, starting from the carried
+    ``"scale"`` when an earlier adaptive random-walk stage handed one over, else from the
+    prior-derived default -- built exactly like a stage proposal, with its own ``seed``
+    (``seed0 + EXACT_PROPOSAL_SEED_OFFSET``). It adapts on the exact step's own acceptances; it is
+    not pooled across ranks, not carried over and its adaptation trace is not written.
+    ``carried`` is read, never modified.
+    """
+    return _build_simple(RandomWalk(), no_parameters=conf.no_parameters, prior=prior, seed=seed,
+                         carried={} if carried is None else carried, conf=conf, stage_index=stage_index)
+
+
+__all__ = ["build_proposal", "build_exact_step_proposal"]

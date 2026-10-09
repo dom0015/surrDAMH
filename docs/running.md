@@ -15,6 +15,10 @@ run = problem.run_sampling_local(conf, stages, surrogate_updater=updater)
 run.write_report(observations=...)
 ```
 
+The prior is truncated to a box of `prior_bound=8.0` internal-prior scales around its centre by
+default (proposals outside are rejected unevaluated, `Problem(..., prior_bound=None)` for the
+unbounded prior; see [`concepts.md`](concepts.md#bounded-prior-prior_bound-2026-10-09)).
+
 Both return a `SamplingRun` (`.problem`, `.conf`, `.stages`, `.output_dir`, `.write_report(...)`).
 See `toy_examples/minimal_example.py` for the smallest `run_sampling` script.
 `toy_examples/one_process_only.py` and `toy_examples/post_processing_with_html_report.py` also
@@ -24,7 +28,7 @@ one process); see "Single process / no MPI at all" below for the no-MPI-at-all a
 
 ## Automatic mode (2026-10-08)
 
-**Status (2026-10-09): preliminary.** Every DAMH step targets the exact posterior for the surrogate installed at that moment, and the proposal adaptation diminishes; but the on-the-fly retraining of the network is an adaptive component whose ergodicity argument (`library_notes/18_damh_smu_validity_proof_2026-09-22.md`) needs a bounded surrogate (A4) and diminishing updates (A5), and neither the Polyak averaging of received weights (note 25 S3), the prior-truncation decision (D4) nor the exact safety kernel (S2) is implemented yet. Treat Auto as "exact per installed surrogate, with retraining whose theoretical justification is pending"; all its numbers are placeholders until the validation plan of note 25 §6 has run.
+**Status (2026-10-09, evening): preliminary, two of three safeguards in place.** Every DAMH step targets the exact posterior for the surrogate installed at that moment, the prior is bounded by default (S0, `Problem(prior_bound=8.0)`), and every automatic DAMH chunk mixes in exact random-walk steps and audits pre-rejected proposals (S2, placeholder weights 0.05 / 0.05). What is still missing for the ergodicity argument of `library_notes/18_damh_smu_validity_proof_2026-09-22.md` is the diminishing adaptation of the on-the-fly network retraining (Polyak averaging of received weights, note 25 S3). Until then treat Auto as "exact per installed surrogate, with retraining whose theoretical justification is pending"; all its numbers are placeholders until the validation plan of note 25 §6 has run.
 
 Instead of writing an explicit stage list by hand, `Problem.run_sampling_auto` /
 `run_sampling_local_auto` pick a stage layout and a surrogate from a budget
@@ -69,7 +73,12 @@ after subtracting the held-out set (below) and dividing by `C`:
   (`docs/outputs.md`'s selection mask) — followed by **4 DAMH-SMU chunks** (`subchain_length=1`,
   the mode's proposal) sharing the remaining `B - n0` evaluations as evenly as possible (the
   remainder goes to the last chunk). There is **no frozen stage** — every chunk keeps retraining
-  the surrogate.
+  the surrogate. **S2 safety (2026-10-09)**: every chunk sets `exact_step_probability=0.05` (an exact
+  random-walk MH step instead of the DA step 5 % of the time, so the chain can enter a region the
+  surrogate wrongly rules out) and `audit_prerejected=0.05` (5 % of the pre-rejected proposals are
+  evaluated exactly and sent to the collector, the chain unchanged); both spend evaluations inside
+  the chunk budgets (the per-chain budget rule is unchanged), both are placeholders
+  (`surrDAMH.auto.AUTO_EXACT_STEP_PROBABILITY`, `AUTO_AUDIT_PREREJECTED`; see `docs/stages.md`).
 
   **Fixed 2026-10-09**: before this date the warm-up used `is_excluded=True` instead, which made
   chunk 1 **restart** from the warm-up's starting (LHS/prior) point rather than continue from its
@@ -115,7 +124,8 @@ explicit stage list it produced — `run.stages` — is what actually runs; an e
 and copy it into a plain `run_sampling(conf, stages, ...)` call. It is also recorded in
 `run_manifest.json` under `"auto"` and as `run.auto` (keys: `mode`, `budget`, `time_limit`,
 `no_samplers`, `per_chain_budget`, `test_data_size`, `warm_up`, `chunks`, `stage_names`,
-`proposal`, `surrogate`, `conf_settings`, `notes` — see `docs/outputs.md`).
+`proposal`, `exact_step_probability`, `audit_prerejected`, `surrogate`, `conf_settings`, `notes` —
+see `docs/outputs.md`).
 
 **Not implemented yet**: `continue_sampling_auto` (an automatic continuation of a finished Auto
 run) does not exist; `conf`'s lineage fields (`stage_index_offset`, `no_stages_lineage`,

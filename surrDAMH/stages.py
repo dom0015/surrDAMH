@@ -30,8 +30,11 @@ import surrDAMH.proposals as _proposals  # private alias: surrDAMH.stages must o
 #: ``describe()`` marks them with a trailing ``*``.
 POSTERIOR_AFFECTING_FIELDS: frozenset[str] = frozenset({
     "algorithm", "proposal", "subchain_length", "surrogate_model_updates",
-    "use_only_surrogate", "is_excluded", "burn_in",
+    "use_only_surrogate", "is_excluded", "burn_in", "exact_step_probability", "audit_prerejected",
 })
+
+#: Stage fields of the S2 safety components (2026-10-09); only meaningful on a DAMH stage.
+_S2_FIELDS: tuple[str, ...] = ("exact_step_probability", "audit_prerejected")
 
 
 @dataclass
@@ -75,6 +78,25 @@ class Stage:
             stage), but this stage's samples are left out of the posterior by default. Both flags
             only set the default ``include = 0`` of the report's ``selection.json``; every chain
             stays visible in the report. ``burn_in`` and ``is_excluded`` exclude each other. Default: ``False``.
+        exact_step_probability: DAMH only, in ``[0, 1]``: probability that an outer iteration is
+            an EXACT Metropolis-Hastings step instead of the delayed-acceptance step -- the
+            proposal comes from a separate adaptive random walk (started from the carried
+            ``scale`` when there is one, adapted on its own exact acceptances, never carried
+            over) and is accepted with the exact likelihood; the surrogate only pre-scores it.
+            The chain then follows the mixture of two kernels that both keep the exact posterior
+            invariant, so it is exact for any surrogate, and it can move into regions the
+            surrogate wrongly rules out (note 22's "blind spot"), also in a frozen stage. Cost:
+            one exact evaluation per exact step (they count towards ``max_evaluations``). The
+            stage proposal is not adapted on exact steps. Default: ``0.0`` (off).
+        audit_prerejected: DAMH only, in ``[0, 1]``: probability that a proposal the surrogate
+            pre-rejected is evaluated with the exact model anyway. The decision is not revisited
+            (the chain's law is unchanged); the evaluation is written to ``raw_data`` as an
+            ``audited`` row and sent to the collector as a training snapshot with multiplicity 0,
+            and audits where the exact log-likelihood exceeds the surrogate's by more than
+            ``AUDIT_HIDDEN_NATS`` (5 nats) are counted as ``audit_hidden`` in ``notes``. Cost: one
+            exact evaluation per audit (counted towards ``max_evaluations``). On a frozen stage
+            (``surrogate_model_updates=False``) the audit only measures: nothing retrains on it.
+            Default: ``0.0`` (off).
         name: set by the library (``alg0000_MH``, ...); the stage's output-directory name. Default: ``None``.
 
     If no stopping rule is given, ``max_evaluations=10`` is used with a printed note.
@@ -100,6 +122,8 @@ class Stage:
     send_snapshots_to_collector: bool = True
     is_excluded: bool = False
     burn_in: bool = False
+    exact_step_probability: float = 0.0
+    audit_prerejected: float = 0.0
     name: str | None = None
 
     # ------------------------------------------------------------------ derived properties
@@ -131,6 +155,26 @@ class Stage:
         if self.use_only_surrogate:
             self.send_snapshots_to_collector = False
         self._resolve_surrogate_model_updates()
+        self._validate_safety_fields()
+
+    def _validate_safety_fields(self) -> None:
+        """
+        Check the S2 fields (``exact_step_probability``, ``audit_prerejected``): a real number in
+        ``[0, 1]`` (``ValueError`` otherwise). On an MH stage a non-zero value is reset to 0 with a
+        printed warning (same pattern as ``surrogate_model_updates``): every MH step is exact
+        already and there is nothing pre-rejected to audit.
+        """
+        for name in _S2_FIELDS:
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, (int, float, np.integer, np.floating)) \
+                    or not 0.0 <= float(value) <= 1.0:
+                raise ValueError(f"Stage.{name} must be a number in [0, 1], got {value!r}")
+            value = float(value)
+            if self.algorithm == "MH" and value != 0.0:
+                print(f"Warning: {name} is only used by a DAMH stage (an MH stage evaluates every proposal "
+                      f"exactly), setting {name}=0")
+                value = 0.0
+            setattr(self, name, value)
 
     def _resolve_surrogate_model_updates(self) -> None:
         """
@@ -184,6 +228,13 @@ class Stage:
                              "the proposal's gradient surrogate once per iteration (WS7)")
             else:
                 notes.append("MH stage: subchain_length/surrogate_model_updates are not used")
+        if self.algorithm == "DAMH" and self.audit_prerejected > 0.0:
+            if not self.surrogate_model_updates:
+                notes.append("audit_prerejected on a frozen stage (surrogate_model_updates=False): the audit only "
+                             "measures the surrogate here, nothing retrains on the audited points")
+            if not self.send_snapshots_to_collector:
+                notes.append("audit_prerejected with send_snapshots_to_collector=False: audited points are written "
+                             "to raw_data but not sent to the collector")
         spec = self.proposal
         step_field = _proposals.STEP_FIELD.get(type(spec))
         if step_field is not None and getattr(spec, step_field) is None:

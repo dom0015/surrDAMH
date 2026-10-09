@@ -55,6 +55,50 @@ def distribution_dimension(dist) -> "int | None":
     return None
 
 
+def internal_centre_and_scale(prior, no_parameters: int) -> "tuple[npt.NDArray, npt.NDArray]":
+    """
+    Per-coordinate centre ``m`` and scale ``s`` of the INTERNAL prior, used by
+    ``surrDAMH.Problem(prior_bound=R)`` for the box ``|u_i - m_i| <= R * s_i`` (S0, 2026-10-09).
+
+    ``StandardizedNormal`` and ``PriorIndependentComponents``: ``m = 0``, ``s = 1`` (standard
+    normal internal space). ``GaussianMixture``: the mixture's overall mean and standard
+    deviation per coordinate (from ``means``, ``covs``, ``weights``). ``FromScipy``: the wrapped
+    object's ``mean`` and ``sqrt(diag(cov))`` when it has both as arrays (a frozen
+    ``scipy.stats.multivariate_normal``).
+
+    Raises:
+        ValueError: any other prior, or a ``FromScipy`` without array ``mean``/``cov``; the
+            message names ``prior_bound=None`` (no bound) as the way out.
+    """
+    from surrDAMH.distributions.gaussian_mixture import GaussianMixture
+    from surrDAMH.distributions.independent_components import PriorIndependentComponents
+    from surrDAMH.distributions.normal import StandardizedNormal
+    d = int(no_parameters)
+    if isinstance(prior, (StandardizedNormal, PriorIndependentComponents)):
+        return np.zeros(d), np.ones(d)
+    if isinstance(prior, GaussianMixture):
+        weights = np.asarray(prior.weights, dtype=float)
+        means = np.asarray(prior.means, dtype=float)
+        variances = np.array([np.diag(np.asarray(c, dtype=float)) for c in prior.covs])
+        centre = weights @ means
+        second_moment = weights @ (variances + means ** 2)
+        return centre, np.sqrt(np.maximum(second_moment - centre ** 2, 0.0))
+    if isinstance(prior, FromScipy):
+        mean = getattr(prior.scipy_rv, "mean", None)
+        cov = getattr(prior.scipy_rv, "cov", None)
+        if not callable(mean) and not callable(cov) and mean is not None and cov is not None:
+            mean = np.broadcast_to(np.asarray(mean, dtype=float).ravel(), (d,)).copy()
+            cov = np.asarray(cov, dtype=float)
+            variances = np.diag(cov) if cov.ndim == 2 else np.broadcast_to(cov.ravel(), (d,))
+            return mean, np.sqrt(np.asarray(variances, dtype=float))
+        raise ValueError(f"prior_bound needs the centre and scale of the prior, but the wrapped scipy object "
+                         f"{type(prior.scipy_rv).__name__} has no array 'mean' and 'cov' (only a frozen "
+                         "multivariate_normal has them); pass prior_bound=None to sample the unbounded prior")
+    raise ValueError(f"prior_bound needs the per-coordinate centre and scale of the prior, which are not known for "
+                     f"{type(prior).__name__} (known: Normal, PriorIndependentComponents, GaussianMixture, "
+                     "FromScipy(multivariate_normal)); pass prior_bound=None to sample the unbounded prior")
+
+
 def _as_dimension(value) -> "int | None":
     """``value`` as a positive int, or ``None`` if it is not an integer (bools excluded)."""
     if isinstance(value, (bool, np.bool_)) or value is None:

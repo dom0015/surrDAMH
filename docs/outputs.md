@@ -17,8 +17,9 @@ sampling_output/
   raw_data/<stage.name>/rank%04d.csv       state_type, par_0..par_{p-1}, solver_tag,
                                            obs_0..obs_{m-1}, obs_approx_0..obs_approx_{m-1},
                                            log_likelihood, log_prior                                    (header row; only if save_snapshots_to_file)
-  notes/<stage.name>/rank%04d.csv          accepted, rejected, pre-rejected, sum, seed                  (header row)
-  subchain_stats/<stage.name>/rank%04d.csv iteration, subchain_max_length, subchain_accepted, subchain_acceptance_rate, correction_log_ratio, outer_proposed_changed, outer_accepted, rank_world   (header row; DAMH stages only)
+  notes/<stage.name>/rank%04d.csv          accepted, rejected, pre-rejected, sum, seed, out_of_bounds,
+                                           exact_steps, exact_accepted, audited, audit_hidden            (header row)
+  subchain_stats/<stage.name>/rank%04d.csv iteration, subchain_max_length, subchain_accepted, subchain_acceptance_rate, correction_log_ratio, outer_proposed_changed, outer_accepted, rank_world, kernel   (header row; DAMH stages only)
   adaptive_stats/<stage.name>/rank%04d.csv  one row per adaptation period                                (header row; adaptive=True stages only)
   carry_over/<stage.name>.npz              carry_over__*, summary__*                                    (one file per adaptive stage, no rank suffix; written once by sampler rank 0 / run_sampling_local)
   last_sample/<stage.name>/rank%04d.npz    parameters (float64), no_parameters                          (one file per chain, written after each stage)
@@ -83,18 +84,27 @@ stage type, NaN where a quantity does not exist.
 
 | column | meaning |
 |---|---|
-| `state_type` | `accepted`, `rejected` or `prerejected` |
+| `state_type` | `accepted`, `rejected`, `prerejected` or `audited` (S2, 2026-10-09: a pre-rejected proposal evaluated with the exact model by `Stage.audit_prerejected`; it follows the `prerejected` row of its iteration, which repeats the chain state, while the `audited` row holds the rejected proposal itself; never a chain state) |
 | `par_0 .. par_{p-1}` | the proposed parameters (physical space if `transform_before_saving=True`) |
-| `solver_tag` | the solver's status for this proposal (`< 0` = solver failure, observations invalid); `-2` = the proposal itself was not finite, so the solver was **never called** for it (2026-09-20, see `docs/writing_a_solver.md`); always `0` for `prerejected` |
-| `obs_0 .. obs_{m-1}` | **exact** model observations `G(x)`. **All NaN for `prerejected` rows** — the exact model was never called for them. |
+| `solver_tag` | the solver's status for this proposal (`< 0` = solver failure, observations invalid); `-2` = the proposal itself was not finite, so the solver was **never called** for it (2026-09-20, see `docs/writing_a_solver.md`); `-3` = the proposal lies outside the prior bound (`Problem(prior_bound=...)`, 2026-10-09), so **nothing** (solver or surrogate) was evaluated: an MH `rejected` row, or a DAMH sub-chain step logged as `prerejected`, with NaN observation blocks and `log_likelihood = -inf`; otherwise always `0` for `prerejected` |
+| `obs_0 .. obs_{m-1}` | **exact** model observations `G(x)`. **All NaN for `prerejected` rows** — the exact model was never called for them; filled for `audited` rows. |
 | `obs_approx_0 .. obs_approx_{m-1}` | **surrogate** observations `G~(x)`. All NaN where no surrogate value exists (any plain MH stage); filled for every DAMH row. |
-| `log_likelihood` | the log-likelihood **the acceptance decision for this row used**: the exact one for `accepted`/`rejected` rows, the **surrogate** one for `prerejected` rows (the sub-chain never left the current state, so only the surrogate was ever evaluated). |
+| `log_likelihood` | the log-likelihood **the acceptance decision for this row used**: the exact one for `accepted`/`rejected` rows, the **surrogate** one for `prerejected` rows (the sub-chain never left the current state, so only the surrogate was ever evaluated); for an `audited` row the **exact** one (no decision used it; the surrogate value follows from `obs_approx_*`). |
 | `log_prior` | `log prior(x)` (model-independent, so the same in either case) |
 
 The single `log_likelihood` column is deliberate: a row is scored either exactly or by the
 surrogate, never both, and the non-NaN observation block says which. Consumers that need
 exact-model quantities (`find_best_fits`, `hist_observations`,
-`Samples.load_snapshots`) therefore **exclude `prerejected` rows**.
+`Samples.load_snapshots`) therefore **exclude `prerejected` rows**; they keep `audited` rows, which
+are exactly evaluated. The histogram of accepted observations (`hist_G`) drops `audited` rows, which
+are not chain states.
+
+**S2 rows (2026-10-09).** With `Stage.exact_step_probability > 0` an exact-step iteration writes an
+ordinary `accepted`/`rejected` row with BOTH observation blocks filled (the proposal is scored with
+the installed surrogate before the exact model), so `log L(y) − log L~(y)` can be read off at points
+chosen independently of the surrogate; it is identified by `kernel = 1` in `subchain_stats`, which
+is 1:1 with the non-`audited` rows of `raw_data` per rank (plus out-of-box sub-chain rows, tag -3).
+With `Stage.audit_prerejected > 0` an `audited` row follows some `prerejected` rows (see `notes`).
 
 This replaces v1's ambiguity, where `prerejected` rows smuggled *surrogate* values into the
 same observation block as the exact ones with no marker (finding 3.5 / P10).
@@ -107,13 +117,28 @@ provider is the surrogate.
 ### `notes/<stage>/rank%04d.csv`
 
 One row per chain, written once at stage end: `accepted, rejected, pre-rejected, sum,
-seed`.
+seed, out_of_bounds`. `out_of_bounds` (appended 2026-10-09) counts proposals rejected unevaluated
+because they lie outside the prior bound: outer MH proposals (also counted in `rejected`) and
+DAMH sub-chain steps (not counted in the outer columns; each also has a `raw_data` row with tag
+`-3`). S2 (2026-10-09) appends `exact_steps, exact_accepted, audited, audit_hidden` (0 on an MH
+stage and on a DAMH stage with both S2 fields at 0): exact steps of the mixture kernel (all /
+accepted; their outcomes are also counted in `accepted`/`rejected`), audited pre-rejected proposals
+(exact evaluations NOT counted in the outer columns; `max_evaluations` stops on `accepted + rejected
++ audited`), and the **audit statistic** `audit_hidden` = the audits with `log L(y) − log L~(y) >
+AUDIT_HIDDEN_NATS = 5` nats — points where the surrogate made a region of high exact posterior look
+improbable (note 22's P6 statistic; recomputable from the `audited` rows of `raw_data`). Readers
+select the columns by name, so files without them (older runs) still load; the post-processing
+summary (and the HTML summary table) sums every column except `seed`, and the cost ratio of CpUS
+counts `audited` as exact evaluations.
 
 ### `subchain_stats/<stage>/rank%04d.csv` (DAMH stages only)
 
 One row per outer DAMH iteration: `iteration, subchain_max_length, subchain_accepted,
 subchain_acceptance_rate, correction_log_ratio, outer_proposed_changed, outer_accepted,
-rank_world`. (This CSV column is still literally named `subchain_max_length` in
+rank_world, kernel`. `kernel` (S2, 2026-10-09, appended last, present on every DAMH stage) is `0` for a
+delayed-acceptance iteration and `1` for an exact step (`Stage.exact_step_probability`), whose row has
+`subchain_accepted = 0`, `subchain_acceptance_rate = NaN`, `correction_log_ratio = 0`,
+`outer_proposed_changed = 1` and `outer_accepted` the exact decision. (This CSV column is still literally named `subchain_max_length` in
 `surrDAMH/modules/algorithms.py`, unlike the `Stage` field itself, which was renamed to
 `subchain_length` — apparent oversight in the library, not fixed here.)
 
@@ -178,7 +203,10 @@ the full `configuration`/`stages`/`prior`/`likelihood` summaries (each stage ent
 `Stage` dataclass field by name, including `is_excluded` and `burn_in` — see `docs/stages.md` and
 the selection mask below), `surrogate`
 (updater/evaluator class + scalar hyperparameters), `solver`, `seeds` (`modules.seeds.SEED_FORMULA`:
-`seed0 = 10*(no_stages*rank+i) + 1_000_000*generation` and every per-rank/per-stage seed, plus
+`seed0 = 10*(no_stages*rank+i) + 1_000_000*generation` and every per-rank/per-stage seed —
+`proposal_seed = seed0+1`, `algorithm_seed = seed0+2`, and since S2 (2026-10-09) `exact_step_seed =
+seed0+4` (exact-step choice and audit draws) and `exact_proposal_seed = seed0+5` (the exact step's
+random walk), listed for every stage though drawn from only by a DAMH stage that uses them — plus
 whether `initial_sample_type` makes the run reproducible — `generation` is 0 and `no_stages` this
 run's own stage count for a plain run, see "`lineage`" below for a continuation), `mpi` layout,
 `environment` (thread-count env vars), `unverified_options` (e.g.
@@ -236,6 +264,7 @@ see `docs/running.md#automatic-mode-2026-10-08`); absent otherwise. Also exposed
 | `chunks` | number of DAMH-SMU chunks after the warm-up (0 for the single-MH-stage layout) |
 | `stage_names` | the resolved stage directory names, in order (same as `[s.name for s in run.stages]`) |
 | `proposal` | `repr()` of the chunks' proposal spec (`RandomWalk(...)`/`Hamiltonian(...)`), or of the single MH stage's, or `null` |
+| `exact_step_probability`, `audit_prerejected` | the S2 settings of the DAMH chunks (`AUTO_EXACT_STEP_PROBABILITY`, `AUTO_AUDIT_PREREJECTED`, 0.05 each), `null` for the single-MH-stage layout |
 | `surrogate` | `"none"`, or `{"class", "default", "hparams"}` for the updater actually used (`default=True` for the built-in `NeuralNetworkUpdater`) |
 | `conf_settings` | the `Configuration` fields Auto set (see `docs/configuration.md`) |
 | `notes` | human-readable reasons for every decision that is not the plain rule (e.g. "use_collector=False: ...", "min_snapshots_initial=7 set by the user is kept") |

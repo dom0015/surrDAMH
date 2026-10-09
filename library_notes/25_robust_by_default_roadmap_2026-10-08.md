@@ -75,6 +75,7 @@ logic gap, 15 minutes to read) and the seed last mile (reproducibility of the au
 
 | id | component | default | evidence | size |
 |---|---|---|---|---|
+| **S0** | **Bounded prior**: internal-space box `|u_i| ≤ R`, `R = 8` default (`Configuration` or `Problem` field), proposals outside rejected in the sampler (sub-chain and exact step alike), `R` in the manifest; the truncated prior is the target from then on | on | D4 (2026-10-09); note 18 A1; the removed mass is negligible (< 1e-13 for d ≤ 100) | ~60 |
 | **S1** | **Global Gaussian error model** in the surrogate likelihood: `N(y; G̃(u) + ε̄, Σ_noise + Σ_surr)`, `ε̄`/`Σ_surr` from the residuals of the *current* surrogate on all exact snapshots (posterior-weighted by multiplicity), shrunk towards the held-out `TestData` residuals when snapshots are few; full `Σ_surr` with Ledoit–Wolf shrinkage; the same object in the sub-chain, the Hamiltonian potential and the DA correction | on; `error_model=False` to disable | 22 §4 P3; notebook `damh_surrogate_from_data_2d.ipynb` (global model); tinyDA/Cui et al. 2018 (same model, accepted-state recursion); Lykkegaard et al. 2021 on prior-vs-posterior residuals | ~350 (likelihood object, collector statistics, evaluator message +2 fields in all roles, tests, report) |
 | **S2** | **Exact safety kernel + audit** in every DAMH stage: kernel mixture `(1−p)·DAMH + p·MH(RandomWalk())` (24), `p = 0.05`; audit of pre-rejected proposals with `p_audit = 0.05` (22 P1); surrogate scored at every exact-step proposal (audit statistic for free) | on, fixed weights | 24 §5–§7 (cost `p·r/(1−r)`: +2 % Hamiltonian scheme, +19 % long RW sub-chains at `p = 0.1`; A4 dropped from the Doeblin bound); 20 §(d) | ~300 for the minimal P2+P1 facade (24 §6.6), ~850 for the general `kernels.Mixture` (24 §4) |
 | **S3** | **Diminishing adaptation of the network**: sampler-side Polyak averaging of received weights per stage (20 N1); decision D4 on prior truncation | on | 18 §6, 20 | ~150 |
@@ -166,7 +167,7 @@ Worked example, `d = 20`, four chains, `budget = 80 000` → `B = 20 000`: warm-
 
 | phase | content | size |
 |---|---|---|
-| 1 | S6, S4, S7, S8, the stagnation flag of S5; decision D4 | ~400 |
+| 1 | S0 (bounded prior), S6, S4, S7, S8, the stagnation flag of S5 | ~460 |
 | 2 | S1, S2 (minimal facade or general mixture per D2), S3, rest of S5, `Auto` with the robust mode | ~1300–1900 |
 | 3 | fast mode: Hamiltonian defaults, mass (robust estimation, note 26 §10)/`T`, self-demotion; tier 2: proposal mixture (23), generalised pCN opt-in (21 §8) | ~600 |
 
@@ -182,7 +183,7 @@ diagnostics, hardening, tests, docs (S4, S5, S7, S8, `Auto` plumbing) to sonnet;
 * **D2** S2 as the minimal P2+P1 facade (`Stage.exact_step_probability`, `audit_prerejected`) first, or the
   general `kernels.Mixture` (24 §3) straight away?
 * **D3** S2 default weights 0.05/0.05 as placeholders until §6 decides.
-* **D4** Prior truncation to a compact set (formal proof closes) vs containment on ℝ^d (assumed) — 18 §5.3.
+* **D4 — DECIDED 2026-10-09 (author): bounded prior.** The internal-space prior is truncated to the box `|u_i| ≤ R` (default `R = 8`; proposals outside are rejected, a valid MH step for the truncated target; removed prior mass < 1e-13 for d ≤ 100; `R` recorded in the manifest). The compact-state-space route of note 18 (uniform minorisation, simultaneous uniform ergodicity) is therefore the proof route for S2/S3; the drift-condition route is not pursued. Implemented as component **S0** (below).
 * **D5** `Auto` warm-up rule of §5 item 1.
 * **D6** Backlog items to clear now although outside the goal: write-only flags, seed last mile.
 * **D7** Hamiltonian mass estimation (fast mode): decisions MM1–MM3 of note 26 §10.8 — within-chain vs total

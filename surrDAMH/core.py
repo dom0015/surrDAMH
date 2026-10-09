@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+import copy
 import os
 import sys
 import time
@@ -18,7 +19,7 @@ import surrDAMH.process_SAMPLER
 import surrDAMH.process_SOLVER
 from surrDAMH.configuration import Configuration
 from surrDAMH.distributions.normal import standardize_prior
-from surrDAMH.distributions.parent import Distribution, distribution_dimension
+from surrDAMH.distributions.parent import Distribution, distribution_dimension, internal_centre_and_scale
 from surrDAMH.modules.communication import (ABORT_GRACE_SECONDS,
                                             check_configuration_consistency,
                                             check_tag_upper_bound)
@@ -266,10 +267,22 @@ class Problem:
     broadcast to the size the solver or the explicit argument gives. ``describe()`` says where
     each size came from. ``Configuration.no_parameters``/``no_observations`` may be left out;
     if given they must agree.
+
+    Bounded prior (``prior_bound``, default 8.0; 2026-10-09). The chain samples the prior
+    TRUNCATED to the box ``B = {u : |u_i - m_i| <= R s_i}`` in the prior's internal space
+    (``m``, ``s`` = per-coordinate centre and scale of the internal prior: 0 and 1 for every
+    standard-normal internal prior), i.e. the sampled posterior is proportional to
+    ``1_B(u) p(u) L(u)``. A proposal outside ``B`` is rejected before anything is evaluated
+    (solver tag -3, ``counter_out_of_bounds``); ``prior.logpdf`` stays the untruncated density,
+    because the truncation's normalising constant cancels in every acceptance ratio. For a
+    standard-normal internal prior and ``R = 8`` the removed prior mass is about
+    ``d * 1.24e-15`` (1.2e-13 at ``d = 100``). The bounded target is what the ergodicity arguments of the samplers rest on;
+    ``prior_bound=None`` samples the unbounded prior as before, with no such guarantee.
     """
 
     def __init__(self, prior: Distribution, likelihood: Distribution, solver: Solver | SolverSpec,
-                 no_parameters: int | None = None, no_observations: int | None = None) -> None:
+                 no_parameters: int | None = None, no_observations: int | None = None,
+                 prior_bound: float | None = 8.0) -> None:
         """
         Args:
             prior: prior of the parameters, an object from ``surrDAMH.distributions``. The
@@ -292,9 +305,16 @@ class Problem:
                 sampler process otherwise).
             no_parameters: explicit number of parameters (optional, see the class docstring).
             no_observations: explicit number of observations (optional).
+            prior_bound: half-width ``R > 0`` of the box the prior is truncated to, in units of
+                the internal prior's per-coordinate scale (see the class docstring); stored as
+                ``prior_bound`` with ``prior_box = (lower, upper)`` (internal space). ``None``:
+                unbounded, no ergodicity guarantee. Every chain's initial state must lie in
+                the box (``RuntimeError`` at start-up otherwise).
 
         Raises:
-            ValueError: no forward model; inconsistent sizes; a size no source supplies.
+            ValueError: no forward model; inconsistent sizes; a size no source supplies;
+                ``prior_bound`` not a positive finite number or ``None``; a prior whose centre
+                and scale are unknown (pass ``prior_bound=None``).
         """
         if solver is None:
             raise ValueError("give the forward model as solver=<a surrDAMH.Solver instance> or solver=SolverSpec(...)")
@@ -329,8 +349,28 @@ class Problem:
         self.prior_physical = prior
         # every prior is sampled in the standard-normal internal space (2026-09-22): a Normal is
         # wrapped in StandardizedNormal, other priors are internal-space by design already
-        self.prior = standardize_prior(prior)
+        internal_prior = standardize_prior(prior)
+        if internal_prior is prior:
+            # internal_box is set on it below: never on the user's own object, which another
+            # Problem (with another bound) may share
+            internal_prior = copy.copy(prior)
+        self.prior = internal_prior
         self.likelihood = likelihood
+
+        # bounded prior (S0, 2026-10-09): the box reaches the algorithms as prior.internal_box
+        if prior_bound is not None:
+            if isinstance(prior_bound, (bool, np.bool_)) or not isinstance(prior_bound, (int, float, np.number)) \
+                    or not np.isfinite(prior_bound) or prior_bound <= 0:
+                raise ValueError(f"prior_bound must be a positive finite number (or None for an unbounded prior), "
+                                 f"got {prior_bound!r}")
+            prior_bound = float(prior_bound)
+            centre, scale = internal_centre_and_scale(self.prior, self.no_parameters)
+            self.prior_box: tuple[npt.NDArray, npt.NDArray] | None = (centre - prior_bound * scale,
+                                                                      centre + prior_bound * scale)
+        else:
+            self.prior_box = None
+        self.prior_bound: float | None = prior_bound
+        self.prior.internal_box = self.prior_box
 
     def _resolve(self, name: str, explicit: int | None, dist: Any, dist_label: str, fixes: str) -> tuple[int, str]:
         value, source = _resolve_size(name, explicit, self.solver_instance, dist, dist_label)
@@ -351,10 +391,15 @@ class Problem:
             solver = f"SolverSpec({self.solver_spec.solver_class_name})"
         else:
             solver = f"solver instance {type(self.solver_instance).__name__}"
+        if self.prior_bound is None:
+            bound = "prior unbounded (prior_bound=None)"
+        else:
+            bound = (f"prior truncated to the box centre +- {self.prior_bound:g} x scale in the internal space "
+                     f"(prior_bound={self.prior_bound:g})")
         return (f"Problem: no_parameters={self.no_parameters} (from {self.no_parameters_source}), "
                 f"no_observations={self.no_observations} (from {self.no_observations_source}); "
                 f"prior {type(self.prior_physical).__name__}, likelihood {type(self.likelihood).__name__}, "
-                f"{solver}.")
+                f"{solver}; {bound}.")
 
     def _prepare_conf(self, conf: Configuration) -> None:
         conf.resolve_problem_sizes(self.no_parameters, self.no_observations)
@@ -747,8 +792,11 @@ class Problem:
                                        _auto=plan.manifest_entry())
 
     def _manifest_entry(self) -> dict[str, Any]:
+        box = None if self.prior_box is None else {"lower": self.prior_box[0].tolist(),
+                                                    "upper": self.prior_box[1].tolist()}
         return {"no_parameters": self.no_parameters, "no_parameters_source": self.no_parameters_source,
-                "no_observations": self.no_observations, "no_observations_source": self.no_observations_source}
+                "no_observations": self.no_observations, "no_observations_source": self.no_observations_source,
+                "prior_bound": self.prior_bound, "prior_box": box}
 
 
 class SamplingRun:
@@ -900,7 +948,8 @@ class SamplingRun:
         Raises:
             ValueError: unknown ``chains``; ``conf`` sets the initial samples itself; the same
                 ``output_dir`` as a run of the lineage; ``problem`` sizes differ from this run;
-                surrogate training data without a checkpoint.
+                without ``problem=``, this run's ``problem.prior_bound`` differs from the bound the
+                previous run recorded; surrogate training data without a checkpoint.
             FileNotFoundError: no run manifest in this run's directory; ``chains="continue"``
                 and no ``last_sample/``.
         """
@@ -979,6 +1028,16 @@ class SamplingRun:
                              f"{target.no_observations}, but the previous run {self.output_dir!r} sampled "
                              f"no_parameters={previous_sizes[0]}, no_observations={previous_sizes[1]}; "
                              "a continuation needs the same sizes")
+        # bounded prior (S0): the same Problem must mean the same truncated target; a manifest
+        # written before S0 records no bound and is not checked
+        recorded_problem = manifest.get("problem") or {}
+        if same_problem and "prior_bound" in recorded_problem:
+            previous_bound = recorded_problem["prior_bound"]
+            if previous_bound != target.prior_bound:
+                raise ValueError(f"the problem has prior_bound={target.prior_bound!r}, but the previous run "
+                                 f"{self.output_dir!r} sampled with prior_bound={previous_bound!r}; a continuation "
+                                 "samples the same target -- pass problem=<a Problem with the bound you want> to "
+                                 "continue_sampling explicitly to change it (recorded as same_problem=False)")
 
         initial_sample_is_carried_over = False
         if chains == "continue":

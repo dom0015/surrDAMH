@@ -30,7 +30,8 @@ from typing import Any
 
 import numpy as np
 
-from surrDAMH.modules.seeds import (ALGORITHM_SEED_OFFSET, PROPOSAL_SEED_OFFSET,
+from surrDAMH.modules.seeds import (ALGORITHM_SEED_OFFSET, EXACT_PROPOSAL_SEED_OFFSET,
+                                    EXACT_STEP_SEED_OFFSET, PROPOSAL_SEED_OFFSET,
                                     SEED_FORMULA, generation_seed_offset, initial_sample_seed,
                                     seed_no_stages, stage_seed0)
 
@@ -247,6 +248,10 @@ def _seeds_dict(conf: Any, stages: list) -> dict[str, Any]:
                 "seed0": seed0,
                 "proposal_seed": seed0 + PROPOSAL_SEED_OFFSET,
                 "algorithm_seed": seed0 + ALGORITHM_SEED_OFFSET,
+                # S2 (2026-10-09): drawn from only by a DAMH stage with exact_step_probability > 0
+                # or audit_prerejected > 0; listed for every stage so the formula is visible
+                "exact_step_seed": seed0 + EXACT_STEP_SEED_OFFSET,
+                "exact_proposal_seed": seed0 + EXACT_PROPOSAL_SEED_OFFSET,
                 # per-CHAIN, not per-stage (the initial sample is drawn once, before the
                 # stage loop), hence the same value in every stage entry of a rank:
                 "initial_sample_seed": initial_sample_seed(no_stages_seed, rank) + generation_offset,
