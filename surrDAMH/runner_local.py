@@ -43,7 +43,7 @@ from surrDAMH.modules import lhs_normal as lhs
 from surrDAMH.modules.algorithm_interfaces_local import (LocalEvaluatorProvider,
                                                          LocalSolverAdapter,
                                                          LocalSurrogateManager)
-from surrDAMH.modules.continuation import save_carry_over, save_last_sample
+from surrDAMH.modules.continuation import describe_initial_sample_type, save_carry_over, save_last_sample
 from surrDAMH.modules.manifest import (build_run_manifest, finalize_run_manifest,
                                        write_run_manifest)
 from surrDAMH.modules.proposal_builder import build_proposal
@@ -203,7 +203,8 @@ def run_local(conf: Configuration, prior: Distribution, likelihood: Distribution
     stage_index_offset = int(getattr(conf, "stage_index_offset", 0) or 0)
     no_stages_seed = seed_no_stages(getattr(conf, "no_stages_lineage", None), no_stages)
     initial_sample = _get_initial_sample(conf, prior, no_stages_seed)
-    print("Local sampler - initial sample:", initial_sample.parameters, flush=True)
+    print(f"Local sampler started with {describe_initial_sample_type(conf)} initial sample"
+          + (f": {initial_sample.parameters}" if conf.debug else ""), flush=True)
 
     result = SamplingResult()
     # merged carry-over of the adaptive stages so far, exactly as in process_SAMPLER

@@ -14,10 +14,24 @@ def _last_sample_dir(output_dir: str, stage_name: str) -> str:
 def _carry_over_dir(output_dir: str) -> str:
     return os.path.join(output_dir, "sampling_output", "carry_over")
 
+def describe_initial_sample_type(conf) -> str:
+    """Wording of ``conf.initial_sample_type`` for the start-up line of a chain (2026-10-09):
+    ``"an LHS"``, ``"a prior"``, ``"a user-specified"`` or ``"a continued (from <dir>)"``."""
+    kind = getattr(conf, "initial_sample_type", "prior")
+    if kind == "lhs":
+        return "an LHS"
+    if kind == "user_specified":
+        return "a user-specified"
+    if kind == "continued":
+        return f"a continued (from {getattr(conf, 'continued_from_dir', None)!r})"
+    return f"a {kind}"
+
+
 
 def save_last_sample(conf, stage_name: str, rank_world: int, parameters: np.ndarray) -> None:
     directory = ensure_dir(_last_sample_dir(conf.output_dir, stage_name))
-    print(f"Saving last sample for stage {stage_name!r} at rank {rank_world} to {directory!r}", flush=True)
+    if getattr(conf, "debug", False):
+        print(f"Saving last sample for stage {stage_name!r} at rank {rank_world} to {directory!r}", flush=True)
     np.savez(
         os.path.join(directory, f"rank{rank_world:04d}.npz"),
         parameters=np.asarray(parameters, dtype=np.float64),
@@ -43,7 +57,8 @@ def save_carry_over(conf, stage_name: str, carried_stage: dict, summary: dict) -
     """
     directory = ensure_dir(_carry_over_dir(conf.output_dir))
     path = os.path.join(directory, f"{stage_name}.npz")
-    print(f"Saving carry-over for stage {stage_name!r} to {path!r}", flush=True)
+    if getattr(conf, "debug", False):
+        print(f"Saving carry-over for stage {stage_name!r} to {path!r}", flush=True)
     payload = {}
     for key, value in carried_stage.items():
         payload[f"carry_over__{key}"] = np.asarray(value)

@@ -58,7 +58,8 @@ class SamplesBase:
     adaptive_stats: List[pd.DataFrame]  # empty DataFrame for a stage whose proposal did not adapt
     # lineage / selection (2026-10-08, see Samples.__init__)
     stage_sampling_dirs: List[str]      # [stage] -> sampling_output/ of the run that wrote it
-    chain_indices: List[List[int]]      # [stage] -> original chain numbers kept by the selection
+    chain_indices: List[List[int]]      # [stage] -> original chain numbers in this object (all of them;
+                                        # the posterior_view() keeps those with include = 1, 2026-10-09)
     no_chains_original: List[int]       # [stage] -> chains (rank files) before the selection
     lineage_note: str | None
 
@@ -223,11 +224,6 @@ class SamplesBase:
         if stats is None or stats.empty or "rank_world" not in stats.columns:
             return [0]
         return sorted(int(r) for r in stats["rank_world"].unique())
-
-    def _fully_excluded_stages(self, stages: Iterable[int]) -> List[int]:
-        """Stages (of ``stages``) that have chains but whose every chain the selection removed."""
-        return [stage for stage in stages
-                if self.no_chains_original[stage] > 0 and not self.chain_indices[stage]]
 
     def _get_stage_names(self, stages_to_disp: List[int] | None = None):
         if stages_to_disp is None:

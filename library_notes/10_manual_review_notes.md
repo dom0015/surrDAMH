@@ -1312,3 +1312,14 @@ complete; robust pre-rejects ~70 %, fast ~20 %; posterior means differ at the Mo
    continuation (lineage), auto robust, auto fast × {Solver instance (-n 3), SolverSpec + pool (-n 4)} all complete with
    reports; every posterior mean within 0.05 posterior sd of the exact one; instance and pool chains byte-equal for
    the plain run. In pool mode Auto has no held-out set (noted in `run.auto["notes"]`).
+8. **`is_excluded` semantics and the Auto warm-up (2026-10-09, author question):** `is_excluded` makes the NEXT stage restart
+   from the state the excluded stage started at (throwaway/exploration semantics). Auto's warm-up used it, so chunk 1
+   restarted at the LHS point (verified on the 2026-10-09 runs). Fix per author decision: new `Stage.burn_in` (chain
+   continues; samples not in the posterior by default), used by Auto and the Hamiltonian example; `is_excluded` unchanged.
+9. **Report redesign (author decision 2026-10-09):** every chain of every stage is loaded and shown; the selection mask
+   decides only the posterior set (`Samples.posterior_view()` feeds the pooled sections); badges "in posterior / not in
+   posterior (burn-in stage | excluded stage | excluded by user)"; user-note box (top of the overall section and in
+   "Selection and re-run") with the exact file path and re-run command; `summary.csv` lists all stages + column
+   `chains_in_posterior`; `write_report` now returns the full `Samples` (masked subset via `.posterior_view()`).
+   Numbers unchanged for runs without exclusions (regression tests + manual check). `summary.csv` autocorr/CpUS are over
+   all chains (the HTML 4.4/4.8 use the posterior). Removed the `print("Stages:", ...)` line from `calculate_CpUS`.

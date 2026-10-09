@@ -63,12 +63,19 @@ after subtracting the held-out set (below) and dividing by `C`:
   (`conf.use_collector=False`, so no surrogate can be trained): **one** adaptive-random-walk MH
   stage runs with the whole budget, with a note explaining why — a surrogate trained on fewer
   points than that does not pay.
-- Otherwise: an **excluded** MH warm-up stage (adaptive random walk) of
-  `n0 = clip(20·d, 0.05·B, 0.25·B)` evaluations per chain, burn-in only (dropped from the default
-  report, see `docs/outputs.md`'s selection mask), followed by **4 DAMH-SMU chunks**
-  (`subchain_length=1`, the mode's proposal) sharing the remaining `B - n0` evaluations as evenly
-  as possible (the remainder goes to the last chunk). There is **no frozen stage** — every chunk
-  keeps retraining the surrogate.
+- Otherwise: a `burn_in=True` MH warm-up stage (adaptive random walk) of
+  `n0 = clip(20·d, 0.05·B, 0.25·B)` evaluations per chain — the chain **continues** into chunk 1
+  from the warm-up's last state, only its samples are left out of the posterior by default
+  (`docs/outputs.md`'s selection mask) — followed by **4 DAMH-SMU chunks** (`subchain_length=1`,
+  the mode's proposal) sharing the remaining `B - n0` evaluations as evenly as possible (the
+  remainder goes to the last chunk). There is **no frozen stage** — every chunk keeps retraining
+  the surrogate.
+
+  **Fixed 2026-10-09**: before this date the warm-up used `is_excluded=True` instead, which made
+  chunk 1 **restart** from the warm-up's starting (LHS/prior) point rather than continue from its
+  last state — i.e. the warm-up's evaluations were wasted, the chain effectively began fresh. This
+  was a defect, not an intended design choice; `Stage.burn_in` (`docs/stages.md`) was added so the
+  warm-up could continue the chain while still defaulting out of the posterior.
 - With `time_limit=` instead of `budget=`, the same shares apply to wall time: the warm-up gets
   `0.15 * time_limit` and the 4 chunks `0.85 * time_limit / 4` each (`Stage.time_limit=`, no
   evaluation cap); a note says the `20·d` warm-up floor cannot be enforced against a clock, so a
@@ -316,7 +323,12 @@ no manifest (`FileNotFoundError`); `chains="continue"` with no `last_sample/` in
 here (load training data into an updater yourself with `updater.load_training_data(path)` first).
 
 See `docs/outputs.md` for the manifest's `"lineage"` entry, `read_lineage`, and the report's
-selection mask (`post_processing_output/selection.json`).
+selection mask (`post_processing_output/selection.json`). Since 2026-10-09 every chain of every
+stage is always shown in `report_extended.html` (with an "in posterior"/"not in posterior" badge);
+to change which chains are pooled into the posterior sections instead, edit `posterior` (and,
+rarely, `drop_first_rows`) in `selection.json` and re-run
+`SamplingRun.load(output_dir).write_report()` — see `docs/outputs.md`'s
+"Selection mask" section.
 
 ## Surrogate restart
 

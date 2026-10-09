@@ -46,7 +46,7 @@ not relevant to this goal. Items the sweep flagged as **forgotten** are marked �
 | NN surrogate: no input normalisation, no validation split, early stop on one minibatch, astronomically large finite proposals reach the training set unguarded (06 3.9/3.12, 09 WS6) | S4 |
 | polynomial/RBF with `min_snapshots_to_update=0` stalls at 10⁵ snapshots (19 §4.3/§7(d)) | S4 (size-dependent default) + layout (network is the default surrogate) |
 | `GaussianMixture` distribution: `grad_logpdf=0`, `logpdf=−inf` far from components, `rvs()` shape, no `mean`/`get_covariance` (06 1.11, 10 §3) | S8 (fix or refuse as prior in `Auto`) |
-| Hamiltonian mass default `Σ̂⁻¹` with step re-adaptation at fixed integration time; expose `T` instead of `num_steps` (16 §5 items 4–5, CHANGELOG) | fast mode, phase 3 (§7) |
+| Hamiltonian mass default `Σ̂⁻¹` with step re-adaptation at fixed integration time; expose `T` instead of `num_steps` (16 §5 items 4–5, CHANGELOG). **Robust estimation of the mass worked out in note 26 §10 (2026-10-09)**: identity + low-rank correction, shrinkage towards the prior, within-chain pooling, clipping, fallbacks; open decisions MM1–MM3 there | fast mode, phase 3 (§7) |
 | mixture of proposals (23) | tier 2, M1 |
 | generalised pCN (21 §6 item 3, §8) | tier 2, opt-in; measured 2–2.5× ESS/eval over covariance RW — not a robustness item |
 | DAMH `target_rate` meaning: outer vs second-stage acceptance (06 5.8, 09 §4 item 2) | settled by S6: sub-chain proposals adapt on their own acceptance, the outer rate is reported |
@@ -103,7 +103,10 @@ evidence table of 10 §2).
 | mode-hopping (nearby modes) | pooled covariance across LHS-started chains spans the modes; exact RW component | same mechanisms; the Hamiltonian itself hops poorly |
 
 Phase 3 for the fast mode (not needed for exactness): mass `Σ̂⁻¹` from the carried covariance with step
-re-adaptation at fixed integration time `T` (16 §5 items 4–5), and the self-demotion rule: at a stage
+re-adaptation at fixed integration time `T` (16 §5 items 4–5), **estimated robustly as in note 26 §10**
+(identity + low-rank correction with shrinkage towards the prior, informed directions only, eigenvalues
+clipped to `[1e-4, 1]`, within-chain pooling that excludes stuck chains, diagonal / previous-mass fallbacks;
+a dense inverse sample covariance is *not* the default), and the self-demotion rule: at a stage
 boundary, if the Hamiltonian component's acceptance collapsed, divergences exceeded a threshold or the audit
 statistic shows hidden mass, the next stage runs the robust proposal. A switch at a stage boundary is a new
 kernel and needs no new theory.
@@ -165,7 +168,7 @@ Worked example, `d = 20`, four chains, `budget = 80 000` → `B = 20 000`: warm-
 |---|---|---|
 | 1 | S6, S4, S7, S8, the stagnation flag of S5; decision D4 | ~400 |
 | 2 | S1, S2 (minimal facade or general mixture per D2), S3, rest of S5, `Auto` with the robust mode | ~1300–1900 |
-| 3 | fast mode: Hamiltonian defaults, mass/`T`, self-demotion; tier 2: proposal mixture (23), generalised pCN opt-in (21 §8) | ~600 |
+| 3 | fast mode: Hamiltonian defaults, mass (robust estimation, note 26 §10)/`T`, self-demotion; tier 2: proposal mixture (23), generalised pCN opt-in (21 §8) | ~600 |
 
 Delegation as in CLAUDE.md: algorithm/MPI/theory pieces (S1 message path, S2 kernel, S3, S6) to opus;
 diagnostics, hardening, tests, docs (S4, S5, S7, S8, `Auto` plumbing) to sonnet; every diff reviewed.
@@ -182,3 +185,5 @@ diagnostics, hardening, tests, docs (S4, S5, S7, S8, `Auto` plumbing) to sonnet;
 * **D4** Prior truncation to a compact set (formal proof closes) vs containment on ℝ^d (assumed) — 18 §5.3.
 * **D5** `Auto` warm-up rule of §5 item 1.
 * **D6** Backlog items to clear now although outside the goal: write-only flags, seed last mile.
+* **D7** Hamiltonian mass estimation (fast mode): decisions MM1–MM3 of note 26 §10.8 — within-chain vs total
+  pooling, eigenvalue cap at the prior variance, last-stage vs accumulated samples.

@@ -7,6 +7,8 @@ its conclusions are recorded here), and the check in Appendix A. Code referred t
 `surrDAMH/modules/proposals.py` (`Hamiltonian`, `HamiltonianInfinite`, `_DualAveragingStepSize`),
 `surrDAMH/modules/algorithms.py` (`Algorithm_DAMH._propose_new_sample_using_subchain`),
 `surrDAMH/proposals.py` (`Hamiltonian` spec), `surrDAMH/stages.py` (`Stage.subchain_length`).
+**Addendum 2026-10-09:** §10, robust estimation of the mass matrix (identity plus a low-rank correction,
+prior shrinkage, within-chain pooling, clipping, fallbacks); §1, §3.3, §7, §8, §9 updated to point to it.
 
 ---
 
@@ -19,7 +21,7 @@ its conclusions are recorded here), and the check in Appendix A. Code referred t
 | jitter | a new `L ~ Uniform{1, ..., L_max}`, `L_max = round(T / eps)`, for **every trajectory**, drawn from the proposal's own RNG stream, independent of the state | not implemented | §4 |
 | sub-chain length `K` | **deterministic**, set at each stage boundary from measured costs: `K* = argmax_K (1 - rho^K) / (R + K)`, `R = c_exact / c_traj`, `rho = 0.5`, `1 <= K <= 10`; `K = 1` in robust mode and in the first DAMH chunk; user may pin an integer | `Stage.subchain_length: int = 1`, user-given only | §5 |
 | momentum | fresh `p ~ N(0, M)` at the start of every trajectory (full refresh), also between the `K` trajectories of a sub-chain | implemented (`propose_sample`) | §6 |
-| mass `M` | inverse carried covariance (note 25 phase 3); until then `I` | `I` (`mass=1.0`), not tuned | §3.3 |
+| mass `M` | `M = I + low-rank correction`, the inverse of a regularised posterior covariance estimated at each stage boundary from the outer (exact-posterior) chain states: shrinkage towards the prior `I`, informed eigen-directions only, eigenvalues clipped to `[lambda_floor, 1]`, within-chain pooling, diagonal / previous-`M` fallbacks; frozen per stage. Until implemented: `I` | `I` (`mass=1.0`), not tuned | §10 (and §3.3) |
 
 What is *not* in the plan and why, in one line each: NUTS (variable-cost tree builder, no gain over an
 estimated `T` once `L` is jittered, §3.4); persistent or partially refreshed momentum (valid only with a
@@ -87,7 +89,8 @@ the drawn `L`, so nothing about reversibility or delayed acceptance is touched. 
 
 ### 3.3 Set from the mass matrix (fallback / cross-check)
 
-With `M = Sigma_hat^{-1}` (the inverse carried covariance, note 25 phase 3) every Gaussian direction has unit
+With `M = Sigma_hat^{-1}` (the inverse estimated covariance, note 25 phase 3; how it is estimated robustly is
+§10) every Gaussian direction has unit
 scale and half period `pi`; `T = pi` then needs no estimation and the U-turn diagnostic only corrects for
 non-Gaussian shape. Two remarks: (i) `HamiltonianInfinite` (`integrator="dimension_robust"`) solves the
 prior + kinetic flow as a rotation that assumes the N(0, I) internal prior with the given mass; a general
@@ -227,6 +230,8 @@ examined and rejected:
 4. The U-turn diagnostic never changes the proposal's endpoint; its extra integration is discarded.
 5. The DA correction stays the telescoped sum of accepted surrogate likelihood ratios; kinetic terms stay in
    the "prior part" of `get_log_acceptance_probability` and never enter the correction.
+6. The mass matrix is estimated only from samples of *previous* stages (outer chain states, §10.3) and is
+   symmetric positive definite by construction (eigenvalues clipped to `[lambda_floor, 1]`, §10.1).
 
 ---
 
@@ -238,7 +243,9 @@ examined and rejected:
 | per-trajectory `L` draw from the proposal RNG; manifest fields `T`, `L_max` | `modules/proposals.py`, `modules/manifest.py` | ~30 |
 | U-turn diagnostic on every 10th trajectory, pooled at the stage boundary, `T_next = median`, carried over | `modules/proposals.py` (`adapted_state`/`adapted_summary`), `process_SAMPLER.py` carry-over, `stages.py` | ~120 |
 | `Stage.subchain_length: int | "auto"`, sampler-side timing of exact waits and trajectories, pooling, `K*` rule, print + manifest | `stages.py`, `modules/algorithms.py`, `process_SAMPLER.py`, `modules/manifest.py` | ~150 |
-| total | | ~380 |
+| `Hamiltonian(mass="auto")`: robust mass estimation at the stage boundary (§10: shrinkage, eigen-truncation, clipping, within-chain pooling, fallbacks, dual-averaging restart), manifest fields | `modules/proposals.py`, `process_SAMPLER.py` carry-over, `modules/manifest.py` | ~150 |
+| `HamiltonianInfinite` with a non-identity mass: exact prior + kinetic rotation per eigen-direction of `M` (§10.1) | `modules/proposals.py` (`_apply_prior_kinetic_flow`) | ~60 |
+| total | | ~590 |
 
 Behaviour-change evidence required (CLAUDE.md): with `Hamiltonian(num_steps=L, jitter=False)` and
 `subchain_length=K` the run must stay byte-identical to today; every default change (`T`, jitter, `"auto"`)
@@ -258,6 +265,123 @@ wall-second, three repetitions each:
 3. `K = 1, 3, 6, 10` at `R ≈ 0.06` and `R ≈ 100` against the §5.1 prediction; `rho` estimated from the
    runs to check the 0.5 default.
 4. One non-Gaussian problem (the banana/mixture toy of `toy_examples/`) for the median U-turn estimate.
+5. Mass matrix (§10): `I` vs dense `Sigma_hat^{-1}` vs the §10 low-rank estimate on the GRF set-up, with the
+   estimate made from 10², 10³ and 10⁴ effective samples (the dense inverse is expected to degrade first);
+   within-chain vs total pooling on a two-mode toy with chains started in both modes.
+
+---
+
+## 10. Mass matrix: robust estimation (added 2026-10-09)
+
+The plain inverse sample covariance is right for a small, well-sampled Gaussian (the 2-D demo
+`toy_examples/hmc_illustration_2d.ipynb`: identity mass 20.5, estimated mass 51.7 minimum ESS per 1 000
+gradients, one seed, with the trajectory length also changed from 3 to `pi`) but fragile in a real problem:
+it needs O(d²) well-mixed samples, it breaks the prior structure the dimension-robust integrator relies on,
+and it is distorted by stuck chains and by chains in different modes. The rules below make it robust. All
+numerical thresholds are placeholders for the validation of §9 item 5.
+
+### 10.1 Form: identity plus a low-rank correction
+
+In surrDAMH's internal coordinates the prior is N(0, I). For a near-Gaussian posterior the covariance is
+`Sigma ≈ (I + H)^{-1}` with `H` the data-misfit Hessian, and the data inform only a few directions (rank
+`r << d`). The mass matrix should therefore equal `I` (the prior) in the uninformed directions and be
+stiffer only in the informed ones:
+
+    M = V diag(1 / lambda_tilde) V^T = I + V_r diag(1 / lambda_i - 1) V_r^T
+
+Estimator, from the pooled covariance `S` of §10.2 with `n_eff` effective samples:
+
+1. **Shrink towards the prior**: `S_shr = (1 - a) S + a I`, `a` from the Ledoit–Wolf formula with the
+   identity as target. The prior is the natural target here, not the scaled identity of the textbook
+   version.
+2. **Eigendecompose** `S_shr = V diag(lambda) V^T`.
+3. **Keep only the informed directions**: direction `i` is informed iff
+   `lambda_i < (1 - sqrt(d / n_eff))² * (1 - c * sqrt(2 / n_eff))`, `c = 3`. The first factor is the
+   Marchenko–Pastur lower edge: with few samples the smallest eigenvalues of a noisy estimate of the
+   identity fall well below 1 by chance, and without this test pure-prior directions would be mistaken
+   for informed ones. Every other eigenvalue is set to exactly 1.
+4. **Clip** to `[lambda_floor, 1]`, `lambda_floor = 1e-4`. The cap at 1 encodes "the posterior is not wider
+   than the prior"; it is a heuristic (a nonlinear posterior can be wider in a direction) and costs only
+   efficiency, never exactness. The floor stops a nearly singular estimate producing a huge mass and frozen
+   trajectories.
+5. **Cap the rank**: `r <= n_eff / 10`, keeping the smallest eigenvalues.
+
+Consequences:
+
+* Directions the samples cannot resolve fall back to the correct prior scale instead of to noise.
+* The sample requirement scales with `r`, not with `d²`, so the estimate is usable on the GRF problems with
+  hundreds of coefficients.
+* The dimension-robust integrator (`HamiltonianInfinite`) stays valid. Its prior + kinetic flow
+  `q'' = -M^{-1} q` remains an exact rotation in the eigenbasis of `M`, with angular frequency
+  `sqrt(lambda_tilde_i)` per direction; in the uninformed directions it is today's unit-frequency rotation.
+  This is the contained change to `_apply_prior_kinetic_flow` that §3.3 mentions. A dense estimated inverse
+  would put estimation noise into thousands of irrelevant directions of that rotation.
+
+### 10.2 Pooling across chains
+
+* **Within-chain pooling for the Hamiltonian**: `S = W`, the `n_eff`-weighted average of the per-chain
+  covariances (the `W` of R-hat), not the total covariance of all chains. With chains in nearby modes the
+  total covariance contains the between-mode spread, which makes `M` far too soft inside each mode, and a
+  Hamiltonian trajectory does not cross the barrier anyway. The random-walk component of the robust mode
+  and the exact safety kernel S2 (note 25) keep using the *total* covariance, which spans the modes.
+* **Exclude stuck chains**: chains with acceptance below 0.05 in the stage, or flagged by the stagnation
+  check of S5 (note 25), are left out. Their near-zero spread would shrink `S`.
+* **Mode indicator**: if the trace of the between-chain part exceeds that of `W` (an R-hat-like ratio), the
+  stage summary reports "chains in different modes"; the Hamiltonian still uses `W`.
+
+### 10.3 Which samples
+
+* Only **outer DAMH chain states**, which follow the exact posterior `pi`, including the repeats of rejected
+  iterations (multiplicity is part of the MCMC estimator; with the library's `weighting` option, use the
+  weighted covariance). Never surrogate sub-chain states (they follow `pi~`) and never pre-rejected
+  proposals.
+* The **stage just finished**, after its first 10 % as burn-in. Adding earlier stages is allowed when their
+  between-stage difference is small, but it is not the default, because early stages carry burn-in bias.
+* `n_eff` = total kept iterations divided by the largest integrated autocorrelation time over the
+  parameters (conservative; the projection on the leading eigenvectors is a cheaper alternative).
+
+### 10.4 Fallbacks
+
+| available `n_eff` | mass used for the next stage |
+|---|---|
+| `>= 10 r` for the detected rank `r` | the §10.1 low-rank estimate |
+| enough for per-parameter variances (`>= 50`) but not for the above | diagonal: per-parameter variances, shrunk towards 1 and clipped to `[lambda_floor, 1]` |
+| `< 50`, or every chain excluded | the previous stage's `M` (`I` at the first Hamiltonian stage) |
+
+The manifest records which row applied, `r`, the kept eigenvalues, `a`, `n_eff` and the excluded chains.
+
+### 10.5 Schedule and interaction with the other knobs
+
+1. Re-estimate `M` at every stage boundary that ends a stage with outer chain states (each DAMH chunk of
+   note 25 §5). Freeze it inside the stage.
+2. After a change of `M` **restart the dual averaging** of `eps` (§2) with `mu = log(10 eps_previous)`; the
+   optimal step changes with the mass.
+3. `T`: after whitening the half period is about `pi` in every direction (§3.3); the U-turn diagnostic (§3.2)
+   remains the default and corrects for non-Gaussian shape. `L` jitter (§4) unchanged.
+4. User control: `Hamiltonian(mass="auto")` is the fast-mode default; a scalar, vector or matrix pins it as
+   today.
+
+### 10.6 Validity
+
+`M` enters only the proposal. Any symmetric positive definite `M` that is fixed within a stage gives an
+exact HMC kernel; building it from previous stages' samples is the same stage-boundary adaptation the
+library already uses for the carried covariance. In DAMH the kinetic terms stay in the prior part of the
+sub-chain acceptance and never enter the correction (§7 items 5–6).
+
+### 10.7 What no constant mass can fix
+
+With position-dependent curvature (banana, funnel, strongly nonlinear forward maps) any constant `M` is a
+compromise, and `eps` is limited by the tightest region. The robust answer is not a cleverer mass but the
+exact random-walk kernel S2 and the diagnostics S5 of note 25, with the self-demotion to the robust mode.
+Riemannian-manifold HMC (position-dependent `M`, implicit integrator) is excluded as a default: it needs
+the Hessian or Fisher metric of the surrogate, costs a linear solve per step, and is fragile.
+
+### 10.8 Open decisions for the author
+
+* **MM1** Within-chain pooling for the Hamiltonian while the robust components use the total covariance
+  (§10.2) — or one covariance for everything?
+* **MM2** Cap the eigenvalues at 1 (§10.1 step 4), or allow a posterior wider than the prior?
+* **MM3** Estimate from the last stage only (§10.3), or accumulate stages after warm-up?
 
 ---
 

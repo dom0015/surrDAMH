@@ -26,7 +26,7 @@ from surrDAMH.modules.seeds import (generation_seed_offset, initial_sample_seed,
 from surrDAMH.solvers import Solver
 from surrDAMH.stages import Stage, stage_name
 from surrDAMH.surrogates.parent import Evaluator
-from surrDAMH.modules.continuation import save_carry_over, save_last_sample
+from surrDAMH.modules.continuation import describe_initial_sample_type, save_carry_over, save_last_sample
 
 
 def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distribution, list_of_stages: List[Stage],
@@ -90,7 +90,8 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
         initial_sample = alg.Sample(parameters=conf.continued_samples[rank_world])
     else:
         initial_sample = alg.Sample(parameters=rvs_with_generator(prior, initial_sample_generator))
-    print("Sampler at rank", rank_world, "- initial sample:", initial_sample.parameters, flush=True)
+    print(f"Sampler at rank {rank_world} started with {describe_initial_sample_type(conf)} initial sample"
+          + (f": {initial_sample.parameters}" if conf.debug else ""), flush=True)
 
     # Merged carry-over of every adaptive stage so far, keyed by Stage field name
     # ("scale", "beta", "step_size" -- the spec step fields); consumed by build_proposal

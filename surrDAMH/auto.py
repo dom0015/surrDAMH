@@ -16,10 +16,11 @@ PLACEHOLDER chosen before validation (note 25 §6 will tune them, the warm-up sh
 * evaluation budget: ``T = budget - test_data_size``, ``B = T // C`` exact evaluations per chain.
 * ``B < 50 d`` (a surrogate trained on fewer points does not pay, note 19 §4), or an MPI run without
   a collector: one adaptive random-walk MH stage with the whole budget (no held-out set then).
-* otherwise an excluded MH warm-up with ``n0 = clip(20 d, 0.05 B, 0.25 B)`` evaluations, then ``K``
+* otherwise a burn-in MH warm-up (``Stage(burn_in=True)``: the chain continues into the first chunk,
+  the warm-up is left out of the posterior by default) with ``n0 = clip(20 d, 0.05 B, 0.25 B)`` evaluations, then ``K``
   DAMH-SMU chunks (sub-chain length 1) of ``(B - n0) // K`` evaluations, the remainder added to the
   last chunk; no frozen stage.
-* time budget: warm-up ``0.15 time_limit`` (excluded), chunks ``0.85 time_limit / K`` each.
+* time budget: warm-up ``0.15 time_limit`` (burn-in), chunks ``0.85 time_limit / K`` each.
 * ``mode="robust"``: the chunks use an adaptive ``RandomWalk()``; ``mode="fast"``:
   ``Hamiltonian(num_steps=30, integrator="dimension_robust", mass=1.0)`` with a dual-averaged step.
 
@@ -173,9 +174,9 @@ class AutoPlan:
         else:
             if "evaluations" in self.warm_up:
                 lines.append(f"  warm-up: MH, adaptive RandomWalk, {self.warm_up['evaluations']} evaluations per "
-                             "chain, excluded (burn-in)")
+                             "chain, burn-in (the chain continues; not in the posterior by default)")
             else:
-                lines.append(f"  warm-up: MH, adaptive RandomWalk, {self.warm_up['time_limit']:g} s, excluded (burn-in)")
+                lines.append(f"  warm-up: MH, adaptive RandomWalk, {self.warm_up['time_limit']:g} s, burn-in (the chain continues; not in the posterior by default)")
             chunk_sizes = [s.max_evaluations if self.budget is not None else s.time_limit for s in self.stages[1:]]
             unit = "evaluations" if self.budget is not None else "s"
             lines.append(f"  {self.chunks} DAMH-SMU chunks (sub-chain length 1), {unit} per chain: "
@@ -336,7 +337,7 @@ def plan_auto(problem: "Problem", conf: "Configuration", *, budget: int | None, 
             n0 = max(1, n0)
             warm_up = {"evaluations": n0}
             per_chunk, remainder = divmod(per_chain_budget - n0, chunks)
-            stages = [Stage(algorithm="MH", proposal=RandomWalk(), max_evaluations=n0, is_excluded=True)]
+            stages = [Stage(algorithm="MH", proposal=RandomWalk(), max_evaluations=n0, burn_in=True)]
             for k in range(chunks):
                 evaluations = per_chunk + (remainder if k == chunks - 1 else 0)
                 stages.append(Stage(algorithm="DAMH", proposal=chunk_proposal(), subchain_length=1,
@@ -346,7 +347,7 @@ def plan_auto(problem: "Problem", conf: "Configuration", *, budget: int | None, 
             t0 = WARM_UP_TIME_SHARE * time_limit
             t_chunk = (1.0 - WARM_UP_TIME_SHARE) * time_limit / chunks
             warm_up = {"time_limit": t0}
-            stages = [Stage(algorithm="MH", proposal=RandomWalk(), time_limit=t0, is_excluded=True)]
+            stages = [Stage(algorithm="MH", proposal=RandomWalk(), time_limit=t0, burn_in=True)]
             for _ in range(chunks):
                 stages.append(Stage(algorithm="DAMH", proposal=chunk_proposal(), subchain_length=1,
                                     surrogate_model_updates=True, time_limit=t_chunk))

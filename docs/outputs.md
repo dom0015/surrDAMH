@@ -174,7 +174,9 @@ Written by both the MPI sampler and `run_sampling_local` after every stage (rega
 Written by rank 0 (or by `run_sampling_local`) before role dispatch and finalized after the run:
 `manifest_version`, `format_version` (`2`), `surrdamh_version`, `runner`
 (`"mpi"`/`"local"`), timestamps, `hostname`, package versions, `git` (commit/dirty/branch),
-the full `configuration`/`stages`/`prior`/`likelihood` summaries, `surrogate`
+the full `configuration`/`stages`/`prior`/`likelihood` summaries (each stage entry is every
+`Stage` dataclass field by name, including `is_excluded` and `burn_in` — see `docs/stages.md` and
+the selection mask below), `surrogate`
 (updater/evaluator class + scalar hyperparameters), `solver`, `seeds` (`modules.seeds.SEED_FORMULA`:
 `seed0 = 10*(no_stages*rank+i) + 1_000_000*generation` and every per-rank/per-stage seed, plus
 whether `initial_sample_type` makes the run reproducible — `generation` is 0 and `no_stages` this
@@ -241,54 +243,86 @@ see `docs/running.md#automatic-mode-2026-10-08`); absent otherwise. Also exposed
 JSON-safe (`json.dumps` round-trips it). The plan is also printed once at start-up (rank 0 /
 local, `AutoPlan.describe()`) before the stage list itself.
 
-## Selection mask (`post_processing_output/selection.json`, 2026-10-08)
+## Selection mask (`post_processing_output/selection.json`, 2026-10-08; layout simplified 2026-10-09)
 
-`SamplingRun.write_report()` reads samples through a per-(stage, chain) mask with per-chain
-burn-in, applied at load time by `post_processing.Samples`/`post_processing/selection.py`. The
-file lives in the NEWEST run's own `post_processing_output/`, even when the report covers a whole
-lineage (`include_previous`, below):
+`SamplingRun.write_report()` loads every chain of every stage, then applies a per-(stage, chain)
+posterior mask (`post_processing.Samples`/`post_processing/selection.py`,
+`Samples.posterior_view()`) to decide which chains form the posterior. The file lives in the
+NEWEST run's own `post_processing_output/`, even when the report covers a whole lineage
+(`include_previous`, below):
 
 ```json
-{"format": 1,
- "lineage": ["<dir0>", "<dir1>"],
- "stages": [{"name": "alg0000_MH-adaptive", "output_dir": "<dir0>", "is_excluded": true,
-             "include": [0, 0, 0, 0], "burn_in": [0, 0, 0, 0]},
-            {"name": "alg0001_DAMH-SMU", "output_dir": "<dir0>", "is_excluded": false,
-             "include": [1, 1, 1, 1], "burn_in": [0, 0, 0, 0]}],
- "recommended": null,
+{"posterior": {"alg0000_MH-adaptive": [0, 0, 0, 0], "alg0001_DAMH-SMU": [1, 1, 1, 1]},
+ "runs": ["<dir0>", "<dir1>"],
  "note": "..."}
 ```
 
-- `include[c]` / `burn_in[c]` are indexed by the chain's **original** rank number (the position
-  of its `rank%04d` file), not its position after an earlier exclusion.
-  `include`: `1` = use this chain's samples of this stage, `0` = drop them.
-- `burn_in[c]`: leading **compressed** rows (not raw iterations) dropped from that chain's
-  `samples/<stage>/rank%04d.csv` at load time, for chains that are kept. `raw_data` snapshots have
-  no burn-in applied.
-- `recommended` is reserved for the (not yet implemented) verdict diagnostics' suggestions and
-  stays `null` until then.
+- `posterior[stage][c]` is indexed by the chain's **original** rank number (the position of its
+  `rank%04d` file), not its position after an earlier exclusion: `1` = this chain's samples of
+  that stage are part of the **posterior**, `0` = they are not (but the chain is still loaded and
+  shown, see below). One key per stage of the loaded run(s), in stage order.
+- `runs` is written only when the lineage spans more than one run (informational: the absolute
+  output directory of each one, oldest first); the loader does not read it back.
+- An optional expert entry, `"drop_first_rows": {"alg0001_DAMH-SMU": [5, 0]}`, drops each listed
+  chain's leading **compressed** rows (not raw iterations) from the posterior (`raw_data`
+  snapshots get no rows dropped). It is **never written by default** — a stage/chain absent from
+  it drops 0 rows — and only appears in the file if hand-added.
+- There is no `format`, `lineage` (the old key holding what `runs` holds now), `stages`,
+  `is_excluded`, `burn_in_stage` or `recommended` key any more; a file still in that pre-2026-10-09
+  layout is rejected with `ValueError` naming the file and asking for it to be deleted so it is
+  re-created with the current defaults.
+
+**Since 2026-10-09 the mask selects the posterior only — it no longer hides anything.** Every
+chain of every stage is always loaded (`Samples` loads every chain regardless of `selection`) and
+shown in the report (traces, acceptance/pre-rejection, adaptation, carry-over, counters, per-stage
+histograms, `summary.csv`); `posterior`/`drop_first_rows` decide only which chains are pooled into
+the *posterior* sections (overall mean & covariance, combined 1D/2D histograms, ESS, R-hat, CpUS
+over stage groups, best fits, combined observation histograms, posterior field statistics) and the
+default `field_statistics`. `Samples.posterior_view()` returns that posterior subset as a shallow
+view (filtered `chain_indices`, per-chain dropped rows sliced off the arrays it shares with the
+full `Samples`, and `notes`/`subchain_stats`/`adaptive_stats` filtered to the included chains by
+`rank_world` — nothing is re-read or re-decompressed); `write_report`'s return value (below) is
+the full, unfiltered `Samples`, and `.posterior_view()` on it is what the report's pooled sections
+actually used. Before 2026-10-09 the default selection (`is_excluded` stages left out) dropped
+those stages from the report and `summary.csv` entirely; that is no longer true — they still
+appear, just outside the posterior. Internally, the validated mask
+(`post_processing/loading.py`) still has the pre-2026-10-09 shape
+`{stage_name: {"include": [...], "burn_in": [...]}}` — only this file's own layout changed.
 
 `write_report(selection=None)` (the default) creates the file, if missing, with every chain of
-every stage included **except** stages with `Stage.is_excluded=True` (burn-in stages), which get
-`include=0` for every chain — **this drops `is_excluded` stages from the default report
-entirely**, which is new: before the selection mask existed, `is_excluded` only affected the
-`+1`/`+0` multiplicity rule above, and such a stage still appeared in every report and
-`summary.csv`. The file is then read and applied on this and every later call, so editing it by
-hand and calling `SamplingRun.load(output_dir).write_report()` again re-runs the post-processing
-with the edit. `write_report(selection=<path>)` uses that file instead (must exist);
-`write_report(selection=False)` ignores any file and uses every chain with no burn-in (the
-pre-selection behaviour). A stage whose every chain ends up excluded is left out of the report
-with a printed note instead of crashing; if *every* stage ends up excluded, `write_report` raises
-`ValueError`. The run manifest is never modified by any of this — `selection.json` is the only
-record of what was dropped.
+every stage marked 1 (posterior) **except** stages with `Stage.is_excluded=True` or
+`Stage.burn_in=True` (`post_processing.selection.default_selection`), which get 0 for every chain
+by default. The file is then read and applied on this and every later call, so editing it by hand
+and calling `SamplingRun.load(output_dir).write_report()` again re-runs the post-processing with
+the edit. `write_report(selection=<path>)` uses that file instead (must exist);
+`write_report(selection=False)` ignores any file and puts every chain in the posterior with no
+rows dropped (the pre-selection behaviour). If *every* stage ends up with no chain in the
+posterior, `write_report` raises `ValueError` naming the file to edit. The run manifest is never
+modified by any of this — `selection.json` is the only record of what was excluded from the
+posterior.
 
-Excluding a chain also drops its rows from `notes`/`subchain_stats`/`adaptive_stats` (filtered by
-`rank_world`) and its entry from `chain_indices`, so `chains_to_disp` (which refers to ORIGINAL
-rank numbers everywhere) and the acceptance counters of `summary.csv` stay consistent.
+A **user note**, with the file's absolute path and the re-run command verbatim, appears twice in
+the report: at the top of the pooled "Overall analysis" section and again in the final "Selection
+and re-run" section:
 
-The report's last section, **"Selection and re-run"**, shows a stage x chain table of
-`include`/`burn_in`, lists the excluded pairs in prose ("excluded by the user: ...", "excluded as
-burn-in stages: ..."), the absolute path of `selection.json`, and the re-run snippet:
+> Which chains form the posterior is decided by `<output_dir>/post_processing_output/selection.json`:
+> set each stage's chain list in `posterior` to 1 (used) or 0 (not), then re-run
+> `python -c 'import surrDAMH; surrDAMH.SamplingRun.load("<output_dir>").write_report()'` (pass
+> `problem=` to `load` for the solver-dependent sections). The note mentions `drop_first_rows` only
+> when the file actually has that (optional) entry.
+
+Each chain's label/legend in the per-stage sections also gets a badge, `"in posterior"` or
+`"not in posterior (burn-in stage | excluded stage | excluded by user)"`, from the mask and the
+stage flags (`Samples.chain_status`); the per-stage summary rows and the pooled "Overall analysis"
+section header ("Aggregated over the chains marked 1 in selection.json's "posterior": `<k>` stages,
+`<m>` chain-stage pairs.") say which stages/chains actually contributed.
+
+The report's last section, **"Selection and re-run"**, repeats the user note, shows a stage x
+chain table (each cell: the 0/1 value, the badge reason, and `drop_first_rows=<n>` when non-zero)
+next to the two `Stage` flags (`burn_in stage`, `is_excluded`, read from the run manifest(s), not
+from the selection file), lists the excluded chains in prose ("excluded by the user: ...", "not in
+the posterior as burn-in stages (burn_in=True): ...", "not in the posterior as excluded stages
+(is_excluded=True): ..."), the absolute path of `selection.json`, and the re-run snippet:
 
 ```python
 import surrDAMH
@@ -298,6 +332,22 @@ surrDAMH.SamplingRun.load("<output_dir>").write_report()
 plus a note that `problem=` can be passed to `load` to restore the sections that need the prior or
 a solver (prior overlay, parameter names, posterior field statistics, best-fit solver
 visualization).
+
+### `summary.csv` and `write_report`'s return value
+
+`summary.csv` has one row per **displayed** stage of the lineage, with every chain's counters —
+unaffected by the selection mask — and gains a final column, `chains_in_posterior`
+(`"<chains marked 1>/<all chains>"`, e.g. `"2/4"`); it is appended last so a run with no
+exclusion is otherwise byte-identical to before 2026-10-09. Its `autocorr`/`CpUS` columns
+(`Samples.calculate_CpUS`, called on the full `Samples` by `core._write_report_rank0`) are
+computed over **all** chains of each stage, unlike the HTML report's own CpUS figures — sections
+**4.4 "Cost per Uncorrelated Sample (CpUS)"** and **4.8 "Diagnostics Summary"** — which call
+`calculate_CpUS` again on `posterior_view()` and so are computed over the posterior chains only;
+the two numbers for the same stage can therefore differ.
+
+`SamplingRun.write_report()` returns the full `surrDAMH.post_processing.Samples` (every chain
+loaded) on rank 0 / in a local run, not just the posterior subset; call `.posterior_view()` on it
+to get the same filtered view the report's pooled sections used.
 
 ## `include_previous` and the lineage
 

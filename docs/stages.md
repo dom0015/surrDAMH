@@ -31,8 +31,19 @@ Stage(proposal=PCN(beta=0.2), time_limit=60)
 | `use_only_surrogate` | `bool` | `False` | Replace the exact model with the surrogate entirely for this stage (via `SurrogateAsSolver`) — exploration only, the samples do not follow the posterior. | **yes** |
 | `save_to_file` | `bool` | `True` | Write this stage's `samples/`/`notes/` CSVs. | no (output only) |
 | `send_snapshots_to_collector` | `bool` | `True` | Whether this stage's exact-model evaluations feed the surrogate's training data. Forced to `False` when `use_only_surrogate=True`. | affects surrogate training data, not this stage's own posterior |
-| `is_excluded` | `bool` | `False` | Burn-in flag: if `True`, this stage's final sample is discarded and the next stage starts from the sample this stage started at (`process_SAMPLER`/`runner_local`: `sample_carried_to_next_stage` is skipped for an excluded stage). | **yes** (affects what the next stage starts from) |
+| `is_excluded` | `bool` | `False` | Discarded-exploration flag: if `True`, this stage's final sample is thrown away and the next stage **restarts** from the sample this stage started at (`process_SAMPLER`/`runner_local`: `sample_carried_to_next_stage` is skipped for an excluded stage). Also sets this stage's chains to 0 by default in the report's `selection.json` ("posterior"
+entry, `docs/outputs.md`). Refused together with `burn_in=True` (`ValueError`). | **yes** (what the next stage starts from, and the default posterior selection) |
+| `burn_in` | `bool` | `False` | Warm-up flag (2026-10-09): if `True`, the chain **continues** into the next stage exactly as after a normal stage — only this stage's chains get 0 by default in the report's `selection.json` ("posterior" entry, `docs/outputs.md`), so its samples are left out of the posterior unless the user edits the file. Refused together with `is_excluded=True` (`ValueError`). | **yes** (the default posterior selection) |
 | `name` | `str\|None` | `None` | Set by the library (`stage_name`), not by the user — the stage's output-directory name. | n/a |
+
+**`burn_in` vs. `is_excluded`.** Both flags only change the report's *default* selection — they
+set the stage's entry in `selection.json`'s `posterior` to 0 for every chain (the user may still flip it back
+to `1` by hand, see `docs/outputs.md`) — and both are refused together (`ValueError`). They differ
+in what happens to the chain itself: `burn_in=True` is a warm-up — the chain **continues** into the
+next stage exactly as after a normal stage, only the samples are excluded from the posterior by
+default. `is_excluded=True` is discarded exploration — the next stage **restarts** from the sample
+this stage itself started at, throwing away everything the stage did. Both are in
+`POSTERIOR_AFFECTING_FIELDS` and so are marked `*` in `Stage.describe()`.
 
 `Stage.adaptive` is a **read-only property**, not a field: `bool(getattr(self.proposal,
 "adaptive", False))`, i.e. it mirrors `proposal.adaptive` and is always `False` for a `Block`

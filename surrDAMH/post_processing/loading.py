@@ -74,6 +74,36 @@ class StageSamples:
                 self.posterior[i] = rows[:, 1 + no_parameters]
 
 
+    def _subset(self, positions: List[int], burn_in: List[int]) -> "StageSamples":
+        """The chains at ``positions`` without their first ``burn_in[i]`` compressed rows, as a new
+        ``StageSamples`` sharing this one's arrays (slices, nothing copied or decompressed)."""
+        subset = StageSamples.__new__(StageSamples)
+        subset.no_chains = len(positions)
+        subset.samples_compressed = []
+        subset.weights = []
+        subset.length = []
+        subset.no_unique_samples = []
+        has_samples = hasattr(self, "samples")
+        has_posterior = hasattr(self, "posterior")
+        if has_samples:
+            subset.samples = []
+        if has_posterior:
+            subset.posterior = []
+        for position, rows in zip(positions, burn_in):
+            weights = self.weights[position][rows:]
+            subset.weights.append(weights)
+            subset.samples_compressed.append(self.samples_compressed[position][rows:])
+            subset.no_unique_samples.append(int(np.count_nonzero(weights)))
+            subset.length.append(sum(weights))
+            if has_samples:
+                samples = self.samples[position]
+                subset.samples.append(None if samples is None else
+                                      samples[int(np.sum(self.weights[position][:rows])):])
+            if has_posterior:
+                subset.posterior.append(self.posterior[position][rows:])
+        return subset
+
+
 class Samples(SamplesReports):
     """
     Facade over one run's output directory: statistics and plots on top of
@@ -116,13 +146,13 @@ class Samples(SamplesReports):
             selection: the (stage, chain) mask and per-chain burn-in to apply at load time
                 (``post_processing.selection``). ``None``/``False``: none, every chain is used;
                 ``True``: this run's ``post_processing_output/selection.json``, created with the
-                defaults (every chain, burn-in stages ``is_excluded`` dropped) if missing; a path:
-                that file (must exist); a dict: a selection in the file's layout. Excluded chains
-                are removed from the stage's chain lists (``chain_indices[stage]`` keeps the
-                original chain numbers, which ``chains_to_disp`` refers to everywhere), their
-                ``notes``/``subchain_stats``/``adaptive_stats`` rows and ``raw_data`` files are
-                left out too, and ``burn_in`` leading compressed rows are dropped from every kept
-                chain (``raw_data`` snapshots have no burn-in).
+                defaults (every chain; the ``is_excluded`` and ``burn_in`` stages with include 0) if
+                missing; a path: that file (must exist); a dict: a selection in the file's layout.
+                Since 2026-10-09 the selection does NOT remove anything at load: every chain of
+                every stage is loaded (``chain_indices`` = all chains), the validated mask is
+                stored (``selection_mask``, ``selection_burn_in``) and :meth:`posterior_view`
+                returns the posterior subset (the chains with ``include = 1``, their ``burn_in``
+                leading compressed rows dropped).
         """
         self.debug = debug
         self.lineage_note: str | None = None
@@ -173,7 +203,8 @@ class Samples(SamplesReports):
         self.summarize()
 
     def _apply_selection(self, selection, samples_dir: str) -> None:
-        """Resolve ``selection`` (see ``__init__``) into ``chain_indices``/``_selected_samples``."""
+        """Resolve ``selection`` (see ``__init__``) into ``selection_mask``/``selection_burn_in``;
+        ``chain_indices``/``_selected_samples`` hold EVERY chain (2026-10-09)."""
         self.selection_path: str | None = None
         self.selection_created = False
         self.selection_content: dict | None = None
@@ -201,17 +232,47 @@ class Samples(SamplesReports):
         self._selected_samples = []
         for index, name in enumerate(self.stage_names):
             rows = self.run_data.samples[index]
-            if self.selection_mask is None:
-                self.chain_indices.append(list(range(len(rows))))
-                self.selection_burn_in.append([0] * len(rows))
-                self._selected_samples.append(rows)
-                continue
-            include = self.selection_mask[name]["include"]
-            burn_in = self.selection_mask[name]["burn_in"]
-            kept = [chain for chain in range(len(rows)) if include[chain]]
-            self.chain_indices.append(kept)
-            self.selection_burn_in.append([burn_in[chain] for chain in kept])
-            self._selected_samples.append([rows[chain][burn_in[chain]:] for chain in kept])
+            self.chain_indices.append(list(range(len(rows))))
+            self.selection_burn_in.append([0] * len(rows) if self.selection_mask is None
+                                          else list(self.selection_mask[name]["burn_in"]))
+            self._selected_samples.append(rows)
+
+    def posterior_chains(self, stage_index: int) -> List[int]:
+        """Original chain numbers of stage ``stage_index`` that form the posterior (``include = 1``
+        in the selection; every chain without one)."""
+        chains = self.chain_indices[stage_index]
+        mask = getattr(self, "selection_mask", None)
+        if mask is None:
+            return list(chains)
+        include = mask[self.stage_names[stage_index]]["include"]
+        return [chain for chain in chains if include[chain]]
+
+    def posterior_view(self) -> "Samples":
+        """
+        The posterior subset of this ``Samples`` (2026-10-09): a shallow copy whose per-stage chain
+        lists hold only the chains with ``include = 1`` in the selection, each without its
+        ``burn_in`` leading compressed rows, and whose ``notes``/``subchain_stats``/``adaptive_stats``
+        (and the ``summary`` built from them) are filtered to those chains. The arrays are SHARED
+        (slices), nothing is re-read or re-decompressed. ``chain_indices`` keeps the ORIGINAL chain
+        numbers, so ``chains_to_disp`` means the same on the view. A stage whose every chain is
+        excluded has an empty chain list. Without a selection the view has the same content as
+        ``self``. Call it on a full ``Samples`` (not on a view).
+        """
+        import copy
+        view = copy.copy(self)
+        view.chain_indices = []
+        view.selection_burn_in = []
+        view.list_of_stages = []
+        for index in range(self.no_stages):
+            stage = self.list_of_stages[index]
+            positions = {chain: position for position, chain in enumerate(self.chain_indices[index])}
+            kept = self.posterior_chains(index)
+            burn_in = [self.selection_burn_in[index][chain] for chain in kept]
+            view.chain_indices.append(kept)
+            view.selection_burn_in.append(burn_in)
+            view.list_of_stages.append(stage._subset([positions[chain] for chain in kept], burn_in))
+        view.summarize()
+        return view
 
     def _kept_rows(self, frame: pd.DataFrame, stage_index: int, by_rank: bool) -> pd.DataFrame:
         """``frame`` without the rows of excluded chains: by ``rank_world`` (``by_rank``) or, for
@@ -257,6 +318,8 @@ class Samples(SamplesReports):
         self.carry_over = list(self.run_data.carry_over)
 
     def summarize(self):
+        """(Re)build ``notes``/``subchain_stats``/``adaptive_stats``/``carry_over`` for the chains in
+        ``chain_indices`` and the per-stage ``summary`` from them."""
         self.load_notes()
         self.load_subchain_stats()
         self.load_adaptive_stats()
@@ -293,7 +356,10 @@ class Samples(SamplesReports):
         self.summary = summary
 
     def get_summary(self, csv_filepath: str | None = None):
-        print(self.summary)
+        # every column on one row per stage (pandas would otherwise elide the middle columns), 2026-10-09
+        with pd.option_context("display.max_columns", None, "display.width", 10_000,
+                               "display.float_format", lambda v: f"{v:.4g}"):
+            print(self.summary.to_string(), flush=True)
         if csv_filepath:
             self.summary.to_csv(csv_filepath, index=True)
         return self.summary

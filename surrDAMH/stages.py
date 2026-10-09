@@ -30,7 +30,7 @@ import surrDAMH.proposals as _proposals  # private alias: surrDAMH.stages must o
 #: ``describe()`` marks them with a trailing ``*``.
 POSTERIOR_AFFECTING_FIELDS: frozenset[str] = frozenset({
     "algorithm", "proposal", "subchain_length", "surrogate_model_updates",
-    "use_only_surrogate", "is_excluded",
+    "use_only_surrogate", "is_excluded", "burn_in",
 })
 
 
@@ -69,7 +69,12 @@ class Stage:
             training data. Set ``False`` on a final frozen-surrogate stage: nothing will use the
             retrained surrogate, and refitting an RBF or k-d tree on every new batch slows the
             samplers down (a start-up note says so). Default: ``True``.
-        is_excluded: burn-in flag: the next stage restarts from the sample this stage started at. Default: ``False``.
+        is_excluded: discarded exploration: the next stage RESTARTS from the sample this stage
+            started at, and the stage's chains are left out of the posterior by default. Default: ``False``.
+        burn_in: warm-up: the chain CONTINUES into the next stage (exactly as after a normal
+            stage), but this stage's samples are left out of the posterior by default. Both flags
+            only set the default ``include = 0`` of the report's ``selection.json``; every chain
+            stays visible in the report. ``burn_in`` and ``is_excluded`` exclude each other. Default: ``False``.
         name: set by the library (``alg0000_MH``, ...); the stage's output-directory name. Default: ``None``.
 
     If no stopping rule is given, ``max_evaluations=10`` is used with a printed note.
@@ -94,6 +99,7 @@ class Stage:
     save_to_file: bool = True
     send_snapshots_to_collector: bool = True
     is_excluded: bool = False
+    burn_in: bool = False
     name: str | None = None
 
     # ------------------------------------------------------------------ derived properties
@@ -115,6 +121,10 @@ class Stage:
             raise TypeError(
                 "Stage.proposal must be a RandomWalk, PCN, Hamiltonian or Block from surrDAMH.proposals, "
                 f"got {type(self.proposal).__name__}")
+        if self.burn_in and self.is_excluded:
+            raise ValueError("Stage: burn_in=True and is_excluded=True exclude each other -- burn_in continues the "
+                             "chain into the next stage, is_excluded restarts it from this stage's starting sample; "
+                             "set only one of them")
         if self.max_samples == sys.maxsize and self.max_evaluations == sys.maxsize and self.time_limit == np.inf:
             self.max_evaluations = 10
             print(self.algorithm, ": No stopping condition specified, max_evaluations set to", self.max_evaluations)

@@ -178,7 +178,6 @@ class SamplesStatistics(SamplesBase):
         autocorr_stages = np.zeros((self.no_stages,))
         cpus_stages = -np.ones((self.no_stages,), dtype=float)
         for stages_to_disp in list_of_stages_groups:
-            print("Stages:", stages_to_disp)
             try:
                 autocorr = Autocorrelation(self, stages_to_disp=stages_to_disp,
                                            chains_to_disp=chains_to_disp)

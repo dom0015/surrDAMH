@@ -95,7 +95,8 @@ class SamplesReports(SamplesPlots):
                             ranking_mode: Literal["l2", "posterior", "likelihood"] = "l2",
                             pool_mode_note: str | None = None,
                             stages: List[Any] | None = None,
-                            selection_section: bool | None = None):
+                            selection_section: bool | None = None,
+                            posterior: "SamplesReports | None" = None):
         """
         Creates an extended report in HTML format containing all available post-processing tools,
         including visualizations and statistics for combined stages and individual stages separately.
@@ -138,9 +139,16 @@ class SamplesReports(SamplesPlots):
                 selection mask table, the excluded pairs, the selection file and the re-run
                 snippet) as the last section. ``None``: only when a selection is applied to
                 this ``Samples``; ``SamplingRun.write_report`` always passes ``True``.
+            posterior (Samples | None): the chains that form the posterior, normally
+                ``self.posterior_view()`` (2026-10-09); ``None`` = ``self``. The per-stage sections
+                (summary rows, per-stage moments/histograms/traces, acceptance, per-stage
+                autocorrelation, adaptation, per-stage observation histograms) show EVERY chain of
+                ``self``, each chain marked "in posterior" or "not in posterior (...)"; the pooled
+                sections (overall mean/covariance, histograms over the combined stages, best fits,
+                autocorrelation/ESS/CpUS/R-hat/correlation over the stages, combined observation
+                histograms) use ``posterior`` and skip the stages it has no chain of.
 
-        Lineage and selection (2026-10-08): stages whose every chain was removed by the
-        selection are left out of ``stages_to_disp`` with a note in section 1; for a lineage of
+        Lineage and selection: every stage and chain is shown (2026-10-09); for a lineage of
         continued runs the configuration section lists its runs (and ``lineage_note``).
 
         Layout (2026-09-21): every top-level section and every per-stage block is a
@@ -167,15 +175,43 @@ class SamplesReports(SamplesPlots):
         from io import BytesIO
         # Initialize stages to display
         stages_to_disp = self._resolve_stages(stages_to_disp)
-        skipped_stages = self._fully_excluded_stages(stages_to_disp)
-        stages_to_disp = [stage for stage in stages_to_disp if stage not in skipped_stages]
-        if not stages_to_disp:
-            raise ValueError("every displayed stage has all of its chains excluded by the selection"
-                             + (f" ({self.selection_path})" if getattr(self, "selection_path", None) else "")
-                             + "; nothing to report.")
+        if posterior is None:
+            posterior = self
+        # pooled sections: the displayed stages the posterior has at least one chain of
+        posterior_stages = [stage for stage in stages_to_disp if posterior.chain_indices[stage]]
+        if not posterior_stages:
+            raise ValueError("no chain of the displayed stages has posterior=1 in the selection file"
+                             + (f" {self.selection_path}" if getattr(self, "selection_path", None) else "")
+                             + "; nothing to aggregate.")
+        no_pairs = sum(len(posterior.chain_indices[stage]) for stage in posterior_stages)
+        pooled_note = (f'Aggregated over the chains with posterior=1 in selection.json: {len(posterior_stages)} '
+                       f'stage{"s" if len(posterior_stages) != 1 else ""} '
+                       f'({", ".join(self.stage_names[stage] for stage in posterior_stages)}), '
+                       f'{no_pairs} chain-stage pair{"s" if no_pairs != 1 else ""}.')
+        chains_in_posterior = self.chains_in_posterior(posterior)
+        user_note = self._selection_user_note()
+
+        def badge_spans(stage_idx: int) -> str:
+            """One badge per chain of the stage: in posterior / not in posterior (reason)."""
+            badges = []
+            for chain in self.chain_indices[stage_idx]:
+                status = self.chain_status(stage_idx, chain, posterior)
+                css = "badge-in" if status == "in posterior" else "badge-out"
+                badges.append(f'<span class="badge {css}">chain {chain}: {escape(status)}</span>')
+            return ' '.join(badges)
+
+        def chain_badges(stage_idx: int) -> str:
+            return f'            <p class="chain-badges">{badge_spans(stage_idx)}</p>'
+
+        def summary_with_posterior_column(rows):
+            table = self.summary.iloc[rows].copy()
+            table["chains_in_posterior"] = [chains_in_posterior[i] for i in rows]
+            return table
+
         if selection_section is None:
             selection_section = getattr(self, "selection_mask", None) is not None
         observation_data_available = self._raw_data_available(stages_to_disp=stages_to_disp)
+        posterior_observation_data_available = posterior._raw_data_available(stages_to_disp=posterior_stages)
         if chains_to_disp is None:
             chains_note = ''
         else:
@@ -444,6 +480,10 @@ class SamplesReports(SamplesPlots):
         html_parts.append('        .toc a { color: #2980b9; text-decoration: none; }')
         html_parts.append('        .toc a:hover { text-decoration: underline; }')
         html_parts.append('        pre { background-color: #f8f8f8; padding: 10px; border-radius: 3px; overflow-x: auto; }')
+        html_parts.append('        .user-note { background-color: #fff8e1; border: 2px solid #f39c12; border-radius: 5px; padding: 10px 15px; margin: 15px 0; line-height: 1.6; }')
+        html_parts.append('        .badge { display: inline-block; border-radius: 3px; padding: 2px 8px; margin: 2px 4px 2px 0; font-size: 0.9em; }')
+        html_parts.append('        .badge-in { background-color: #d4efdf; color: #1e8449; }')
+        html_parts.append('        .badge-out { background-color: #f5e0dc; color: #922b21; }')
         html_parts.append('    </style>')
         html_parts.append('</head>')
         html_parts.append('<body>')
@@ -498,7 +538,9 @@ class SamplesReports(SamplesPlots):
         html_parts.append(f'        <p class="description">Effective settings of every stage of this run, from '
                           f'{escape(stages_source)}. Fields marked with * change the sampled distribution or the '
                           'acceptance rate; "unbounded" is a stopping condition that was not set. '
-                          'The last row says whether the stage is included in the analysis sections below.</p>')
+                          'The last two rows say whether the stage is included in the analysis sections below and how '
+                          'many of its chains form the posterior (posterior=1 in selection.json; every '
+                          'chain is shown in the per-stage sections).</p>')
         if stage_specs:
             stage_field_order = [field.name for field in fields(Stage)]
             present_keys = {key for spec in stage_specs for key in spec}
@@ -519,6 +561,9 @@ class SamplesReports(SamplesPlots):
             included = ''.join('<td>yes</td>' if index in stages_to_disp else '<td>no</td>'
                                for index in range(len(stage_specs)))
             html_parts.append(f'            <tr><td>included in this report</td>{included}</tr>')
+            in_posterior = ''.join(f'<td>{escape(chains_in_posterior[index])}</td>' if index < self.no_stages
+                                   else '<td></td>' for index in range(len(stage_specs)))
+            html_parts.append(f'            <tr><td>chains in posterior</td>{in_posterior}</tr>')
             html_parts.append('        </table>')
             html_parts.append('        </div>')
             if len(stage_specs) != self.no_stages:
@@ -559,18 +604,20 @@ class SamplesReports(SamplesPlots):
         html_parts.append('        "Accepted" samples were accepted by the Metropolis-Hastings criterion, "rejected" samples were rejected, ')
         html_parts.append('        and "pre-rejected" samples (if any) were rejected by a surrogate model before evaluation. ')
         html_parts.append('        For DAMH stages, the table also includes the mean within-subchain surrogate acceptance rate, the fraction of subchains that produced a changed proposal, and the exact outer acceptance conditional on a changed proposal. ')
-        html_parts.append('        These counters are whole-stage totals over every chain, also when the rest of the report is restricted to a subset of chains.</p>')
-        html_parts.append(self.summary.to_html(classes='summary-table'))
-        if skipped_stages:
-            html_parts.append('        <p class="description" style="color: orange;">Skipped: every chain of stage(s) '
-                              + escape(', '.join(self.stage_names[i] for i in skipped_stages))
-                              + ' is excluded by the selection (see "Selection and re-run"); they appear in no '
-                              'section of this report.</p>')
+        html_parts.append('        These counters are whole-stage totals over every chain, also when the rest of the report is restricted to a subset of chains. ')
+        html_parts.append('        The last column, chains_in_posterior, counts the chains of the stage with posterior=1 in selection.json.</p>')
+        html_parts.append(summary_with_posterior_column(list(range(self.no_stages))).to_html(classes='summary-table'))
+        html_parts.append('        <p class="description">Chains of every displayed stage (all of them appear in the per-stage sections):</p>')
+        for stage_idx in stages_to_disp:
+            html_parts.append(f'            <p class="chain-badges"><b>{escape(self.stage_names[stage_idx])}</b>: '
+                              f'{badge_spans(stage_idx)}</p>')
         html_parts.append('    </details>')
 
         # 2. OVERALL ANALYSIS (COMBINED STAGES)
         html_parts.extend(section_open("overall", "2. Overall Analysis (Combined Stages)"))
-        html_parts.append(f'        <p class="description">This section presents aggregated results from all selected sampling stages combined.{chains_note}</p>')
+        html_parts.extend(user_note)
+        html_parts.append(f'        <p class="description">This section presents aggregated results from all selected sampling stages combined. '
+                          f'{escape(pooled_note)}{chains_note}</p>')
         # 2.1 Mean and Covariance
         html_parts.append('        <h3>2.1 Posterior Mean and Covariance Matrix</h3>')
         html_parts.append('        <p class="description">The posterior mean represents the expected value of each parameter, ')
@@ -580,7 +627,7 @@ class SamplesReports(SamplesPlots):
             # generic "Parameter N" labels below instead of leaving it unexplained.
             html_parts.append(f'        <p class="description" style="color: orange;">{escape(pool_mode_note)} '
                               'Parameter names below fall back to generic labels ("Parameter N").</p>')
-        posterior_mean, cov = self.get_mean_and_cov(stages_to_disp=stages_to_disp, chains_to_disp=chains_to_disp)
+        posterior_mean, cov = posterior.get_mean_and_cov(stages_to_disp=posterior_stages, chains_to_disp=chains_to_disp)
 
         html_parts.append('        <div class="stats-table">')
         html_parts.append('            <h4>Posterior Mean:</h4>')
@@ -601,11 +648,11 @@ class SamplesReports(SamplesPlots):
                 html_parts.append('        <p class="description">This grid shows 1D histograms (diagonal) and 2D joint histograms (off-diagonal) ')
                 html_parts.append('        for all parameter combinations. 1D histograms show marginal distributions, while 2D histograms ')
                 html_parts.append('        reveal correlations between parameter pairs.</p>')
-                fig, _ = self.plot_hist_grid(
+                fig, _ = posterior.plot_hist_grid(
                     bins1d=bins1d,
                     bins2d=bins2d,
                     parameters_to_disp=parameters_to_disp,
-                    stages_to_disp=stages_to_disp,
+                    stages_to_disp=posterior_stages,
                     par_names=par_names,
                     prior=prior,
                     chains_to_disp=chains_to_disp,
@@ -617,10 +664,10 @@ class SamplesReports(SamplesPlots):
             try:
                 html_parts.append('        <h3>2.3 One-dimensional Marginal Histograms</h3>')
                 html_parts.append('        <p class="description">For high-dimensional problems, all 1D marginals are more informative than a full pairwise grid.</p>')
-                fig, _ = self.plot_hist_marginals(
+                fig, _ = posterior.plot_hist_marginals(
                     bins1d=bins1d,
                     parameters_to_disp=range(self.no_parameters),
-                    stages_to_disp=stages_to_disp,
+                    stages_to_disp=posterior_stages,
                     par_names=par_names,
                     prior=prior,
                     ncols=4,
@@ -647,19 +694,19 @@ class SamplesReports(SamplesPlots):
             mode_description = "best exact-model evaluations ranked by largest log-likelihood value"
         else:
             mode_description = "best exact-model evaluations ranked by smallest L2 misfit to the supplied observations"
-        html_parts.append(f'        <p class="description">{mode_description}.</p>')
-        if no_best_fits > 0 and no_observations > 0 and observations is not None and observation_data_available:
+        html_parts.append(f'        <p class="description">{mode_description}. {escape(pooled_note)}</p>')
+        if no_best_fits > 0 and no_observations > 0 and observations is not None and posterior_observation_data_available:
             try:
-                df_best, best_par, best_obs, best_scores = self.find_best_fits(
+                df_best, best_par, best_obs, best_scores = posterior.find_best_fits(
                     no_observations=no_observations,
                     observations=observations,
                     n_best=no_best_fits,
                     chains_to_disp=chains_to_disp,
-                    stages_to_disp=stages_to_disp,
+                    stages_to_disp=posterior_stages,
                     par_names=par_names,
                     ranking_mode=ranking_mode,
                 )
-                self.best_fit_parameters = best_par
+                self.best_fit_parameters = posterior.best_fit_parameters = best_par
                 if len(df_best) > 0:
                     html_parts.append(df_best.to_html(index=False, classes='summary-table', float_format=lambda x: f"{x:.6g}"))
                     fig_best, _ = self.plot_best_fits(
@@ -686,7 +733,8 @@ class SamplesReports(SamplesPlots):
         # 2.6 Posterior field statistics
         html_parts.append('        <div id="field_statistics">')
         html_parts.append('        <h3>2.6 Posterior Field Statistics</h3>')
-        html_parts.append('        <p class="description">Posterior mean and uncertainty for derived spatial or field-valued quantities.</p>')
+        html_parts.append('        <p class="description">Posterior mean and uncertainty for derived spatial or field-valued quantities '
+                          '(computed by the caller; SamplingRun.write_report uses the chains with posterior=1 in selection.json).</p>')
         if field_statistics:
             for field_info in field_statistics:
                 try:
@@ -721,10 +769,11 @@ class SamplesReports(SamplesPlots):
             for stage_idx in stages_to_disp:
                 stage_name = self.stage_names[stage_idx]
                 html_parts.extend(stage_open(f"individual_{stage_name}", f"Stage: {stage_name}"))
-                html_parts.append(f'        <p class="description">Analysis results for sampling stage "{stage_name}".</p>')
+                html_parts.append(f'        <p class="description">Analysis results for sampling stage "{stage_name}", every chain of the stage.</p>')
+                html_parts.append(chain_badges(stage_idx))
 
                 html_parts.append('        <h4>Stage Summary:</h4>')
-                stage_summary = self.summary.iloc[stage_idx:stage_idx+1]
+                stage_summary = summary_with_posterior_column([stage_idx])
                 html_parts.append(stage_summary.to_html(classes='stage-summary'))
 
                 html_parts.append('        <h4>Posterior Mean and Covariance (This Stage):</h4>')
@@ -785,7 +834,8 @@ class SamplesReports(SamplesPlots):
 
             html_parts.extend(section_open("diagnostics", "4. Convergence Diagnostics & Autocorrelation Analysis"))
             html_parts.append('        <p class="description">Diagnostic measures to assess mixing quality, convergence, and sampling efficiency. ')
-            html_parts.append('        Lower autocorrelation times and higher effective sample sizes indicate better sampling efficiency.</p>')
+            html_parts.append('        Lower autocorrelation times and higher effective sample sizes indicate better sampling efficiency. ')
+            html_parts.append(f'        4.1 and 4.5 show every chain; 4.2-4.4, 4.6 and 4.7 are pooled: {escape(pooled_note)}</p>')
 
             html_parts.append('        <h3>4.1 Acceptance Rates</h3>')
             html_parts.append('        <p class="description">Acceptance rate visualized by stage. The optimal acceptance rate for Metropolis-Hastings is ~23.4%. ')
@@ -798,10 +848,10 @@ class SamplesReports(SamplesPlots):
             html_parts.append('        <h3>4.2 Autocorrelation Functions</h3>')
             html_parts.append('        <p class="description">Autocorrelation functions (ACF) show how correlated samples are at different lags. ')
             html_parts.append('        Rapid decay to near-zero indicates good mixing. The red shaded region (±0.05) represents ')
-            html_parts.append('        the approximate 95% confidence interval under independence.</p>')
+            html_parts.append(f'        the approximate 95% confidence interval under independence. {escape(pooled_note)}</p>')
             try:
-                fig_acf, _ = self.plot_autocorr(
-                    stages_to_disp=stages_to_disp,
+                fig_acf, _ = posterior.plot_autocorr(
+                    stages_to_disp=posterior_stages,
                     parameters_to_disp=range(self.no_parameters),
                     par_names=par_names,
                     max_lag=200,
@@ -814,14 +864,14 @@ class SamplesReports(SamplesPlots):
 
             html_parts.append('        <h3>4.3 Effective Sample Size (ESS)</h3>')
             html_parts.append('        <p class="description">ESS represents the equivalent number of independent samples drawn from the posterior. ')
-            html_parts.append('        ESS = Total Samples / Autocorrelation Time. Higher ESS relative to total samples indicates efficient sampling.</p>')
-            ess_results = self.calculate_effective_sample_size(stages_to_disp=stages_to_disp,
-                                                              chains_to_disp=chains_to_disp)
+            html_parts.append(f'        ESS = Total Samples / Autocorrelation Time. Higher ESS relative to total samples indicates efficient sampling. {escape(pooled_note)}</p>')
+            ess_results = posterior.calculate_effective_sample_size(stages_to_disp=posterior_stages,
+                                                                   chains_to_disp=chains_to_disp)
             if ess_results:
                 html_parts.append('        <div class="stats-table">')
                 html_parts.append('            <h4>Effective Sample Size Summary:</h4>')
                 html_parts.append('            <pre>')
-                html_parts.append(f'Total samples (all chains, all stages): {ess_results["total_samples"]:,}\n')
+                html_parts.append(f'Total samples (posterior chains and stages): {ess_results["total_samples"]:,}\n')
                 html_parts.append(f'Overall ESS: {ess_results["ess_overall"]:.1f}\n')
                 html_parts.append(f'ESS efficiency: {(ess_results["ess_overall"]/max(1,ess_results["total_samples"])*100):.2f}%\n\n')
                 html_parts.append('ESS per parameter:\n')
@@ -836,11 +886,11 @@ class SamplesReports(SamplesPlots):
 
             html_parts.append('        <h3>4.4 Cost per Uncorrelated Sample (CpUS)</h3>')
             html_parts.append('        <p class="description">CpUS combines autocorrelation with evaluation cost. ')
-            html_parts.append('        Lower CpUS indicates a more efficient stage. Values are computed per stage using stage-wise autocorrelation.</p>')
+            html_parts.append(f'        Lower CpUS indicates a more efficient stage. Values are computed per stage using stage-wise autocorrelation. {escape(pooled_note)}</p>')
             try:
-                cpus_summary = self.calculate_CpUS(list_of_stages_groups=[[i] for i in stages_to_disp],
-                                                   surrogate_cost_ratio=0.0, chains_to_disp=chains_to_disp)
-                cpus_df = cpus_summary.iloc[stages_to_disp].copy()
+                cpus_summary = posterior.calculate_CpUS(list_of_stages_groups=[[i] for i in posterior_stages],
+                                                        surrogate_cost_ratio=0.0, chains_to_disp=chains_to_disp)
+                cpus_df = cpus_summary.iloc[posterior_stages].copy()
                 available_columns = [
                     column for column in [
                         "accepted",
@@ -868,6 +918,7 @@ class SamplesReports(SamplesPlots):
             for stage_idx in stages_to_disp:
                 stage_name = self.stage_names[stage_idx]
                 html_parts.extend(stage_open(f"autocorr_{stage_name}", f"Stage: {stage_name}", level="h4"))
+                html_parts.append(chain_badges(stage_idx))
 
                 html_parts.append('        <p class="description"><strong>Autocorrelation Function:</strong></p>')
                 try:
@@ -906,9 +957,9 @@ class SamplesReports(SamplesPlots):
 
             html_parts.append('        <h3>4.6 Gelman-Rubin Convergence (R-hat)</h3>')
             html_parts.append('        <p class="description">R-hat compares within-chain and between-chain variance. ')
-            html_parts.append('        Values close to 1.0 indicate convergence; values above 1.05 suggest insufficient mixing.</p>')
-            rhat_results = self.calculate_gelman_rubin(stages_to_disp=stages_to_disp,
-                                                      chains_to_disp=chains_to_disp)
+            html_parts.append(f'        Values close to 1.0 indicate convergence; values above 1.05 suggest insufficient mixing. {escape(pooled_note)}</p>')
+            rhat_results = posterior.calculate_gelman_rubin(stages_to_disp=posterior_stages,
+                                                           chains_to_disp=chains_to_disp)
             if rhat_results:
                 html_parts.append('        <div class="stats-table">')
                 html_parts.append('            <pre>')
@@ -927,9 +978,9 @@ class SamplesReports(SamplesPlots):
 
             html_parts.append('        <h3>4.7 Parameter Correlation Heatmap</h3>')
             html_parts.append('        <p class="description">Pairwise linear correlations among posterior parameters. ')
-            html_parts.append('        Values near ±1 indicate strong dependency; values near 0 indicate weak linear relationship.</p>')
-            fig_corr, _, corr_matrix = self.plot_parameter_correlation_heatmap(
-                stages_to_disp=stages_to_disp, par_names=par_names, chains_to_disp=chains_to_disp)
+            html_parts.append(f'        Values near ±1 indicate strong dependency; values near 0 indicate weak linear relationship. {escape(pooled_note)}</p>')
+            fig_corr, _, corr_matrix = posterior.plot_parameter_correlation_heatmap(
+                stages_to_disp=posterior_stages, par_names=par_names, chains_to_disp=chains_to_disp)
             img_base64 = fig_to_base64(fig_corr)
             html_parts.append(f'        <img src="data:image/png;base64,{img_base64}" alt="Parameter Correlation Heatmap">')
 
@@ -957,8 +1008,8 @@ class SamplesReports(SamplesPlots):
                 max_abs_corr = None
 
             cpus_value = None
-            if "CpUS" in self.summary.columns:
-                cpus_values = self.summary.iloc[stages_to_disp]["CpUS"].values
+            if "CpUS" in posterior.summary.columns:
+                cpus_values = posterior.summary.iloc[posterior_stages]["CpUS"].values
                 cpus_values = cpus_values[cpus_values >= 0]
                 if cpus_values.size > 0:
                     cpus_value = float(np.mean(cpus_values))
@@ -1035,6 +1086,7 @@ class SamplesReports(SamplesPlots):
                 continue
             adaptive_blocks += 1
             html_parts.extend(stage_open(f"adaptation_{stage_name}", f"Stage: {stage_name}"))
+            html_parts.append(chain_badges(stage_idx))
             target_rate = proposal.get("target_rate", spec.get("adaptive_target_rate"))
             target_source = "target_rate"
             if target_rate is None:
@@ -1110,17 +1162,22 @@ class SamplesReports(SamplesPlots):
             
             # Overall observation histogram
             html_parts.append('        <h3>7.1 Combined Stages</h3>')
-            fig = self.hist_observations(no_observations=no_observations, chosen_observations=observations_to_disp,
-                                        grid=grid, grid_interp=grid_interp, bins=bins, chains_to_disp=chains_to_disp,
-                                        stages_to_disp=stages_to_disp, observations=observations, cmap=cmap)
-            img_base64 = fig_to_base64(fig)
-            html_parts.append(f'        <img src="data:image/png;base64,{img_base64}" alt="Overall Observation Histogram">')
+            html_parts.append(f'        <p class="description">{escape(pooled_note)}</p>')
+            if posterior_observation_data_available:
+                fig = posterior.hist_observations(no_observations=no_observations, chosen_observations=observations_to_disp,
+                                                  grid=grid, grid_interp=grid_interp, bins=bins, chains_to_disp=chains_to_disp,
+                                                  stages_to_disp=posterior_stages, observations=observations, cmap=cmap)
+                img_base64 = fig_to_base64(fig)
+                html_parts.append(f'        <img src="data:image/png;base64,{img_base64}" alt="Overall Observation Histogram">')
+            else:
+                html_parts.append('        <p class="description" style="color: orange;">No raw snapshots of the posterior chains.</p>')
             
             # Per-stage observation histograms
             html_parts.append('        <h3>7.2 Individual Stages</h3>')
             for stage_idx in stages_to_disp:
                 stage_name = self.stage_names[stage_idx]
                 html_parts.extend(stage_open(f"observations_{stage_name}", f"Stage: {stage_name}", level="h4"))
+                html_parts.append(chain_badges(stage_idx))
                 fig = self.hist_observations(no_observations=no_observations, chosen_observations=observations_to_disp,
                                             grid=grid, grid_interp=grid_interp, bins=bins, chains_to_disp=chains_to_disp,
                                             stages_to_disp=[stage_idx], observations=observations, cmap=cmap)
@@ -1163,7 +1220,7 @@ class SamplesReports(SamplesPlots):
         if selection_section:
             # 2026-10-08: the last section (after the script, like the best-fit visualization
             # block SamplingRun.write_report inserts -- that one goes in front of this one)
-            html_parts.extend(self._selection_section_html(skipped_stages))
+            html_parts.extend(self._selection_section_html(posterior, user_note))
         html_parts.append('</body>')
         html_parts.append('</html>')
         
@@ -1177,18 +1234,70 @@ class SamplesReports(SamplesPlots):
         print(f"Extended HTML report saved to: {output_file}")
         return output_file
 
-    def _selection_section_html(self, skipped_stages: List[int]) -> List[str]:
-        """The "Selection and re-run" section of ``html_report_extended`` (2026-10-08)."""
+    def chains_in_posterior(self, posterior: "SamplesReports | None" = None) -> List[str]:
+        """Per stage: ``"<chains in the posterior>/<all chains>"`` (e.g. ``"2/4"``); ``posterior``
+        defaults to ``self.posterior_view()`` (2026-10-09)."""
+        if posterior is None:
+            posterior = self.posterior_view()
+        return [f"{len(posterior.chain_indices[stage])}/{self.no_chains_original[stage]}"
+                for stage in range(self.no_stages)]
+
+    def chain_status(self, stage_index: int, chain: int, posterior: "SamplesReports | None" = None) -> str:
+        """``"in posterior"`` or ``"not in posterior (burn-in stage | excluded stage | excluded by
+        user)"`` for the ORIGINAL chain number ``chain`` of stage ``stage_index``."""
+        if posterior is None:
+            posterior = self.posterior_view()
+        if chain in posterior.chain_indices[stage_index]:
+            return "in posterior"
+        name = self.stage_names[stage_index]
+        if self._stage_flag(name, "burn_in"):
+            reason = "burn-in stage"
+        elif self._stage_flag(name, "is_excluded"):
+            reason = "excluded stage"
+        else:
+            reason = "excluded by user"
+        return f"not in posterior ({reason})"
+
+    def _selection_user_note(self) -> List[str]:
+        """The boxed "how to change the posterior" note (top of section 2 and of the selection
+        section, 2026-10-09): the selection file and the re-run command, verbatim. Mentions
+        ``drop_first_rows`` only when the selection actually has that (optional, expert) entry."""
+        import json
+        from html import escape
+        from surrDAMH.post_processing.selection import selection_path
+        output_dir = os.path.abspath(self.run_data.output_dir)
+        path = selection_path(output_dir)
+        command = f"python -c 'import surrDAMH; surrDAMH.SamplingRun.load({json.dumps(output_dir)}).write_report()'"
+        used = getattr(self, "selection_path", None)
+        extra = ""
+        if used and os.path.abspath(used) != path:
+            extra = (f' This report used <code>{escape(used, quote=False)}</code> instead; pass '
+                     f'<code>selection={escape(json.dumps(used), quote=False)}</code> to <code>write_report</code> to use it again.')
+        content = getattr(self, "selection_content", None) or {}
+        drop_note = ''
+        if isinstance(content.get("drop_first_rows"), dict) and content["drop_first_rows"]:
+            drop_note = ' <code>drop_first_rows</code> drops each listed chain\'s leading compressed rows.'
+        return ['        <div class="user-note">',
+                f'        Which chains form the posterior is decided by <code>{escape(path, quote=False)}</code>: set '
+                'each stage\'s chain list in <code>posterior</code> to 1 (used) or 0 (not), then re-run '
+                f'<code>{escape(command, quote=False)}</code> (pass <code>problem=</code> to <code>load</code> for the '
+                f'solver-dependent sections).{drop_note}{extra}',
+                '        </div>']
+
+    def _selection_section_html(self, posterior: "SamplesReports", user_note: List[str]) -> List[str]:
+        """The "Selection and re-run" section of ``html_report_extended`` (2026-10-08; 2026-10-09:
+        the mask selects the posterior only, every chain stays in the report)."""
         import json
         from html import escape
         parts = ['    <details class="section" id="selection">',
                  '        <summary><h2>Selection and re-run</h2></summary>']
+        parts.extend(user_note)
         mask = getattr(self, "selection_mask", None)
         path = getattr(self, "selection_path", None)
         output_dir = os.path.abspath(self.run_data.output_dir)
         if mask is None:
             parts.append('        <p class="description">No selection was applied: every chain of every stage '
-                         'is used, without burn-in (<code>selection=False</code>).</p>')
+                         'forms the posterior, with no rows dropped (<code>selection=False</code>).</p>')
         else:
             if path:
                 created = " (created with the defaults by this report)" if getattr(self, "selection_created", False) else ""
@@ -1197,18 +1306,23 @@ class SamplesReports(SamplesPlots):
             else:
                 parts.append('        <p class="description">The selection was passed in memory (a dict); '
                              'no file records it.</p>')
-            parts.append('        <p class="description">include: 1 = the chain\'s samples of this stage are '
-                         'used, 0 = dropped; burn_in: leading compressed rows dropped from that chain at load '
-                         'time. Chains are numbered by their rank files (original numbers). Dropped chains are '
-                         'also left out of the counters in section 1 and of the raw-snapshot sections (best '
-                         'fits, observation histograms), which get no burn-in.</p>')
-            specs = {name: flag for name, flag in zip(self.stage_names, self._is_excluded_flags())}
+            has_drop_first_rows = isinstance((getattr(self, "selection_content", None) or {}).get("drop_first_rows"), dict)
+            drop_sentence = (' Chains with a non-zero <code>drop_first_rows</code> entry show it next to their '
+                             'posterior value (leading compressed rows of that chain left out of the posterior; '
+                             'raw snapshots get no rows dropped).' if has_drop_first_rows else '')
+            parts.append('        <p class="description">posterior: 1 = the chain\'s samples of this stage are '
+                         'part of the posterior, 0 = they are not. Chains are numbered by their rank files '
+                         '(original numbers). Every chain stays visible in the per-stage sections and in the '
+                         'counters of section 1; the pooled sections (overall moments and histograms, best fits, '
+                         'pooled diagnostics, combined observation histograms) use the included chains only.'
+                         f'{drop_sentence} Stages with burn_in=True or is_excluded=True get posterior 0 by '
+                         'default.</p>')
             max_chains = max(self.no_chains_original or [0])
             header = ''.join(f'<th>chain {c}</th>' for c in range(max_chains))
             parts.append('        <div style="overflow-x: auto;">')
             parts.append('        <table class="summary-table selection-table">')
-            parts.append(f'            <tr><th>stage</th><th>is_excluded</th>{header}</tr>')
-            user_excluded, stage_excluded = [], []
+            parts.append(f'            <tr><th>stage</th><th>burn_in stage</th><th>is_excluded</th>{header}</tr>')
+            excluded = {"burn-in stage": [], "excluded stage": [], "excluded by user": []}
             for index, name in enumerate(self.stage_names):
                 entry = mask[name]
                 cells = []
@@ -1216,22 +1330,23 @@ class SamplesReports(SamplesPlots):
                     if chain >= len(entry["include"]):
                         cells.append('<td></td>')
                         continue
-                    include, burn_in = entry["include"][chain], entry["burn_in"][chain]
-                    cells.append(f'<td>include={include}, burn_in={burn_in}</td>')
-                    if not include:
-                        (stage_excluded if specs.get(name) else user_excluded).append(f"{name} chain {chain}")
-                parts.append(f'            <tr><td>{escape(name)}</td><td>{specs.get(name, False)}</td>'
-                             + ''.join(cells) + '</tr>')
+                    include, rows = entry["include"][chain], entry["burn_in"][chain]
+                    status = self.chain_status(index, chain, posterior)
+                    cell = f'{include} ({escape(status)})'
+                    if rows:
+                        cell += f', drop_first_rows={rows}'
+                    cells.append(f'<td>{cell}</td>')
+                    if status != "in posterior":
+                        excluded[status[len("not in posterior ("):-1]].append(f"{name} chain {chain}")
+                parts.append(f'            <tr><td>{escape(name)}</td><td>{self._stage_flag(name, "burn_in")}</td>'
+                             f'<td>{self._stage_flag(name, "is_excluded")}</td>' + ''.join(cells) + '</tr>')
             parts.append('        </table>')
             parts.append('        </div>')
-            parts.append('        <p class="description">excluded by the user: '
-                         + escape('; '.join(user_excluded) if user_excluded else 'none') + '.</p>')
-            parts.append('        <p class="description">excluded as burn-in stages: '
-                         + escape('; '.join(stage_excluded) if stage_excluded else 'none') + '.</p>')
-            if skipped_stages:
-                parts.append('        <p class="description">Stages left out of this report because all their '
-                             'chains are excluded: '
-                             + escape(', '.join(self.stage_names[i] for i in skipped_stages)) + '.</p>')
+            for label, key in (("excluded by the user", "excluded by user"),
+                               ("not in the posterior as burn-in stages (burn_in=True)", "burn-in stage"),
+                               ("not in the posterior as excluded stages (is_excluded=True)", "excluded stage")):
+                parts.append(f'        <p class="description">{escape(label)}: '
+                             + escape('; '.join(excluded[key]) if excluded[key] else 'none') + '.</p>')
         parts.append('        <p class="description">To change the selection, edit the file and re-run the '
                      'post-processing:</p>')
         parts.append('        <pre>import surrDAMH\n'
@@ -1242,11 +1357,10 @@ class SamplesReports(SamplesPlots):
         parts.append('    </details>')
         return parts
 
-    def _is_excluded_flags(self) -> List[bool]:
-        """``Stage.is_excluded`` per stage (from the selection content, else the manifests)."""
-        content = getattr(self, "selection_content", None) or {}
-        recorded = {entry.get("name"): bool(entry.get("is_excluded", False))
-                    for entry in (content.get("stages") or []) if isinstance(entry, dict)}
-        specs = {spec.get("name"): bool(spec.get("is_excluded", False))
-                 for spec in getattr(self.run_data, "stage_specs", [])}
-        return [recorded.get(name, specs.get(name, False)) for name in self.stage_names]
+    def _stage_flag(self, name: str, flag: str) -> bool:
+        """``Stage.is_excluded``/``Stage.burn_in`` (``flag``) of stage ``name``, from the run
+        manifest(s) (the selection file no longer carries these since 2026-10-09)."""
+        for spec in getattr(self.run_data, "stage_specs", None) or []:
+            if spec.get("name") == name:
+                return bool(spec.get(flag, False))
+        return False

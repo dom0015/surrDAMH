@@ -1078,19 +1078,23 @@ class SamplingRun:
                 never changed along it, else this run only; ``True`` the whole lineage regardless
                 (the report says the problem changed); ``False`` this run only. See
                 ``post_processing.Samples``.
-            selection: the (stage, chain) mask with per-chain burn-in
-                (``post_processing/selection.py``). ``None`` (default): this run's
-                ``post_processing_output/selection.json`` -- created on the first report with every
-                chain of every stage except ``is_excluded`` (burn-in) stages, then read and applied
-                on every later report, so editing it and calling
-                ``SamplingRun.load(output_dir).write_report()`` re-runs the post-processing with the
-                edit. A path: that file. ``False``: no selection, every chain is used. Stages whose
-                every chain is excluded are left out of the report with a note; the report ends with
-                a "Selection and re-run" section.
+            selection: the (stage, chain) posterior mask, optionally with per-chain
+                ``drop_first_rows`` (``post_processing/selection.py``). ``None`` (default): this
+                run's ``post_processing_output/selection.json`` -- created on the first report with
+                every chain of every stage marked 1 (posterior) except the ``burn_in``/
+                ``is_excluded`` stages (0), then read and applied on every later report, so editing
+                it and calling ``SamplingRun.load(output_dir).write_report()`` re-runs the
+                post-processing with the edit. A path: that file. ``False``: no selection, every
+                chain is in the posterior. The selection decides only which chains form the
+                posterior (the pooled sections, the posterior field statistics): every stage and
+                chain is shown in the per-stage sections and in ``summary.csv`` (column
+                ``chains_in_posterior``), and the report ends with a "Selection and re-run" section
+                (2026-10-09; file layout simplified 2026-10-09).
 
         Returns:
-            ``surrDAMH.post_processing.Samples`` on rank 0 / in a local run (already used
-            to write the report/summary); ``None`` on every other rank.
+            ``surrDAMH.post_processing.Samples`` with EVERY chain loaded (its ``posterior_view()``
+            is what the pooled sections used) on rank 0 / in a local run; ``None`` on every
+            other rank.
 
         Raises:
             ValueError: if ``stages_to_disp`` resolves to an empty list, or contains a
@@ -1120,10 +1124,13 @@ class SamplingRun:
             grid_interp=grid_interp, obs_grid=obs_grid, no_sensors=no_sensors, cmap=cmap,
             chains_to_disp=chains_to_disp, field_statistics_max_samples=field_statistics_max_samples,
             include_previous=include_previous, selection=selection)
-        if self.runner != "mpi":
+        comm_world = MPI.COMM_WORLD
+        if self.runner != "mpi" or comm_world.Get_size() == 1:
+            # no other rank is waiting in a barrier (local run, or a single process such as a
+            # report re-run from `SamplingRun.load(...)`): a failure -- e.g. an invalid
+            # selection.json -- is an ordinary exception, not a job-wide abort (2026-10-09)
             return self._write_report_rank0(**report_kwargs)
 
-        comm_world = MPI.COMM_WORLD
         if comm_world.Get_rank() != 0:
             comm_world.Barrier()
             return None
@@ -1176,18 +1183,14 @@ class SamplingRun:
             par_names = getattr(self.solver_instance, "par_names", None)
         if parameters_to_disp is None:
             parameters_to_disp = list(range(min(self.conf.no_parameters, 10)))
-        # html_report_extended drops these itself (with a note in the report), so it gets the full list
-        requested_stages = list(stages_to_disp)
-        skipped_stages = samples._fully_excluded_stages(stages_to_disp)
-        if skipped_stages:
-            print("Report: stage(s) " + ", ".join(samples.stage_names[i] for i in skipped_stages)
-                  + f" skipped, every chain is excluded by the selection ({samples.selection_path}).", flush=True)
-            stages_to_disp = [stage for stage in stages_to_disp if stage not in skipped_stages]
-            if not stages_to_disp:
-                raise ValueError(f"every stage of the report is excluded by the selection {samples.selection_path!r}; "
-                                 "set include to 1 for some chain")
         if not stages_to_disp:
             raise ValueError("No report stages are available.")
+        # 2026-10-09: every stage and chain is loaded and shown; the selection only decides which
+        # chains form the posterior (the pooled sections and the field statistics use this view)
+        posterior = samples.posterior_view()
+        if not any(posterior.chain_indices[stage] for stage in stages_to_disp):
+            raise ValueError(f"every stage of the report is excluded by the selection {samples.selection_path!r} "
+                             "(no chain has a 1 in \"posterior\"); set some chain's entry to 1")
 
         post_processing_dir_path = os.path.join(self.conf.output_dir, "post_processing_output")
         ensure_dir(post_processing_dir_path)
@@ -1198,14 +1201,18 @@ class SamplingRun:
         # in plots/html_report/calculate_CpUS), which broke as soon as the first stage was not displayed
         # (an explicit stages_to_disp=[1, ...], or -- since the selection mask of 2026-10-08 -- an
         # ``is_excluded`` warm-up stage dropped by default; found by the auto-mode example).
-        samples.get_summary().iloc[stages_to_disp, :].to_csv(os.path.join(post_processing_dir_path, "summary.csv"))
+        # 2026-10-09: every chain of every stage (as before the mask), plus chains_in_posterior last
+        summary_csv = samples.get_summary().iloc[stages_to_disp, :].copy()
+        chains_in_posterior = samples.chains_in_posterior(posterior)
+        summary_csv["chains_in_posterior"] = [chains_in_posterior[i] for i in stages_to_disp]
+        summary_csv.to_csv(os.path.join(post_processing_dir_path, "summary.csv"))
 
         output_html_file_path = os.path.join(post_processing_dir_path, "report_extended.html")
 
         if self.solver_instance and hasattr(self.solver_instance, 'field_builder') and hasattr(self.solver_instance, 'coords') and hasattr(self.solver_instance, 'measurement_points'):
-            field_mean, field_std = samples.compute_posterior_field_statistics(
+            field_mean, field_std = posterior.compute_posterior_field_statistics(
                 self.solver_instance.field_builder, n_max_samples=field_statistics_max_samples)
-            observation_field_mean, observation_field_std = samples.compute_posterior_field_statistics(
+            observation_field_mean, observation_field_std = posterior.compute_posterior_field_statistics(
                 self.solver_instance.set_parameters_and_get_observations, n_max_samples=field_statistics_max_samples)
             field_statistics = [
                 {
@@ -1226,7 +1233,7 @@ class SamplingRun:
 
         samples.html_report_extended(
             no_observations=self.conf.no_observations,
-            stages_to_disp=requested_stages,
+            stages_to_disp=stages_to_disp,
             observations=observations,
             output_file=output_html_file_path,
             bins1d=bins1d,
@@ -1250,6 +1257,7 @@ class SamplingRun:
             # the "Sampling Stages" section (None: the manifest copy, of every run of a lineage)
             stages=self.stages if len(samples.run_data.output_dirs) <= 1 else None,
             selection_section=True,
+            posterior=posterior,
         )
 
         # Finding 2.7: best-fit solver visualization figures are saved as separate PNG
