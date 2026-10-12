@@ -28,7 +28,7 @@ one process); see "Single process / no MPI at all" below for the no-MPI-at-all a
 
 ## Automatic mode (2026-10-08)
 
-**Status (2026-10-09, evening): preliminary, two of three safeguards in place.** Every DAMH step targets the exact posterior for the surrogate installed at that moment, the prior is bounded by default (S0, `Problem(prior_bound=8.0)`), and every automatic DAMH chunk mixes in exact random-walk steps and audits pre-rejected proposals (S2, placeholder weights 0.05 / 0.05). What is still missing for the ergodicity argument of `library_notes/18_damh_smu_validity_proof_2026-09-22.md` is the diminishing adaptation of the on-the-fly network retraining (Polyak averaging of received weights, note 25 S3). Until then treat Auto as "exact per installed surrogate, with retraining whose theoretical justification is pending"; all its numbers are placeholders until the validation plan of note 25 §6 has run.
+**Status (2026-10-09, late evening): preliminary, four safeguards in place (S0, S2, S3, S1).** Every DAMH step targets the exact posterior for the surrogate installed at that moment, the prior is bounded by default (S0, `Problem(prior_bound=8.0)`), every automatic DAMH chunk mixes in exact random-walk steps and audits pre-rejected proposals (S2, placeholder weights 0.05 / 0.05), and every chunk installs the running mean of the networks its chain received in that chunk instead of the newest one (S3, `Stage.polyak_averaging=True`: diminishing adaptation of the on-the-fly retraining, note 18 §6 N1), and every chunk scores proposals with the surrogate likelihood corrected by the surrogate's global Gaussian error model (S1, `Stage.surrogate_error_model=True`: `N(y; G~ + ε̄, Σ_noise + Σ_surr)` from the residuals on the snapshots and the held-out set; the exact likelihood is unchanged). What remains is the validation of the placeholder numbers (note 25 §6) and the verdict diagnostics. Until then treat Auto as "exact per installed surrogate, with diminishing retraining and an error-corrected surrogate likelihood, not yet validated"; all its numbers are placeholders until the validation plan of note 25 §6 has run.
 
 Instead of writing an explicit stage list by hand, `Problem.run_sampling_auto` /
 `run_sampling_local_auto` pick a stage layout and a surrogate from a budget
@@ -51,8 +51,14 @@ whole run instead, used to size the stages' `Stage.time_limit` rather than
 hard problem, never whether it is biased:
 
 - `mode="robust"` (default): the DAMH chunks propose with an adaptive `RandomWalk()`.
-- `mode="fast"`: the DAMH chunks propose with `Hamiltonian(num_steps=30,
-  integrator="dimension_robust", mass=1.0)` on the surrogate's gradients — usually far more
+- `mode="fast"`: the DAMH chunks propose with `Hamiltonian(integrator="dimension_robust",
+  mass="covariance", integration_time=3.0, integration_time_jitter=0.5)` on the surrogate's gradients
+  (C1, 2026-10-11: the mass is the inverse of the chains' pooled posterior covariance estimate —
+  warm-up and earlier chunks — re-resolved at every chunk start, `num_steps = round(T u / step)`
+  follows the adapted step; C1b: `T = 3.0` (placeholder; π/2 was tried and reverted on the C1b evidence) jittered by `u ~ Uniform(0.5, 1.5)` per trajectory, and a
+  chunk whose mass changed by at most 20 % continues the previous chunk's dual averaging, else
+  restarts it from the carried step rescaled to the new mass; the warm-up's statistics are
+  discounted to `max(100, 10 d)` states' weight) — usually far more
   efficient, but it may mix slowly (or diverge more often) on a hard/non-smooth problem, where
   `"robust"` is the safer default. Needs a gradient-capable surrogate and
   `Configuration(use_surrogate_gradients=True, transform_before_surrogate=False)` (both the
@@ -79,6 +85,13 @@ after subtracting the held-out set (below) and dividing by `C`:
   evaluated exactly and sent to the collector, the chain unchanged); both spend evaluations inside
   the chunk budgets (the per-chain budget rule is unchanged), both are placeholders
   (`surrDAMH.auto.AUTO_EXACT_STEP_PROBABILITY`, `AUTO_AUDIT_PREREJECTED`; see `docs/stages.md`).
+  **S3 (2026-10-09)**: every chunk sets `polyak_averaging=True` (`surrDAMH.auto.AUTO_POLYAK_AVERAGING`):
+  the chain installs the running mean (weight `1/k`) of the networks it received in the chunk,
+  restarted at every chunk; `notes` column `polyak_updates` reports `k` at the end of the chunk.
+  **S1 (2026-10-09)**: every chunk sets `surrogate_error_model=True` (`surrDAMH.auto.AUTO_SURROGATE_ERROR_MODEL`):
+  the surrogate likelihood is `N(y; G~ + ε̄, Σ_noise + Σ_surr)` with the residual statistics of the
+  installed network (snapshots + held-out set; snapshots only with a `SolverSpec`, where no held-out
+  set exists; the local runner pools its held-out set as well), averaged with the network under S3.
 
   **Fixed 2026-10-09**: before this date the warm-up used `is_excluded=True` instead, which made
   chunk 1 **restart** from the warm-up's starting (LHS/prior) point rather than continue from its
@@ -257,7 +270,11 @@ set by `continue_sampling` itself — leave them at their defaults, or it raises
   to `stages_b`'s first stage, so `RandomWalk(scale=None)` / `PCN(beta=None)` /
   `Hamiltonian(step_size=None)` pick up the tuned value instead of the prior-derived default. This
   is about the posterior, not the chain state, so it applies even when `chains="prior"`/`"lhs"`
-  draws fresh starting points.
+  draws fresh starting points. Since C1 (2026-10-11) this includes the chains' pooled **posterior
+  statistics** (the newest `carry_over__posterior_statistics`): the continued run keeps
+  accumulating them (an adaptive random walk's shape, `Hamiltonian(mass="covariance")`), also with
+  `chains="prior"`/`"lhs"`; with `problem=` (a different posterior) they are dropped with a printed
+  note and start empty.
 - **Surrogate, via `surrogates.reuse.SurrogateReused`** — if neither `surrogate_updater=` nor
   `surrogate_evaluator=` is given: a checkpoint saved in `previous`'s `sampling_output/`
   (`surrogate_checkpoint.pt` + `surrogate_training_data.npz`) is restored, so a DAMH/Hamiltonian

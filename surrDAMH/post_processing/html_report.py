@@ -406,12 +406,32 @@ class SamplesReports(SamplesPlots):
             elif "beta" in carried_stage:
                 parts.extend(scalar_table([("beta", carried_stage["beta"])]))
             elif "step_size" in carried_stage:
-                parts.extend(scalar_table([("step_size", carried_stage["step_size"])]))
-            else:
+                rows = [("step_size", carried_stage["step_size"])]
+                if "dual_averaging" in carried_stage:  # C1: the recursion state a later stage may continue
+                    m, _h_bar, _log_eps_bar, _mu = np.asarray(carried_stage["dual_averaging"], dtype=float).ravel()
+                    rows.append(("dual-averaging updates m (mean over chains)", float(m)))
+                parts.extend(scalar_table(rows))
+            elif set(carried_stage) - {"posterior_statistics", "posterior_statistics_n_seen"}:
                 # a proposal family added after this report code (forward compatibility):
                 # show whatever scalar-shaped items came back rather than nothing
                 parts.extend(scalar_table([(key, value) for key, value in carried_stage.items()
                                           if np.asarray(value).ndim == 0]))
+            if "posterior_statistics" in carried_stage:
+                # C1 (2026-10-11): the chain's persistent posterior statistics, pooled over the chains
+                vector = np.asarray(carried_stage["posterior_statistics"], dtype=float).ravel()
+                d_stat = int(round((-1 + np.sqrt(1 + 4 * (vector.size - 1))) / 2))
+                n_stat = int(round(vector[0]))
+                rows = [("posterior_statistics.n (pooled states, all stages so far)", n_stat)]
+                if "posterior_statistics_n_seen" in carried_stage:
+                    rows.append(("posterior_statistics.n_seen (states seen, never discounted)",
+                                 int(np.asarray(carried_stage["posterior_statistics_n_seen"]))))
+                if n_stat >= 2 and vector.size == 1 + d_stat + d_stat * d_stat:
+                    stat_cov = vector[1 + d_stat:].reshape(d_stat, d_stat) / (n_stat - 1)
+                    rows.append(("posterior_statistics: trace(covariance)/d", float(np.trace(stat_cov)) / d_stat))
+                parts.append('            <p class="description">Posterior statistics carried on (one estimate per '
+                             'run, updated by every stage; used by an adaptive random walk\'s shape and by '
+                             'Hamiltonian(mass="covariance")):</p>')
+                parts.extend(scalar_table(rows))
             return parts
 
         manifest = dict(getattr(self.run_data, "manifest", None) or {})
@@ -1069,9 +1089,9 @@ class SamplesReports(SamplesPlots):
                           'by the proposal actually CARRIED OVER to the next stage (the pooled covariance/beta/step size that stage '
                           'started from). Random walk: log_sigma (Robbins-Monro log-scale), trace_C_over_d and shrinkage_delta of the '
                           'installed covariance estimate (NaN before the warm-up count is reached); pCN: beta; Hamiltonian family: the '
-                          'leapfrog log_step_size and its dual-averaged log_step_size_bar. In a DAMH stage the random walk and pCN are '
-                          'fed the OVERALL outer acceptance probability (a pre-rejected iteration counts as 0), the Hamiltonian step '
-                          'size the sub-chain\'s own acceptance against the surrogate. Values are shown as logged, i.e. on the log scale '
+                          'leapfrog log_step_size and its dual-averaged log_step_size_bar. In a DAMH stage every proposal is fed the '
+                          'sub-chain\'s own per-step acceptance against the surrogate (the random walk and pCN since 2026-10-10; before, '
+                          'the overall outer acceptance). Values are shown as logged, i.e. on the log scale '
                           f'where the proposal adapts on the log scale.{escape(chains_note)}</p>')
         adaptive_blocks = 0
         for stage_idx in stages_to_disp:
@@ -1082,7 +1102,11 @@ class SamplesReports(SamplesPlots):
             carry = self.carry_over[stage_idx] if stage_idx < len(self.carry_over) else None
             proposal = proposal_items(spec)
             declared_adaptive = proposal.get("adaptive", spec.get("adaptive", False))
-            if not has_trace and not declared_adaptive and carry is None:
+            # C1: every stage writes a carry_over file (the posterior statistics); only one with
+            # proposal keys marks an adaptive stage
+            carry_has_proposal = carry is not None and bool(set(carry[0]) - {"posterior_statistics",
+                                                                              "posterior_statistics_n_seen"})
+            if not has_trace and not declared_adaptive and not carry_has_proposal:
                 continue
             adaptive_blocks += 1
             html_parts.extend(stage_open(f"adaptation_{stage_name}", f"Stage: {stage_name}"))

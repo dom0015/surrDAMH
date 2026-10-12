@@ -230,6 +230,9 @@ def _merged_carry_over(dirs: list[str]) -> dict:
     """
     Proposal carry-over of a whole lineage: every stage of every run, oldest first, merged
     with later stages winning -- the same ``carried.update(...)`` the stage loop does within a run.
+    Since C1 (2026-10-11) this includes the newest pooled ``"posterior_statistics"`` (every stage
+    writes it), which seeds the continued run's statistics (``chains="prior"/"lhs"`` too: the
+    posterior does not depend on the starting points; ``problem=`` drops it).
     """
     from surrDAMH.modules.continuation import load_carry_over
     carried: dict = {}
@@ -645,14 +648,15 @@ class Problem:
                     initial_carry_over=_initial_carry_over,
                     initial_sample_is_carried_over=_initial_sample_is_carried_over)
 
-            _run_role(_sampler_role, "SAMPLER")
+            proposal_resolution = _run_role(_sampler_role, "SAMPLER")
 
             if rank_world == 0:
                 # rank 0 is always a sampler rank (ranks 0..no_samplers-1); finalize here is the
                 # natural end point for it, with no extra MPI communication or barrier.
                 try:
                     from surrDAMH.modules.manifest import finalize_run_manifest
-                    finalize_run_manifest(conf.output_dir, extra={})
+                    finalize_run_manifest(conf.output_dir,
+                                          extra={"proposal_resolution": proposal_resolution or []})
                 except Exception as exc:
                     print(f"WARNING: failed to finalize run manifest: {exc}", flush=True)
 
@@ -667,7 +671,8 @@ class Problem:
                            surrogate_evaluator: Evaluator | None = None, *,
                            _initial_carry_over: dict | None = None, _initial_sample_is_carried_over: bool = False,
                            _lineage: dict | None = None, _save_surrogate_state: bool = False,
-                           _auto: dict | None = None) -> "SamplingRun":
+                           _auto: dict | None = None,
+                           _error_model_heldout: tuple | None = None) -> "SamplingRun":
         """
         Run all stages of a single chain in this process, without MPI roles (no collector,
         no solvers pool). The chain reproduces chain 0 of an MPI run with the same
@@ -701,7 +706,7 @@ class Problem:
                            updater=surrogate_updater, evaluator=surrogate_evaluator, problem=self,
                            initial_carry_over=_initial_carry_over,
                            initial_sample_is_carried_over=_initial_sample_is_carried_over,
-                           lineage=_lineage, auto=_auto)
+                           lineage=_lineage, auto=_auto, error_model_heldout=_error_model_heldout)
         if _save_surrogate_state and surrogate_updater is not None:
             _save_surrogate_state_of(surrogate_updater, conf.output_dir)
         return SamplingRun(problem=self, conf=conf, stages=stages, runner="local",
@@ -728,8 +733,9 @@ class Problem:
         trains the first surrogate; then 4 DAMH-SMU chunks (sub-chain length 1) share the rest
         of the per-chain budget ``B``. With ``B < 50 d`` or ``conf.use_collector=False`` a
         single adaptive MH stage runs instead. ``mode="robust"``: the chunks propose with an
-        adaptive ``RandomWalk()``; ``mode="fast"``: with ``Hamiltonian(num_steps=30,
-        integrator="dimension_robust", mass=1.0)`` on the surrogate's gradients. Both modes are
+        adaptive ``RandomWalk()``; ``mode="fast"``: with ``Hamiltonian(integrator="dimension_robust",
+        mass="covariance", integration_time=3.0)`` on the surrogate's gradients (the mass is the
+        inverse of the chains' pooled posterior covariance estimate, C1). Both modes are
         exact. The surrogate is a ``NeuralNetworkUpdater(hidden_layer_sizes=(64, 64),
         activation="silu", solver="adamw", seed=0)``. With an in-process ``Solver`` a held-out
         set of ``min(256, max(2 d, 0.02 budget))`` prior draws is evaluated on the collector
@@ -780,16 +786,26 @@ class Problem:
         ``conf`` needs ``use_collector=False, use_solvers_pool=False``). Same plan with one
         chain; the surrogate is trained in process. The held-out set (in-process ``Solver``
         only) is evaluated before the run and saved to ``sampling_output/surrogate_test_data.npz``;
-        the local runner does not monitor surrogate quality with it.
+        the local runner does not monitor surrogate quality with it, but pools it with the
+        snapshots for the surrogate error model (S1).
         """
         plan = plan_auto(self, conf, budget=budget, time_limit=time_limit, mode=mode, local=True,
                          surrogate_updater=surrogate_updater, surrogate_test_data=surrogate_test_data)
         conf._set_by_auto(**plan.conf_settings)
         print(plan.describe(), flush=True)
-        if isinstance(plan.surrogate_test_data, AutoTestDataRequest):
-            plan.surrogate_test_data.generate(self, conf.transform_before_surrogate).save(conf.output_dir)
+        test_data = plan.surrogate_test_data
+        if isinstance(test_data, AutoTestDataRequest):
+            test_data = test_data.generate(self, conf.transform_before_surrogate)
+            test_data.save(conf.output_dir)
+        # S1: (surrogate-space parameters, observations) of the held-out set for the error model
+        if isinstance(test_data, TestData):
+            heldout = (test_data.surrogate_parameters, test_data.observations)
+        elif test_data is not None:
+            heldout = (np.asarray(test_data[0]), np.asarray(test_data[1]))
+        else:
+            heldout = None
         return self.run_sampling_local(conf, plan.stages, surrogate_updater=plan.surrogate_updater,
-                                       _auto=plan.manifest_entry())
+                                       _auto=plan.manifest_entry(), _error_model_heldout=heldout)
 
     def _manifest_entry(self) -> dict[str, Any]:
         box = None if self.prior_box is None else {"lower": self.prior_box[0].tolist(),
@@ -1060,6 +1076,14 @@ class SamplingRun:
                                   lineage_generation=generation)
 
         initial_carry_over = _merged_carry_over(previous_dirs)
+        if not same_problem:
+            initial_carry_over.pop("posterior_statistics_n_seen", None)  # goes with the statistics
+        if not same_problem and initial_carry_over.pop("posterior_statistics", None) is not None:
+            # C1: the statistics estimate the previous problem's posterior; with a replacement problem
+            # (e.g. new observed data) they are dropped, the proposal steps are still carried
+            print("Note: continue_sampling(problem=...): a different problem means a different posterior; the "
+                  "carried posterior statistics of the previous run(s) are dropped (the new run starts them "
+                  "empty), the tuned proposal steps are still carried", flush=True)
 
         if surrogate_updater is None and surrogate_evaluator is None:
             checkpoint_path, data_path = surrogate_state_paths(self.output_dir)

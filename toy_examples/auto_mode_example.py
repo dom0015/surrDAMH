@@ -53,12 +53,12 @@ likelihood = surrDAMH.distributions.Normal(mean=observations, sd=1.0)
 
 problem = surrDAMH.Problem(prior, likelihood, solver=solver_instance)
 
-conf = surrDAMH.Configuration(output_dir="out_auto_example", use_solvers_pool=False, use_collector=True)
+conf = surrDAMH.Configuration(output_dir="out_auto_example_fast", use_solvers_pool=False, use_collector=True)
 
 # --------------------------------------------------------------------------------------------
 # automatic mode: a budget of exact model evaluations instead of an explicit stage list
 # --------------------------------------------------------------------------------------------
-run = problem.run_sampling_auto(conf, budget=6000, mode="robust")
+run = problem.run_sampling_auto(conf, budget=6000, mode="fast")
 # Alternatives (uncomment one, instead of the call above):
 # run = problem.run_sampling_auto(conf, budget=6000, mode="fast")       # Hamiltonian on the
 #                                                                        # surrogate's gradients

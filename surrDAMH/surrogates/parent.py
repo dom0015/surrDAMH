@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+import copy
 import warnings
 from typing import Literal
 
@@ -56,7 +57,15 @@ class Evaluator:
 
     Evaluators that cannot differentiate keep raising ``NotImplementedError`` from
     ``jacobian``/``vjp``; ``set_use_gradients`` silently no-ops for them.
+
+    ``error_model`` (S1, 2026-10-09): the ``surrDAMH.modules.error_model.ErrorModel`` of this
+    evaluator's residuals, set by the collector / local surrogate manager after every retraining
+    (``None``: not estimated). Shipped with the pickled evaluator; used by stages with
+    ``Stage.surrogate_error_model=True``.
     """
+
+    #: S1: residual statistics attached after (re)training; ``None`` when unavailable
+    error_model = None
 
     def __init__(self, no_parameters: int, no_observations: int) -> None:
         self.no_parameters = int(no_parameters)
@@ -105,6 +114,43 @@ class Evaluator:
     def set_use_gradients(self, enabled: bool) -> None:
         """Optional hook for evaluators with switchable gradient support."""
         return None
+
+    def averageable_state(self) -> dict[str, npt.NDArray] | None:
+        """
+        The evaluator's parameters as float arrays that may be averaged entrywise (S3, 2026-10-09).
+
+        Used by ``Stage.polyak_averaging``: a sampler averages the states of the evaluators it
+        receives within a stage and installs ``with_averageable_state(average)``. The dict maps
+        names to float64 arrays (copies; the caller may modify them); two evaluators of the same
+        architecture must return the same keys and shapes. ``None`` means "not averageable": the
+        evaluator is then installed unchanged.
+
+        Base class: the attached ``error_model`` (S1) as ``ErrorModel.as_state()`` (keys
+        ``error_model.bias`` / ``error_model.cov``), or ``None`` without one. A subclass that
+        averages its own parameters adds them to this dict (``PyTorchNNEvaluator``).
+        """
+        error_model = getattr(self, "error_model", None)
+        if error_model is None:
+            return None
+        return error_model.as_state()
+
+    def with_averageable_state(self, state: dict[str, npt.NDArray]) -> "Evaluator":
+        """
+        A NEW evaluator equal to this one except that its parameters are ``state`` (same keys and
+        shapes as ``averageable_state()``); ``self`` is not modified (S3, 2026-10-09). Required
+        only by evaluators whose ``averageable_state()`` is not ``None``.
+
+        Base class: a shallow copy whose ``error_model`` is built from the error-model entries of
+        ``state`` (S1); any other entry raises ``NotImplementedError``, as does a ``state`` without
+        error-model entries.
+        """
+        from surrDAMH.modules.error_model import ErrorModel, split_error_model_state
+        model_part, error_part = split_error_model_state(state)
+        if model_part or not error_part:
+            raise NotImplementedError(f"{type(self).__name__} does not support with_averageable_state")
+        new = copy.copy(self)
+        new.error_model = ErrorModel.from_state(error_part)
+        return new
 
     def as_solver(self):
         return SurrogateAsSolver(self.__call__)

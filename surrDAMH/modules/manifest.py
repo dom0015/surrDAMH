@@ -32,7 +32,7 @@ import numpy as np
 
 from surrDAMH.modules.seeds import (ALGORITHM_SEED_OFFSET, EXACT_PROPOSAL_SEED_OFFSET,
                                     EXACT_STEP_SEED_OFFSET, PROPOSAL_SEED_OFFSET,
-                                    SEED_FORMULA, generation_seed_offset, initial_sample_seed,
+                                    SEED_FORMULA, conf_seed_offset, initial_sample_seed,
                                     seed_no_stages, stage_seed0)
 
 from surrDAMH.modules.tools import ensure_dir
@@ -238,7 +238,7 @@ def _seeds_dict(conf: Any, stages: list) -> dict[str, Any]:
     # of its lineage: global stage index offset + i, no_stages = the lineage's stage count
     offset = int(getattr(conf, "stage_index_offset", 0) or 0)
     no_stages_seed = seed_no_stages(getattr(conf, "no_stages_lineage", None), no_stages)
-    generation_offset = generation_seed_offset(getattr(conf, "lineage_generation", 0))
+    generation_offset = conf_seed_offset(conf)
     for rank in range(conf.no_samplers):
         for i in range(no_stages):
             seed0 = stage_seed0(no_stages_seed, rank, offset + i) + generation_offset
@@ -265,6 +265,8 @@ def _seeds_dict(conf: Any, stages: list) -> dict[str, Any]:
     seeds: dict[str, Any] = {
         "formula": SEED_FORMULA,
         "lhs_seed": generation_offset if initial_sample_type == "lhs" else None,
+        # study 29 (2026-10-12): Configuration.seed_offset, included in every seed listed here
+        "seed_offset": int(getattr(conf, "seed_offset", 0) or 0),
         "initial_sample_type": initial_sample_type,
         "initial_sample_reproducible": reproducible,
         "per_rank": per_rank,

@@ -24,7 +24,8 @@ Continuation works in both directions: every stage's last sample is written to
 ``initial_sample_type="continued"`` reads chain 0 of the source run.
 
 Not covered here (MPI / collector territory, unchanged):
-- multi-chain pooling of an adaptive proposal's statistics (the single chain keeps its own),
+- multi-chain pooling of an adaptive proposal's and of the posterior statistics (one chain: the
+  pooling formula runs on a single row),
 - solver pools and spawned solver processes.
 """
 
@@ -43,12 +44,14 @@ from surrDAMH.modules import lhs_normal as lhs
 from surrDAMH.modules.algorithm_interfaces_local import (LocalEvaluatorProvider,
                                                          LocalSolverAdapter,
                                                          LocalSurrogateManager)
-from surrDAMH.modules.continuation import describe_initial_sample_type, save_carry_over, save_last_sample
+from surrDAMH.modules.continuation import (describe_initial_sample_type, initial_posterior_statistics,
+                                           record_posterior_statistics, save_carry_over, save_last_sample,
+                                           discount_burn_in_statistics)
 from surrDAMH.modules.manifest import (build_run_manifest, finalize_run_manifest,
                                        write_run_manifest)
 from surrDAMH.modules.proposal_builder import build_exact_step_proposal, build_proposal
 from surrDAMH.modules.seeds import (EXACT_PROPOSAL_SEED_OFFSET, EXACT_STEP_SEED_OFFSET,
-                                    generation_seed_offset, initial_sample_seed, seed_no_stages,
+                                    conf_seed_offset, initial_sample_seed, seed_no_stages,
                                     stage_seed0)
 from surrDAMH.modules.torch_threads import apply_torch_threads
 from surrDAMH.solvers import Solver
@@ -76,6 +79,8 @@ class StageResult:
     counter_exact_accepted: int = 0
     counter_audited: int = 0
     counter_audit_hidden: int = 0
+    # S3 (2026-10-09): evaluators averaged into the installed one (Stage.polyak_averaging), 0 when off
+    counter_polyak_updates: int = 0
 
 
 @dataclass
@@ -110,7 +115,7 @@ def _get_initial_sample(conf: Configuration, prior: Distribution, no_stages: int
     (``initial_sample_seed(no_stages, 0)``, G4), so chain-0 reproduction also holds for
     ``initial_sample_type="prior"``/``"user_specified"``.
     """
-    generation_offset = generation_seed_offset(getattr(conf, "lineage_generation", 0))
+    generation_offset = conf_seed_offset(conf)
     generator = np.random.default_rng(initial_sample_seed(no_stages, LOCAL_RANK_WORLD) + generation_offset)
     if conf.initial_sample_type == "lhs":
         initial_samples = lhs.lhs_normal(loc=prior.mean, scale=conf.lhs_scale, n=conf.no_samplers,
@@ -129,7 +134,8 @@ def run_local(conf: Configuration, prior: Distribution, likelihood: Distribution
               solver: Solver, updater: Updater | None = None,
               evaluator: Evaluator | None = None, *, problem: Any = None,
               initial_carry_over: dict | None = None, initial_sample_is_carried_over: bool = False,
-              lineage: dict | None = None, auto: dict | None = None) -> SamplingResult:
+              lineage: dict | None = None, auto: dict | None = None,
+              error_model_heldout: tuple | None = None) -> SamplingResult:
     """
     Run all sampling stages of a single chain in one process (no MPI roles).
 
@@ -159,6 +165,8 @@ def run_local(conf: Configuration, prior: Distribution, likelihood: Distribution
             no entry is written).
         auto: the manifest's ``"auto"`` entry of an automatic run (``Problem.run_sampling_local_auto``;
             ``None``: no entry is written).
+        error_model_heldout: ``(parameters, observations)`` of a held-out set pooled with the
+            snapshots for the surrogate error model (S1; ``run_sampling_local_auto`` passes its set).
 
     Returns:
         ``SamplingResult`` with one ``StageResult`` per stage.
@@ -201,6 +209,7 @@ def run_local(conf: Configuration, prior: Distribution, likelihood: Distribution
             min_snapshots_initial=conf.min_snapshots_initial,
             min_snapshots_to_update=conf.min_snapshots_to_update,
             initial_snapshots=updater.get_initial_snapshots(),
+            error_model_heldout=error_model_heldout,
         )
         evaluator_provider = surrogate_manager
     elif evaluator is not None:
@@ -225,19 +234,26 @@ def run_local(conf: Configuration, prior: Distribution, likelihood: Distribution
         for key, value in sorted(initial_carry_over.items()):
             print("Local sampler - carry-over from the previous run", key + ":",
                   np.asarray(value, dtype=float).ravel().tolist(), flush=True)
+    # C1: the chain's persistent posterior statistics, exactly as in process_SAMPLER
+    posterior_statistics = initial_posterior_statistics(carried, conf.no_parameters)
+    proposal_resolution: list[dict] = []
 
     for i, stage in enumerate(stages):
         i_global = stage_index_offset + i
         seed0 = (stage_seed0(no_stages_seed, LOCAL_RANK_WORLD, i_global)
-                 + generation_seed_offset(getattr(conf, "lineage_generation", 0)))
+                 + conf_seed_offset(conf))
 
+        statistics_n_start = int(posterior_statistics.n)
+        posterior_statistics.begin_stage()  # as in process_SAMPLER
         proposal = build_proposal(stage=stage, conf=conf, prior=prior, seed=seed0+1,
-                                  carried=carried, stage_index=i_global)
+                                  carried=carried, stage_index=i_global, statistics=posterior_statistics)
         # S2: the exact step's own random walk (seed0 + 5), only when the stage uses it
         exact_proposal = None
         if stage.algorithm == "DAMH" and stage.exact_step_probability > 0.0:
             exact_proposal = build_exact_step_proposal(conf=conf, prior=prior, seed=seed0 + EXACT_PROPOSAL_SEED_OFFSET,
-                                                       carried=carried, stage_index=i_global)
+                                                       carried=carried, stage_index=i_global,
+                                                       statistics=posterior_statistics,
+                                                       scale=stage.exact_step_scale)
 
         # choice of services for this stage (mirrors process_SAMPLER):
         snapshot_collector_stage = surrogate_manager if stage.send_snapshots_to_collector else None
@@ -269,22 +285,41 @@ def run_local(conf: Configuration, prior: Distribution, likelihood: Distribution
                                  seed=seed0+2,
                                  initial_sample_is_carried_over=initial_sample_is_carried_over,
                                  exact_step_seed=seed0 + EXACT_STEP_SEED_OFFSET,
-                                 exact_proposal=exact_proposal)
+                                 exact_proposal=exact_proposal,
+                                 posterior_statistics=posterior_statistics)
         alg_instance.run()
+
+        # C1: the "pooling" of the posterior statistics over one chain (the same stage-end code as
+        # process_SAMPLER applies to its Allgather buffer of increments, here with a single row, so
+        # the carried statistics equal those of a one-sampler MPI run)
+        posterior_statistics.finish_stage(posterior_statistics.stage_increment_vector()[None, :])
 
         # carry-over of the adapted proposal for the next stage (2026-09-20). One chain, so the
         # "pooling" has a single row: ``set_pooled_state`` then keeps this chain's own adapted
         # state exactly, which is what makes a local run reproduce chain 0 of a one-sampler MPI
         # run (an MPI run with several samplers pools their statistics and gets a different,
         # better, carry-over -- as it did before, when it averaged their covariances).
+        stage_carry_over: dict = {}
+        summary: dict = {}
         if stage.adaptive:
             buf = np.ascontiguousarray(proposal.adapted_state(), dtype=np.float64)
             proposal.set_pooled_state(buf[None, :])
             stage_carry_over = proposal.carry_over()
-            carried.update(stage_carry_over)
-            # same file as process_SAMPLER writes from sampler rank 0 (2026-09-21); a local
-            # run has exactly one chain, so there is no rank to pick among
-            save_carry_over(conf, stage.name, stage_carry_over, proposal.adapted_summary())
+            summary = proposal.adapted_summary()
+        # C1b: burn-in discount of the statistics, exactly as in process_SAMPLER
+        statistics_discounted_from_n = discount_burn_in_statistics(stage, posterior_statistics, summary)
+        record_posterior_statistics(stage_carry_over, summary, posterior_statistics)  # C1, every stage
+        carried.update(stage_carry_over)
+        # same file as process_SAMPLER writes from sampler rank 0 (2026-09-21); a local
+        # run has exactly one chain, so there is no rank to pick among
+        save_carry_over(conf, stage.name, stage_carry_over, summary)
+        proposal_resolution.append({"name": stage.name,
+                                    "posterior_statistics_n_start": statistics_n_start,
+                                    "posterior_statistics_n_end": int(posterior_statistics.n),
+                                    "posterior_statistics_discounted_from_n": statistics_discounted_from_n,
+                                    **getattr(proposal, "resolution", {}),
+                                    # study 29: the fixed exact random walk (Stage.exact_step_scale) only
+                                    **getattr(exact_proposal, "resolution", {})})
 
         # initial sample for the next stage (after a use_only_surrogate stage its surrogate
         # observations are dropped so that the next stage re-evaluates it exactly, finding A11):
@@ -308,14 +343,17 @@ def run_local(conf: Configuration, prior: Distribution, likelihood: Distribution
                                                 counter_exact_steps=alg_instance.counter_exact_steps,
                                                 counter_exact_accepted=alg_instance.counter_exact_accepted,
                                                 counter_audited=alg_instance.counter_audited,
-                                                counter_audit_hidden=alg_instance.counter_audit_hidden))
+                                                counter_audit_hidden=alg_instance.counter_audit_hidden,
+                                                counter_polyak_updates=alg_instance.counter_polyak_updates))
         print("Stage", stage.name, "finished - acc/rej/prerej samples:", alg_instance.counter_accepted,
               alg_instance.counter_rejected, alg_instance.counter_prerejected,
               "- non-finite proposals:", alg_instance.counter_nonfinite_proposals,
               "- refused non-finite evaluators:", alg_instance.counter_nonfinite_evaluators,
               "- out-of-bounds proposals:", alg_instance.counter_out_of_bounds,
               f"- exact steps: {alg_instance.counter_exact_accepted}/{alg_instance.counter_exact_steps} accepted",
-              f"- audited: {alg_instance.counter_audited} (hidden: {alg_instance.counter_audit_hidden})", flush=True)
+              f"- audited: {alg_instance.counter_audited} (hidden: {alg_instance.counter_audit_hidden})"
+              + (f" - polyak updates: {alg_instance.counter_polyak_updates}" if stage.polyak_averaging else ""),
+              flush=True)
 
     if evaluator_provider is not None:
         evaluator_provider.close()
@@ -340,7 +378,8 @@ def run_local(conf: Configuration, prior: Distribution, likelihood: Distribution
         stage_counters = [{"name": r.name, "counter_accepted": r.counter_accepted,
                            "counter_rejected": r.counter_rejected,
                            "counter_prerejected": r.counter_prerejected} for r in result.stage_results]
-        finalize_run_manifest(conf.output_dir, extra={"stage_counters": stage_counters})
+        finalize_run_manifest(conf.output_dir, extra={"stage_counters": stage_counters,
+                                                      "proposal_resolution": proposal_resolution})
     except Exception as exc:
         print(f"WARNING: failed to write/finalize run manifest: {exc}", flush=True)
 

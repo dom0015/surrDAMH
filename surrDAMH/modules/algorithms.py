@@ -14,7 +14,9 @@ from typing import Any, List, cast
 import numpy as np
 import numpy.typing as npt
 
+from surrDAMH.distributions.normal import Normal
 from surrDAMH.distributions.parent import Distribution
+from surrDAMH.modules.error_model import corrected_likelihood, split_error_model_state
 from surrDAMH.modules.algorithm_interfaces import (AlgorithmConfiguration,
                                                    EvaluatorProvider,
                                                    ObservationProvider,
@@ -22,6 +24,7 @@ from surrDAMH.modules.algorithm_interfaces import (AlgorithmConfiguration,
 from surrDAMH.modules.manifest import raw_data_columns, samples_columns
 from surrDAMH.modules.monitoring import SamplingOutputMonitor
 from surrDAMH.modules.proposals import Proposal
+from surrDAMH.modules.posterior_statistics import PosteriorStatistics
 from surrDAMH.modules.seeds import ALGORITHM_SEED_OFFSET, EXACT_STEP_SEED_OFFSET
 from surrDAMH.solvers import check_observations_shape
 from surrDAMH.stages import Stage
@@ -41,6 +44,8 @@ AUDIT_HIDDEN_NATS = 5.0
 STATE_TYPE_AUDITED = "audited"
 #: ``notes`` columns appended by S2 (after ``out_of_bounds``); readers select columns by name.
 S2_NOTES_COLUMNS: tuple[str, ...] = ("exact_steps", "exact_accepted", "audited", "audit_hidden")
+#: notes column appended by S3 (2026-10-09): ``counter_polyak_updates`` of the stage
+S3_NOTES_COLUMNS: tuple[str, ...] = ("polyak_updates",)
 
 
 def check_initial_sample_in_box(prior: Distribution, parameters: npt.NDArray, chain: str) -> None:
@@ -170,7 +175,8 @@ class AlgorithmBase:
                  observation_provider: ObservationProvider, snapshot_collector: SnapshotCollector | None = None,
                  evaluator_provider: EvaluatorProvider | None = None, seed: int = 0,
                  initial_sample_is_carried_over: bool = False, exact_step_seed: int | None = None,
-                 exact_proposal: Proposal | None = None) -> None:
+                 exact_proposal: Proposal | None = None,
+                 posterior_statistics: PosteriorStatistics | None = None) -> None:
         """
         ``seed`` seeds the acceptance stream (``seed0 + 2``). ``exact_step_seed`` (S2) seeds the
         stream of the DAMH exact-step choice and of the audit draws (``seed0 + 4``; default:
@@ -178,6 +184,13 @@ class AlgorithmBase:
         proposal, required by a DAMH stage with ``exact_step_probability > 0`` (both runners build
         it with ``proposal_builder.build_exact_step_proposal``). Nothing is drawn from the S2
         stream unless one of the two S2 stage fields is > 0.
+
+        ``posterior_statistics`` (C1, 2026-10-11) is the chain's ONE persistent
+        ``PosteriorStatistics`` (the runners pass the object carried from the previous stages, or a
+        fresh one; ``None`` = a fresh one). The algorithm updates it with the post-decision chain
+        state once per OUTER iteration -- MH, DAMH delayed-acceptance and pre-rejected iterations,
+        S2 exact steps -- after the accept/reject decision and BEFORE the proposal's ``adapt()``;
+        an adaptive random walk built with the same object only reads it.
         """
         self.stage = stage
         self.proposal = proposal
@@ -190,6 +203,8 @@ class AlgorithmBase:
         self.snapshot_collector = snapshot_collector
         self.evaluator_provider = evaluator_provider
         self.seed = seed
+        self.posterior_statistics = (PosteriorStatistics(int(conf.no_parameters)) if posterior_statistics is None
+                                     else posterior_statistics)
         if self.snapshot_collector is not None and stage.send_snapshots_to_collector:
             self.send_to_collector = self._send_to_collector
         else:
@@ -232,6 +247,27 @@ class AlgorithmBase:
         self.counter_exact_accepted = 0
         self.counter_audited = 0
         self.counter_audit_hidden = 0
+        # S3 (2026-10-09), Stage.polyak_averaging: number k of evaluators averaged into the
+        # installed one in this stage, and their running mean (Evaluator.averageable_state). Both
+        # live in this instance = one stage of one chain, so every stage starts again from k = 0.
+        self.counter_polyak_updates = 0
+        self._polyak_average: dict[str, npt.NDArray] | None = None
+        self._polyak_note_emitted = False
+        # the evaluator last RECEIVED from the provider (the installed one is its average when
+        # polyak_averaging is on, the same object otherwise)
+        self._last_received_evaluator = None
+        # S1 (2026-10-09), Stage.surrogate_error_model: the likelihood every SURROGATE log-likelihood
+        # (and its gradient) of this stage uses. It is the exact likelihood object itself unless the
+        # flag is on, the likelihood is a Normal and the installed evaluator carries an error_model;
+        # then corrected_likelihood(likelihood, evaluator.error_model), rebuilt at every install.
+        self.likelihood_surrogate = self.likelihood
+        self._error_model_note_emitted = False
+        self.error_model_enabled = bool(getattr(stage, "surrogate_error_model", False))
+        if self.error_model_enabled and not isinstance(self.likelihood, Normal):
+            self.error_model_enabled = False
+            print(f"rank {self.rank_world}, stage {self.stage.name}: surrogate_error_model is set, but the likelihood "
+                  f"is a {type(self.likelihood).__name__}, not a Normal; the error model is unavailable and the flag "
+                  "is ignored", flush=True)
         self.monitor = SamplingOutputMonitor(
             output_dir=self.conf.output_dir,
             stage=stage,
@@ -477,6 +513,18 @@ class AlgorithmBase:
         log_prior = self.prior.logpdf(parameters)
         return log_likelihood, log_prior
 
+    def _compute_surrogate_log_posterior_terms(self, parameters: npt.NDArray,
+                                               observations_approx: npt.NDArray) -> tuple[float, float]:
+        """
+        ``(log_likelihood_approx, log_prior)`` for surrogate observations: the likelihood is
+        ``self.likelihood_surrogate`` (S1), which is ``self.likelihood`` itself unless
+        ``Stage.surrogate_error_model`` is in effect -- then the call is the one of
+        ``_compute_log_posterior_terms`` exactly.
+        """
+        log_likelihood = self.likelihood_surrogate.logpdf(observations_approx)
+        log_prior = self.prior.logpdf(parameters)
+        return log_likelihood, log_prior
+
     def _draw_acceptance_decision(self, log_acceptance_probability: float) -> bool:
         temp = self._generator.uniform(0.0, 1.0)
         if np.log(temp) < log_acceptance_probability:
@@ -551,13 +599,14 @@ class AlgorithmBase:
         self._write_adaptation_stats()
         # out_of_bounds (S0, 2026-10-09) and the S2 counters are appended last: readers select
         # notes columns by name
+        # polyak_updates (S3, 2026-10-09) after them, also last
         self.monitor(data_name="notes", row=["accepted", "rejected", "pre-rejected", "sum", "seed", "out_of_bounds",
-                                             *S2_NOTES_COLUMNS],
+                                             *S2_NOTES_COLUMNS, *S3_NOTES_COLUMNS],
                      condition=self.stage.save_to_file)
         no_all = self.counter_accepted + self.counter_rejected + self.counter_prerejected
         notes = [self.counter_accepted, self.counter_rejected, self.counter_prerejected, no_all, self.seed,
                  self.counter_out_of_bounds, self.counter_exact_steps, self.counter_exact_accepted,
-                 self.counter_audited, self.counter_audit_hidden]
+                 self.counter_audited, self.counter_audit_hidden, self.counter_polyak_updates]
         self.monitor(data_name="notes", row=notes, condition=self.stage.save_to_file)
         self.monitor.close_files()
 
@@ -586,21 +635,23 @@ class AlgorithmBase:
     def _initialize_current_approximation(self) -> None:
         if self.evaluator_provider is None:
             return
-        self.surrogate_evaluator = self.evaluator_provider.evaluator
-        if self.surrogate_evaluator is None:
+        evaluator = self.evaluator_provider.evaluator
+        if evaluator is None:
             # tell the collector we are about to block for the first evaluator (2026-09-22): it
             # trains on the snapshots it has once every sampler is blocked, instead of waiting
             # forever for min_snapshots_initial that nobody can produce any more
             announce = getattr(self.evaluator_provider, "announce_waiting", None)
             if announce is not None:
                 announce()
-            self.surrogate_evaluator = self.evaluator_provider.get_evaluator()
+            self._install_evaluator(self.evaluator_provider.get_evaluator())
             self.evaluator_provider.request_evaluator()
             if not self.stage.surrogate_model_updates:
                 self._install_newest_evaluator()
+        else:
+            self._install_evaluator(evaluator)
         self.current.observations_approx = cast(npt.NDArray, self._get_surrogate_observations(self.current.parameters))
         # assert self.current.observations_approx is not None
-        self.current.log_likelihood_approx, self.current.log_prior = self._compute_log_posterior_terms(
+        self.current.log_likelihood_approx, self.current.log_prior = self._compute_surrogate_log_posterior_terms(
             self.current.parameters,
             self.current.observations_approx,
         )
@@ -623,18 +674,112 @@ class AlgorithmBase:
         ``get_evaluator`` already returns the newest trained evaluator. A newest evaluator that
         predicts non-finite values at the current state is refused, as in
         ``_refresh_surrogate_evaluator_if_needed``.
+
+        With ``Stage.polyak_averaging`` the newest evaluator REPLACES the first one in the average
+        (``k`` stays 1): the first one was never used for sampling, it only answered the start-up
+        request.
         """
         get_newest = getattr(self.evaluator_provider, "get_newest_evaluator", None)
         if get_newest is None:
             return
         candidate = get_newest()
-        if candidate is None or candidate is self.surrogate_evaluator:
+        if candidate is None or candidate is self._last_received_evaluator:
             return
-        if not self._evaluator_is_finite(candidate):
+        evaluator, pending = self._polyak_candidate(candidate, restart=True)
+        if not self._evaluator_is_finite(evaluator):
             self.counter_nonfinite_evaluators += 1
             self._warn_about_nonfinite_evaluator(installed_anyway=False)
             return
-        self.surrogate_evaluator = candidate
+        self._commit_evaluator(candidate, evaluator, pending)
+
+    def _polyak_candidate(self, candidate, restart: bool = False):
+        """
+        What installing ``candidate`` would install (S3, ``Stage.polyak_averaging``), without
+        installing it: returns ``(evaluator, pending)``. ``pending`` is ``None`` when nothing is
+        averaged (flag off, or an evaluator without ``averageable_state()`` -- then ``evaluator``
+        is ``candidate`` itself); otherwise ``(k, average)`` with ``k = counter_polyak_updates + 1``
+        (1 with ``restart``) and ``average = previous + (state - previous) / k`` entrywise, i.e. the
+        running mean of the states of the ``k`` evaluators received in this stage, and
+        ``evaluator = candidate.with_averageable_state(average)``. ``_commit_evaluator`` makes it
+        current; a refused candidate is simply not committed, so it advances neither ``k`` nor
+        the average.
+        """
+        if not getattr(self.stage, "polyak_averaging", False):
+            return candidate, None
+        state = candidate.averageable_state()
+        if state is not None and not self.error_model_enabled:
+            # S1: the error-model entries are averaged only when the stage uses the error model;
+            # otherwise the evaluator is averaged (or not) exactly as before S1
+            state, _ = split_error_model_state(state)
+            if not state:
+                state = None
+        if state is None:
+            if not self._polyak_note_emitted:
+                self._polyak_note_emitted = True
+                print(f"rank {self.rank_world}, stage {self.stage.name}: polyak_averaging is set, but "
+                      f"{type(candidate).__name__} exposes no averageable_state(); its evaluators are installed "
+                      "unchanged (no averaging in this stage)", flush=True)
+            return candidate, None
+        state = {name: np.asarray(value, dtype=np.float64) for name, value in state.items()}
+        previous = None if restart else self._polyak_average
+        if previous is not None and (set(previous) != set(state)
+                                     or any(previous[name].shape != state[name].shape for name in state)):
+            print(f"rank {self.rank_world}, stage {self.stage.name}: the received evaluator's parameter layout "
+                  "differs from the averaged one; the Polyak average restarts from it", flush=True)
+            previous = None
+        if previous is None:
+            k = 1
+            average = {name: value.copy() for name, value in state.items()}
+        else:
+            k = self.counter_polyak_updates + 1
+            average = {name: previous[name] + (state[name] - previous[name]) / k for name in previous}
+        return candidate.with_averageable_state(average), (k, average)
+
+    def _commit_evaluator(self, candidate, evaluator, pending) -> None:
+        """Install ``evaluator`` (built from ``candidate`` by ``_polyak_candidate``)."""
+        if pending is not None:
+            self.counter_polyak_updates, self._polyak_average = pending
+        self.surrogate_evaluator = evaluator
+        self._last_received_evaluator = candidate
+        self.likelihood_surrogate = self._surrogate_likelihood_for(evaluator)
+
+    def _surrogate_likelihood_for(self, evaluator):
+        """
+        The surrogate likelihood that goes with the installed ``evaluator`` (S1): the exact
+        likelihood object unless ``Stage.surrogate_error_model`` is in effect and the evaluator
+        carries an ``error_model`` -- then ``corrected_likelihood(likelihood, error_model)``. An
+        evaluator without one is used uncorrected, with one printed note per stage.
+        """
+        if not self.error_model_enabled:
+            return self.likelihood
+        error_model = getattr(evaluator, "error_model", None)
+        if error_model is None:
+            if not self._error_model_note_emitted:
+                self._error_model_note_emitted = True
+                print(f"rank {self.rank_world}, stage {self.stage.name}: surrogate_error_model is set, but the installed "
+                      f"{type(evaluator).__name__} carries no error_model; its surrogate likelihood is used "
+                      "uncorrected", flush=True)
+            return self.likelihood
+        try:
+            return corrected_likelihood(cast(Normal, self.likelihood), error_model)
+        except (ValueError, np.linalg.LinAlgError) as exc:
+            print(f"rank {self.rank_world}, stage {self.stage.name}: the error model of the installed "
+                  f"{type(evaluator).__name__} is unusable ({exc}); its surrogate likelihood is used uncorrected",
+                  flush=True)
+            return self.likelihood
+
+    def _install_evaluator(self, candidate):
+        """
+        The one install point of a received evaluator (S3): installs ``candidate`` -- or, with
+        ``Stage.polyak_averaging`` and an averageable evaluator, the running mean of the
+        evaluators received in this stage (``_polyak_candidate``) -- and returns what was
+        installed. No finiteness check here; the callers that refuse non-finite evaluators use
+        ``_polyak_candidate`` + ``_evaluator_is_finite`` + ``_commit_evaluator`` on the averaged
+        evaluator.
+        """
+        evaluator, pending = self._polyak_candidate(candidate)
+        self._commit_evaluator(candidate, evaluator, pending)
+        return evaluator
 
     def _install_gradient_functions(self) -> None:
         """
@@ -670,7 +815,9 @@ class AlgorithmBase:
             previous_evaluator = getattr(self, "surrogate_evaluator", None)
             candidate = self.evaluator_provider.get_evaluator()
             self.evaluator_provider.request_evaluator()
-            if not self._evaluator_is_finite(candidate):
+            # S3: with polyak_averaging the AVERAGED evaluator is what is checked and installed
+            evaluator, pending = self._polyak_candidate(candidate)
+            if not self._evaluator_is_finite(evaluator):
                 self.counter_nonfinite_evaluators += 1
                 self._warn_about_nonfinite_evaluator(installed_anyway=previous_evaluator is None)
                 if previous_evaluator is not None:
@@ -678,7 +825,7 @@ class AlgorithmBase:
                     # so a later, healthy evaluator is still picked up (2026-09-20, item D)
                     return False
                 # nothing better exists yet: install it anyway, as before
-            self.surrogate_evaluator = candidate
+            self._commit_evaluator(candidate, evaluator, pending)
             self.counter_evaluator_refreshes += 1
             return True
         return False
@@ -736,14 +883,15 @@ class AlgorithmBase:
             argument = parameters.copy()
         assert self.surrogate_evaluator is not None
         evaluation = self.surrogate_evaluator(np.array([argument]))[0]
-        vector = -self.likelihood.grad_logpdf(evaluation)
+        # S1: the gradient of the surrogate likelihood actually used (corrected when the error model is on)
+        vector = -self.likelihood_surrogate.grad_logpdf(evaluation)
         try:
             gradient, _ = self.surrogate_evaluator.vjp(np.array(argument), vector)
             return gradient
         except NotImplementedError:
             jacobian, evaluation = self.surrogate_evaluator.jacobian(np.array(argument))
             # TODO: do not compute again
-            return - jacobian.T @ self.likelihood.grad_logpdf(evaluation)
+            return - jacobian.T @ self.likelihood_surrogate.grad_logpdf(evaluation)
 
     def _compute_log_prior_gradient(self, parameters: npt.NDArray) -> npt.NDArray:
         # calculates prior part of grad(U(q)). i.e. grad(-log_prior)
@@ -807,6 +955,9 @@ class Algorithm_MH(AlgorithmBase):  # initiated by SAMPLERs
             # POST-decision chain state, which is what a Haario-style covariance estimator needs.
             # The move changes no random stream: adapt() draws no random numbers and its other
             # inputs do not depend on the decision (evidence in CHANGELOG, "Behaviour changes").
+            # The chain's posterior statistics are updated first (C1): an adaptive random walk
+            # reads them in adapt().
+            self.posterior_statistics.update(self.current.parameters)
             self.proposal.adapt(proposed_sample=proposed_parameters,
                                 log_acceptance_probability=log_acceptance_prob_exact,
                                 current_sample=self.current.parameters)
@@ -852,7 +1003,8 @@ class Algorithm_DAMH(AlgorithmBase):  # initiated by SAMPLERs
             )
             self.current.observations_approx = cast(npt.NDArray, self._get_surrogate_observations(self.current.parameters))
             # assert self.current.observations_approx is not None
-            self.current.log_likelihood_approx, _ = self._compute_log_posterior_terms(
+            # S1: re-scored with the surrogate likelihood of the NEW evaluator (its error model)
+            self.current.log_likelihood_approx, _ = self._compute_surrogate_log_posterior_terms(
                 self.current.parameters,
                 self.current.observations_approx,
             )
@@ -864,11 +1016,11 @@ class Algorithm_DAMH(AlgorithmBase):  # initiated by SAMPLERs
         # assert subchain_proposed.observations_approx is not None
 
         assert subchain_current.observations_approx is not None
-        subchain_proposed.log_likelihood_approx, subchain_proposed.log_prior = self._compute_log_posterior_terms(
+        subchain_proposed.log_likelihood_approx, subchain_proposed.log_prior = self._compute_surrogate_log_posterior_terms(
             subchain_proposed.parameters,
             subchain_proposed.observations_approx,
         )
-        subchain_current.log_likelihood_approx, subchain_current.log_prior = self._compute_log_posterior_terms(
+        subchain_current.log_likelihood_approx, subchain_current.log_prior = self._compute_surrogate_log_posterior_terms(
             subchain_current.parameters,
             subchain_current.observations_approx,
         )
@@ -988,7 +1140,7 @@ class Algorithm_DAMH(AlgorithmBase):  # initiated by SAMPLERs
         self.proposed = Sample(parameters=self.exact_proposal.propose_sample(self.current.parameters))
         if self._parameters_are_finite(self.proposed) and self._parameters_are_in_box(self.proposed.parameters):
             self.proposed.observations_approx = cast(npt.NDArray, self._get_surrogate_observations(self.proposed.parameters))
-            self.proposed.log_likelihood_approx, _ = self._compute_log_posterior_terms(
+            self.proposed.log_likelihood_approx, _ = self._compute_surrogate_log_posterior_terms(
                 self.proposed.parameters, self.proposed.observations_approx)
         self._evaluate_proposed_sample()
         assert self.proposed.log_likelihood is not None and self.current.log_likelihood is not None
@@ -1009,6 +1161,7 @@ class Algorithm_DAMH(AlgorithmBase):  # initiated by SAMPLERs
             self._handle_acceptance()
         else:
             self._handle_rejection()
+        self.posterior_statistics.update(self.current.parameters)  # C1: every outer iteration
         # the exact step's own random walk adapts on the exact outcome; the stage proposal does not
         self.exact_proposal.adapt(proposed_sample=proposed_parameters,
                                   log_acceptance_probability=log_acceptance_prob_exact,
@@ -1114,7 +1267,9 @@ class Algorithm_DAMH(AlgorithmBase):  # initiated by SAMPLERs
                     self._handle_acceptance()
                 else:
                     self._handle_rejection()
-                # after the outer decision, so that current_sample is the post-decision state
+                # after the outer decision, so that current_sample is the post-decision state;
+                # the posterior statistics first (C1)
+                self.posterior_statistics.update(self.current.parameters)
                 self.proposal.adapt(
                     proposed_sample=proposed_parameters,
                     log_acceptance_probability=log_acceptance_prob_exact,
@@ -1131,6 +1286,7 @@ class Algorithm_DAMH(AlgorithmBase):  # initiated by SAMPLERs
                 # The sub-chain's own per-step acceptance probabilities ARE passed on (they
                 # exist even though the sub-chain never moved) -- that is what the Hamiltonian
                 # dual averaging adapts on. No-op for non-adaptive proposals.
+                self.posterior_statistics.update(self.current.parameters)  # C1, before adapt()
                 self.proposal.adapt(
                     proposed_sample=self.proposed.parameters,
                     log_acceptance_probability=-np.inf,

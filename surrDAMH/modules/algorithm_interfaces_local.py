@@ -39,6 +39,7 @@ from typing import Any
 import numpy as np
 import numpy.typing as npt
 
+from surrDAMH.modules.error_model import attach_error_model
 from surrDAMH.modules.algorithm_interfaces import (
     EvaluatorProvider,
     ObservationProvider,
@@ -266,8 +267,14 @@ class LocalSurrogateManager(SnapshotCollector, EvaluatorProvider):
         min_snapshots_to_update: int = 1,
         delayed_init_data: Any | None = None,
         initial_snapshots: tuple[npt.NDArray, npt.NDArray, npt.NDArray] | None = None,
+        error_model_heldout: tuple[npt.NDArray, npt.NDArray] | None = None,
     ) -> None:
         self.updater = updater
+        # S1 (2026-10-09): held-out (parameters, observations) pooled with the updater's snapshots for
+        # the error model attached to every trained evaluator; one row (no_snapshots_used,
+        # error_bias_norm, error_cov_trace) per retraining in error_model_history
+        self.error_model_heldout = error_model_heldout
+        self.error_model_history: list[tuple[int, float, float]] = []
         self.min_snapshots_initial = min_snapshots_initial
         self.min_snapshots_to_update = min_snapshots_to_update
 
@@ -324,6 +331,7 @@ class LocalSurrogateManager(SnapshotCollector, EvaluatorProvider):
                 self.updater.train()
                 self.no_snapshots_used = self.no_snapshots_total
                 self.evaluator = self.updater.get_evaluator()
+                self._attach_error_model(self.evaluator)
                 self.snapshot_count_since_last_update = 0
             else:
                 raise RuntimeError(
@@ -359,6 +367,18 @@ class LocalSurrogateManager(SnapshotCollector, EvaluatorProvider):
             self.no_snapshots_used = self.no_snapshots_total
             self.snapshot_count_since_last_update = 0
             self._pending_evaluator = self.updater.get_evaluator()
+            self._attach_error_model(self._pending_evaluator)
+
+    def _attach_error_model(self, evaluator: Evaluator) -> None:
+        """S1: the same estimation as the collector (``modules.error_model.attach_error_model``)."""
+        try:
+            model = attach_error_model(evaluator, self.updater, self.error_model_heldout)
+        except Exception as exc:  # never let the monitoring model break the run
+            evaluator.error_model = model = None
+            print(f"local surrogate manager: surrogate error model estimation failed: {exc}", flush=True)
+        self.error_model_history.append((int(self.no_snapshots_used),
+                                         np.nan if model is None else model.bias_norm,
+                                         np.nan if model is None else model.cov_trace))
 
     def close(self) -> None:
         """Optional no-op lifecycle hook for future standalone runners."""

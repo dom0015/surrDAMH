@@ -15,6 +15,7 @@ import numpy as np
 from mpi4py import MPI
 
 from surrDAMH.configuration import Configuration
+from surrDAMH.modules.error_model import attach_error_model
 from surrDAMH.modules.communication import (CommEvaluator_collector,
                                             CommSnapshot_collector,
                                             ServiceLoopThrottle,
@@ -224,8 +225,28 @@ def run_COLLECTOR(conf: Configuration, surrogate_updater: Updater, surrogate_del
     # surrogate quality monitoring:
     monitoring_evaluator = evaluator_instance  # evaluator used for out-of-sample quality assessment
     surrogate_quality_csv_path = os.path.join(conf.output_dir, "sampling_output", "surrogate_quality.csv")
-    surrogate_quality_rows = []  # accumulate rows: [no_snapshots_total, no_new_snapshots, rmse, max_abs_error]
+    surrogate_quality_rows = []  # accumulate rows: [no_snapshots_total, no_new_snapshots, rmse, max_abs_error,
+    #                               error_bias_norm, error_cov_trace]
     surrogate_test_data = _normalize_surrogate_test_data(conf, surrogate_test_data)
+    # S1 (2026-10-09): every published evaluator carries the error model of its residuals on the
+    # updater's snapshots and on the held-out set (Evaluator.error_model; used by stages with
+    # Stage.surrogate_error_model=True). One start-up note when it cannot be estimated at all.
+    error_model_heldout = None if surrogate_test_data is None else (surrogate_test_data[0], surrogate_test_data[1])
+    if error_model_heldout is None and not hasattr(surrogate_updater, "get_training_data_arrays"):
+        print(f"Collector - surrogate error model unavailable: {type(surrogate_updater).__name__} exposes no "
+              "get_training_data_arrays() and no held-out set (surrogate_test_data) is given; evaluators carry "
+              "error_model=None", flush=True)
+
+    def _attach_error_model(evaluator):
+        try:
+            attach_error_model(evaluator, surrogate_updater, error_model_heldout)
+        except Exception as exc:  # never let the monitoring model break the run
+            evaluator.error_model = None
+            print(f"Collector - surrogate error model estimation failed: {exc}", flush=True)
+
+    if evaluator_instance is not None:  # pretrained evaluator (restored updater)
+        _attach_error_model(evaluator_instance)
+        _check_evaluator_pickle_size(evaluator_instance, conf.max_buffer_size)
     surrogate_test_csv_path = os.path.join(conf.output_dir, "sampling_output", "surrogate_quality_test.csv")
     surrogate_test_rows = []  # accumulate rows with unweighted and posterior-weighted metrics
     surrogate_update_index = 1 if evaluator_instance is not None else 0
@@ -280,7 +301,10 @@ def run_COLLECTOR(conf: Configuration, surrogate_updater: Updater, surrogate_del
                 errors = true_observations - predicted_observations
                 rmse = float(np.sqrt(np.mean(errors ** 2)))
                 max_abs_error = float(np.max(np.abs(errors)))
-                surrogate_quality_rows.append([no_snapshots_total, num_new_snapshots, rmse, max_abs_error])
+                error_model = getattr(monitoring_evaluator, "error_model", None)
+                surrogate_quality_rows.append([no_snapshots_total, num_new_snapshots, rmse, max_abs_error,
+                                               np.nan if error_model is None else error_model.bias_norm,
+                                               np.nan if error_model is None else error_model.cov_trace])
                 if conf.debug:
                     print(f"Surrogate quality (out-of-sample): RMSE={rmse:.4e}, MaxAbsErr={max_abs_error:.4e}, "
                         f"snapshots_total={no_snapshots_total}, batch_size={num_new_snapshots}", flush=True)
@@ -340,6 +364,7 @@ def run_COLLECTOR(conf: Configuration, surrogate_updater: Updater, surrogate_del
                 # evaluator changed
                 sampler_got_last_evaluator = [False] * conf.no_samplers
                 evaluator_instance = retrained_evaluator
+                _attach_error_model(evaluator_instance)
                 _check_evaluator_pickle_size(evaluator_instance, conf.max_buffer_size)
                 monitoring_evaluator = evaluator_instance  # update monitoring evaluator
                 surrogate_update_index += 1
@@ -409,7 +434,10 @@ def run_COLLECTOR(conf: Configuration, surrogate_updater: Updater, surrogate_del
         ensure_dir(os.path.dirname(surrogate_quality_csv_path))
         with open(surrogate_quality_csv_path, "w", newline="") as f:
             writer = csv.writer(f)
-            writer.writerow(["snapshots_total", "batch_size", "rmse", "max_abs_error"])
+            # error_bias_norm / error_cov_trace (S1, appended): ||eps|| and tr(Sigma_surr) of the error
+            # model carried by the evaluator that was monitored (NaN when it has none)
+            writer.writerow(["snapshots_total", "batch_size", "rmse", "max_abs_error", "error_bias_norm",
+                             "error_cov_trace"])
             writer.writerows(surrogate_quality_rows)
         print(f"Surrogate quality metrics saved to {surrogate_quality_csv_path}", flush=True)
 

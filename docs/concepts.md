@@ -12,7 +12,11 @@ argument's `logpdf`, evaluated at `y − G(u)` or however the user's `Distributi
 subclass defines it — the library never subtracts `y` itself, that is the caller's
 `likelihood`'s job). One MPI rank runs one Markov chain; several ranks run several
 chains of the same posterior in parallel, independently (the only inter-chain coupling is the
-end-of-stage pooling of an adaptive proposal's adaptation statistics, see `docs/stages.md`).
+end-of-stage pooling of the chains' posterior statistics and of an adaptive proposal's adapted
+step, see `docs/stages.md` — "Posterior statistics", C1 2026-10-11: one persistent estimate of the
+posterior mean/covariance per run, updated by every stage, consumed by the adaptive random walk's
+shape, by `Hamiltonian(mass="covariance")` and, since C1b, by the S2 exact step's random walk;
+discounted to `max(100, 10 d)` states' weight after a `burn_in=True` stage).
 
 ## Internal vs. physical space
 
@@ -132,6 +136,23 @@ so that identity (and with it the DAMH acceptance ratio) no longer holds. This i
 `subchain_length = 1`, not only for `> 1` as this document previously claimed; the option was
 therefore removed on 2026-09-18 rather than fixed (`library_notes/06_findings_consolidated.md`
 finding 1.1).
+
+## The surrogate error model (`Stage.surrogate_error_model`, 2026-10-09)
+
+With a Gaussian noise model `N(y, Σ_noise)` the surrogate likelihood can account for the
+surrogate's own error: with the mean `ε̄` and covariance `Σ_surr` of the residuals `G(u) − G~(u)`
+(estimated by the collector on all its snapshots and the held-out set after every retraining,
+Ledoit–Wolf shrinkage up to 50 observations, a diagonal above), DAMH uses
+`L~(u) = N(y; G~(u) + ε̄, Σ_noise + Σ_surr)` instead of `N(y; G~(u), Σ_noise)` — in the sub-chain,
+in the correction, in the Hamiltonian potential and its gradient and in the S2 exact step's
+scoring. The target does not change: the correction `[log L(y) − log L(x)] − [log L~(y) − log L~(x)]`
+above holds for ANY fixed state-independent `L~`, and `L~` is fixed between evaluator installs
+(the model travels with the evaluator; the chain state is re-scored with the new `L~` whenever
+the evaluator changes). What changes is the acceptance: a biased surrogate is re-centred by `ε̄`
+and an over-confident one is flattened by `Σ_surr`, so fewer proposals are pre-rejected for the
+surrogate's mistakes. `log L~` carries the normalisation `−½ log det Σ_tot + ½ log det Σ_noise`,
+i.e. the same "up to `−½ log det(2π Σ_noise)`" convention as the exact `Normal.logpdf`, so `log L`
+and `log L~` in `raw_data` (and the S2 audit statistic `log L − log L~`) are on one scale.
 
 ## What "posterior-affecting" means in this documentation
 

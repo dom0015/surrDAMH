@@ -18,12 +18,13 @@ sampling_output/
                                            obs_0..obs_{m-1}, obs_approx_0..obs_approx_{m-1},
                                            log_likelihood, log_prior                                    (header row; only if save_snapshots_to_file)
   notes/<stage.name>/rank%04d.csv          accepted, rejected, pre-rejected, sum, seed, out_of_bounds,
-                                           exact_steps, exact_accepted, audited, audit_hidden            (header row)
+                                           exact_steps, exact_accepted, audited, audit_hidden,
+                                           polyak_updates                                                (header row)
   subchain_stats/<stage.name>/rank%04d.csv iteration, subchain_max_length, subchain_accepted, subchain_acceptance_rate, correction_log_ratio, outer_proposed_changed, outer_accepted, rank_world, kernel   (header row; DAMH stages only)
   adaptive_stats/<stage.name>/rank%04d.csv  one row per adaptation period                                (header row; adaptive=True stages only)
-  carry_over/<stage.name>.npz              carry_over__*, summary__*                                    (one file per adaptive stage, no rank suffix; written once by sampler rank 0 / run_sampling_local)
+  carry_over/<stage.name>.npz              carry_over__*, summary__*                                    (one file per stage since C1 (before: per adaptive stage), no rank suffix; written once by sampler rank 0 / run_sampling_local)
   last_sample/<stage.name>/rank%04d.npz    parameters (float64), no_parameters                          (one file per chain, written after each stage)
-  surrogate_quality.csv                    snapshots_total, batch_size, rmse, max_abs_error             (header row; collector only)
+  surrogate_quality.csv                    snapshots_total, batch_size, rmse, max_abs_error, error_bias_norm, error_cov_trace   (header row; collector only; the last two appended 2026-10-09, S1: ||eps|| and tr(Sigma_surr) of the error model carried by the monitored evaluator, NaN when it has none)
   surrogate_quality_test.csv               update_index, snapshots_total, n_test, max_log_posterior, rmse, max_abs_error, weighted_rmse, weighted_mean_abs_error, weighted_ess   (header row; collector only; weighted_ess added 2026-09-18, finding S10 -- effective sample size of the posterior weights, Kish's formula; equals n_test when no weights are supplied)
   run_manifest.json                        see "Run manifest" below
 solver_output/rank<k>/                     solver-defined scratch directory
@@ -129,7 +130,9 @@ AUDIT_HIDDEN_NATS = 5` nats — points where the surrogate made a region of high
 improbable (note 22's P6 statistic; recomputable from the `audited` rows of `raw_data`). Readers
 select the columns by name, so files without them (older runs) still load; the post-processing
 summary (and the HTML summary table) sums every column except `seed`, and the cost ratio of CpUS
-counts `audited` as exact evaluations.
+counts `audited` as exact evaluations. S3 (2026-10-09) appends `polyak_updates`: the number `k` of
+received evaluators averaged into the installed one by `Stage.polyak_averaging` (0 when the flag is
+off, on a stage that receives no evaluator, or for a surrogate without `averageable_state()`).
 
 ### `subchain_stats/<stage>/rank%04d.csv` (DAMH stages only)
 
@@ -152,14 +155,20 @@ One row per completed adaptation period (10 `adapt()` calls by default), written
 |---|---|
 | `GaussRandomWalk_adaptive` | `n, mean_acceptance_probability, log_sigma, trace_C_over_d, shrinkage_delta, rank_world` |
 | `PCN_adaptive` | `n, mean_acceptance_probability, beta, rank_world` |
-| `Hamiltonian_adaptive`, `HamiltonianInfinite_adaptive` | `m, mean_acceptance_probability, log_step_size, log_step_size_bar, rank_world` |
+| `Hamiltonian_adaptive`, `HamiltonianInfinite_adaptive` | `m, mean_acceptance_probability, log_step_size, log_step_size_bar, rank_world`; with `Hamiltonian(integration_time=T)` (C1, 2026-10-11) `num_steps` is appended before `rank_world` (the leapfrog step count `max(1, round(T / step))` in effect after the period's last update) |
 
 `mean_acceptance_probability` is the mean over that period of the acceptance probability the
-proposal was fed (which in a DAMH stage is the *overall* outer probability for `RandomWalk`/`PCN`
-and the *sub-chain* probability for the `Hamiltonian` proposal, see `docs/stages.md`). For the random walk,
-`trace_C_over_d` and `shrinkage_delta` are `NaN` in the periods before the `warmup=100` count is
-reached, where the covariance is not yet re-estimated (the Robbins–Monro `log_sigma` runs from
-the first call). The Hamiltonian's `m` counts *sub-chain* steps in a DAMH stage, so it advances
+proposal was fed: in an MH stage the Metropolis acceptance probability of each proposal; in a DAMH
+stage the *sub-chain* per-step probabilities against the surrogate, for every proposal family
+(since 2026-10-10, S6, for `RandomWalk`/`PCN`; before that they were fed the *overall* outer
+probability, see `docs/stages.md`). The random walk's and pCN's `n` counts `adapt()` calls = outer
+iterations (a row every 10 of them), while their mean then averages `10 × subchain_length`
+sub-chain probabilities. For the random walk,
+`trace_C_over_d` and `shrinkage_delta` are `NaN` in the periods before the posterior statistics
+hold `warmup=100` states, where the covariance is not yet re-estimated (the Robbins–Monro
+`log_sigma` runs from the first call). Since C1 (2026-10-11) the statistics are the chain's
+persistent ones (`docs/stages.md`, "Posterior statistics"): in a later adaptive random-walk stage
+they are already informative and the first row has a value. The Hamiltonian's `m` counts *sub-chain* steps in a DAMH stage, so it advances
 by `subchain_length` per outer iteration.
 
 No file is written for a stage whose proposal does not adapt, and none for a stage with
@@ -167,11 +176,12 @@ No file is written for a stage whose proposal does not adapt, and none for a sta
 (`Samples.adaptive_stats[stage]` an empty `DataFrame`). A run produced before this file existed
 reads back the same way, so the reader is backwards compatible here.
 
-### `carry_over/<stage>.npz` (`adaptive=True` stages only)
+### `carry_over/<stage>.npz` (every stage since C1, 2026-10-11)
 
 Written once (new 2026-09-21, no `rank%04d` suffix -- every rank already pooled to the
-identical state, see `GaussRandomWalk_adaptive.set_pooled_state`) at the end of an adaptive
-stage, by sampler rank 0 in the MPI runner and unconditionally by `run_sampling_local`: the same
+identical state, see `GaussRandomWalk_adaptive.set_pooled_state`) at the end of every stage
+(before C1: of every adaptive stage), by sampler rank 0 in the MPI runner and unconditionally by
+`run_sampling_local`: the same
 cross-rank hand-over that is printed to stdout as `Stage ... carry-over ...:`, so a report can
 show the proposal the *next* stage actually started from. Unlike `save_last_sample`, this is
 not guarded by `Stage.save_to_file` -- there is no separate switch for it.
@@ -180,13 +190,23 @@ Two groups of keys, each value stored as a numpy array of its own dtype (a scala
 
 - `carry_over__<key>`: `Proposal.carry_over()`, i.e. exactly what `build_proposal` consumes
   for the next stage (`scale`, `beta`, or `step_size`; the proposal spec's step field, see
-  `docs/stages.md`).
+  `docs/stages.md`; for the Hamiltonian family since C1 also `dual_averaging` = the pooled
+  `[m, H_bar, log_eps_bar, mu]` and `hamiltonian_mass` = the stage's `(d, d)` mass matrix), and,
+  for EVERY stage since C1, `posterior_statistics` = the pooled `PosteriorStatistics.as_vector()`
+  `[n, mean (d), M2 (d*d, row-major)]` the next stage (and a continued run) starts from, and
+  (since 2026-10-11) `posterior_statistics_n_seen` = the number of states ever added, never reduced
+  by the burn-in discount (the estimator's shrinkage weight; a file without it is read as `n`).
 - `summary__<key>`: `Proposal.adapted_summary()`, diagnostic-only (never consumed by
-  `build_proposal`) -- for `GaussRandomWalk_adaptive`: `base_cov`, `log_sigma`, `n_pooled`,
-  `mean`; for `PCN_adaptive`: `beta`; for the Hamiltonian family: `step_size`.
+  `build_proposal`) -- for `GaussRandomWalk_adaptive`: `base_cov`, `log_sigma`, `n_pooled`
+  (= the pooled posterior statistics' `n`, i.e. all states of all chains and stages so far since
+  C1), `mean`; for `PCN_adaptive`: `beta`; for the Hamiltonian family: `step_size`; for every
+  stage since C1: `posterior_statistics_n`; for a `burn_in=True` stage since C1b (2026-10-11):
+  `posterior_statistics_discounted_from_n` (the pooled count before the burn-in discount; the
+  `posterior_statistics` vector and `posterior_statistics_n` are the discounted ones).
 
-No file is written for a non-adaptive stage; `read_run` then reports `carry_over[stage] is
-None`, same as for a run produced before this file existed.
+`read_run` reports `carry_over[stage] is None` only for a run produced before this file existed
+(or, before C1, for a non-adaptive stage; such a stage's file now holds only the posterior
+statistics).
 
 ### `last_sample/<stage>/rank%04d.npz`
 
@@ -213,8 +233,19 @@ run's own stage count for a plain run, see "`lineage`" below for a continuation)
 `use_surrogate_gradients was disabled by Problem.run_sampling`), `continued_from` (the OLD manual
 continuation only — `Configuration(initial_sample_type="continued", continued_from_dir=...)` —
 with the source run's own manifest embedded), and `lineage` (a continuation made by
-`SamplingRun.continue_sampling`/`continue_sampling_local`, see below). Manifest writing/finalizing
-never aborts a run — any failure there is printed as a `WARNING`, not raised.
+`SamplingRun.continue_sampling`/`continue_sampling_local`, see below), and `proposal_resolution`
+(C1, 2026-10-11, added when the run is finalized: one entry per stage, `name`,
+`posterior_statistics_n_start`/`_end` (pooled states before/after the stage; `_end` after a
+burn-in discount), `posterior_statistics_discounted_from_n` (C1b: the count before the discount
+of a `burn_in=True` stage, else `null`), and for a
+Hamiltonian stage `mass_source` (`"spec"`, `"covariance (n=...)"`, `"identity (no statistics)"`),
+`integration_time`, `integration_time_jitter` (C1b), `num_steps_initial`, `step_size_initial` (after a
+restart: the rescaled step) and `dual_averaging` (`"fresh"`, `"continued"`, `"restarted (mass
+changed)"` — C1b; C1 wrote `"fresh (mass changed)"` — or `null` for a fixed step) with
+`mass_change_r` (C1b: the relative spectral-norm mass change the decision used, `null` when no
+recursion was carried); written by rank 0 / the
+local runner). Manifest writing/finalizing never aborts a run — any failure there is printed as a
+`WARNING`, not raised.
 
 The manifest is also what makes a directory readable: `read_run` requires it and requires
 `format_version == 2`.
@@ -265,6 +296,7 @@ see `docs/running.md#automatic-mode-2026-10-08`); absent otherwise. Also exposed
 | `stage_names` | the resolved stage directory names, in order (same as `[s.name for s in run.stages]`) |
 | `proposal` | `repr()` of the chunks' proposal spec (`RandomWalk(...)`/`Hamiltonian(...)`), or of the single MH stage's, or `null` |
 | `exact_step_probability`, `audit_prerejected` | the S2 settings of the DAMH chunks (`AUTO_EXACT_STEP_PROBABILITY`, `AUTO_AUDIT_PREREJECTED`, 0.05 each), `null` for the single-MH-stage layout |
+| `polyak_averaging` | the S3 setting of the DAMH chunks (`AUTO_POLYAK_AVERAGING`, `true`), `null` for the single-MH-stage layout |
 | `surrogate` | `"none"`, or `{"class", "default", "hparams"}` for the updater actually used (`default=True` for the built-in `NeuralNetworkUpdater`) |
 | `conf_settings` | the `Configuration` fields Auto set (see `docs/configuration.md`) |
 | `notes` | human-readable reasons for every decision that is not the plain rule (e.g. "use_collector=False: ...", "min_snapshots_initial=7 set by the user is kept") |
@@ -408,7 +440,7 @@ exact_only = snapshots[snapshots["state_type"] != "prerejected"]
 run.notes[0]                                  # DataFrame, one row per chain
 run.subchain_stats[1]                         # DataFrame for a DAMH stage, None for MH
 run.adaptive_stats[0]                         # DataFrame for an adaptive stage, None otherwise
-run.carry_over[0]                             # (carry_over, summary) dict pair, None otherwise
+run.carry_over[0]                             # (carry_over, summary) dict pair (every stage since C1), None if missing
 run.last_sample["alg0001_DAMH-SMU"]           # (no_chains, p) float64
 run.surrogate_quality, run.surrogate_quality_test   # DataFrames or None
 ```
@@ -421,8 +453,8 @@ Per-stage lists are always `len(stage_names)` long and in stage-index order. A s
 wrote nothing for a category carries an empty entry: `samples[i] == []` for
 `Stage.save_to_file=False`, `raw_data[i] is None` when snapshots were not saved,
 `subchain_stats[i] is None` for a non-DAMH stage, `adaptive_stats[i] is None` for a stage whose
-proposal did not adapt, `carry_over[i] is None` for a stage whose proposal did not adapt or
-whose `carry_over/<stage>.npz` is missing (a run that predates it).
+proposal did not adapt, `carry_over[i] is None` for a stage whose `carry_over/<stage>.npz` is
+missing (a run that predates it; before C1 also a stage whose proposal did not adapt).
 
 `surrDAMH.post_processing.Samples(no_parameters, output_dir)` is a facade on top of
 `read_run` and keeps the plotting/statistics API used by

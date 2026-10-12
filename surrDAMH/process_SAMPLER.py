@@ -22,12 +22,14 @@ from surrDAMH.modules import algorithms as alg
 from surrDAMH.modules import lhs_normal as lhs
 from surrDAMH.modules.proposal_builder import build_exact_step_proposal, build_proposal
 from surrDAMH.modules.seeds import (EXACT_PROPOSAL_SEED_OFFSET, EXACT_STEP_SEED_OFFSET,
-                                    generation_seed_offset, initial_sample_seed, seed_no_stages,
+                                    conf_seed_offset, initial_sample_seed, seed_no_stages,
                                     stage_seed0)
 from surrDAMH.solvers import Solver
 from surrDAMH.stages import Stage, stage_name
 from surrDAMH.surrogates.parent import Evaluator
-from surrDAMH.modules.continuation import describe_initial_sample_type, save_carry_over, save_last_sample
+from surrDAMH.modules.continuation import (describe_initial_sample_type, initial_posterior_statistics,
+                                           record_posterior_statistics, save_carry_over, save_last_sample,
+                                           discount_burn_in_statistics)
 
 
 def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distribution, list_of_stages: List[Stage],
@@ -75,7 +77,7 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
     no_stages_seed = seed_no_stages(getattr(conf, "no_stages_lineage", None), no_stages)
 
     # choice of initial sample:
-    generation_offset = generation_seed_offset(getattr(conf, "lineage_generation", 0))
+    generation_offset = conf_seed_offset(conf)
     initial_sample_generator = np.random.default_rng(initial_sample_seed(no_stages_seed, rank_world)
                                                      + generation_offset)
     if conf.initial_sample_type == "lhs":
@@ -108,6 +110,12 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
         for key, value in sorted(initial_carry_over.items()):
             print('Sampler at rank', rank_world, 'carry-over from the previous run', key + ':',
                   np.asarray(value, dtype=float).ravel().tolist(), flush=True)
+    # C1 (2026-10-11): the chain's ONE persistent posterior-statistics object -- updated by every
+    # stage, pooled over the samplers at every stage end, carried to the next stage and run
+    posterior_statistics = initial_posterior_statistics(carried, conf.no_parameters)
+    # what each stage resolved at run time (Hamiltonian mass source, integration time, dual
+    # averaging continued or not, statistics count); returned to Problem.run_sampling (manifest)
+    proposal_resolution: list[dict] = []
 
     first_stage = list_of_stages[0]
     first_stage_needs_surrogate = (first_stage.algorithm == "DAMH"
@@ -131,13 +139,19 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
         seed0 = stage_seed0(no_stages_seed, rank_world, i_global) + generation_offset
 
         # choice of proposal distribution for this stage:
+        statistics_n_start = int(posterior_statistics.n)
+        # remember the (rank-identical) statistics at the stage start; the stage end pools only the
+        # increments (states of this stage) on top of it, so the shared history is counted once
+        posterior_statistics.begin_stage()
         my_Prop = build_proposal(stage=stage, conf=conf, prior=prior, seed=seed0+1,
-                                 carried=carried, stage_index=i_global)
+                                 carried=carried, stage_index=i_global, statistics=posterior_statistics)
         # S2: the exact step's own random walk (seed0 + 5), only when the stage uses it
         exact_proposal = None
         if stage.algorithm == "DAMH" and stage.exact_step_probability > 0.0:
             exact_proposal = build_exact_step_proposal(conf=conf, prior=prior, seed=seed0 + EXACT_PROPOSAL_SEED_OFFSET,
-                                                       carried=carried, stage_index=i_global)
+                                                       carried=carried, stage_index=i_global,
+                                                       statistics=posterior_statistics,
+                                                       scale=stage.exact_step_scale)
 
         # choice of communicators for this stage:
         if stage.send_snapshots_to_collector:
@@ -183,8 +197,19 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
                                  seed=seed0+2,
                                  initial_sample_is_carried_over=initial_sample_is_carried_over,
                                  exact_step_seed=seed0 + EXACT_STEP_SEED_OFFSET,
-                                 exact_proposal=exact_proposal)
+                                 exact_proposal=exact_proposal,
+                                 posterior_statistics=posterior_statistics)
         alg_instance.run()
+
+        # C1: pool the posterior statistics of all chains at EVERY stage end (one Allgather of a
+        # fixed-length vector, 1 + d + d^2, on every sampler rank: this stage's INCREMENT) and
+        # install start (+) increment_1 (+) ... (+) increment_R in place, before the adaptive
+        # hand-over below reads them (fixed 2026-10-11: pooling the full objects counted the
+        # shared start R times)
+        buf = np.ascontiguousarray(posterior_statistics.stage_increment_vector(), dtype=np.float64)
+        all_statistics = np.empty((conf.no_samplers, buf.size), dtype=np.float64)
+        comm_sampler.Allgather(buf, all_statistics)
+        posterior_statistics.finish_stage(all_statistics)
 
         # cross-rank hand-over of the adapted proposal (2026-09-20, `16` §5 item 2): the chains
         # exchange the SUFFICIENT STATISTICS of their adaptation (``adapted_state()``: a fixed-
@@ -193,22 +218,37 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
         # is what Craiu et al. (2009) / Solonen et al. (2012) recommend and what removes the
         # 6-17x rank disagreement measured in `15` §2.4. The resulting carry-over is identical on
         # every rank, so the next stage starts from the same proposal everywhere.
+        stage_carry_over: dict = {}
+        summary: dict = {}
         if stage.adaptive:
             buf = np.ascontiguousarray(my_Prop.adapted_state(), dtype=np.float64)
             all_states = np.empty((conf.no_samplers, buf.size), dtype=np.float64)
             comm_sampler.Allgather(buf, all_states)
             my_Prop.set_pooled_state(all_states)
             stage_carry_over = my_Prop.carry_over()
-            carried.update(stage_carry_over)
-            if conf.debug:
-                for key, value in sorted(stage_carry_over.items()):
-                    print('Stage', alg_instance.stage.name, 'at MPI rank', rank_world,
-                          'carry-over', key + ':',
-                          np.asarray(value, dtype=float).ravel().tolist(), flush=True)
-            # persisted once, by sampler rank 0 -- every rank pooled to the identical state
-            # (2026-09-21), so a per-rank file would only duplicate it
-            if comm_sampler.Get_rank() == 0:
-                save_carry_over(conf, alg_instance.stage.name, stage_carry_over, my_Prop.adapted_summary())
+            summary = my_Prop.adapted_summary()
+        # C1b: after a burn-in stage, the pooled statistics keep only max(100, 10 d) states' weight
+        # (mean and covariance unchanged); identical on every rank (they all pooled the same rows)
+        statistics_discounted_from_n = discount_burn_in_statistics(stage, posterior_statistics, summary)
+        # C1: every stage hands on the pooled posterior statistics (carried dict + carry_over file)
+        record_posterior_statistics(stage_carry_over, summary, posterior_statistics)
+        if conf.debug:
+            for key, value in sorted(stage_carry_over.items()):
+                print('Stage', alg_instance.stage.name, 'at MPI rank', rank_world,
+                      'carry-over', key + ':',
+                      np.asarray(value, dtype=float).ravel().tolist(), flush=True)
+        carried.update(stage_carry_over)
+        # persisted once, by sampler rank 0 -- every rank pooled to the identical state
+        # (2026-09-21), so a per-rank file would only duplicate it; written for every stage (C1)
+        if comm_sampler.Get_rank() == 0:
+            save_carry_over(conf, alg_instance.stage.name, stage_carry_over, summary)
+        proposal_resolution.append({"name": alg_instance.stage.name,
+                                    "posterior_statistics_n_start": statistics_n_start,
+                                    "posterior_statistics_n_end": int(posterior_statistics.n),
+                                    "posterior_statistics_discounted_from_n": statistics_discounted_from_n,
+                                    **getattr(my_Prop, "resolution", {}),
+                                    # study 29: the fixed exact random walk (Stage.exact_step_scale) only
+                                    **getattr(exact_proposal, "resolution", {})})
 
         # set initial sample for next stage (after a use_only_surrogate stage its surrogate
         # observations are dropped so that the next stage re-evaluates it exactly, finding A11):
@@ -242,7 +282,9 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
               '- refused non-finite evaluators:', alg_instance.counter_nonfinite_evaluators,
               '- out-of-bounds proposals:', alg_instance.counter_out_of_bounds,
               f'- exact steps: {alg_instance.counter_exact_accepted}/{alg_instance.counter_exact_steps} accepted',
-              f'- audited: {alg_instance.counter_audited} (hidden: {alg_instance.counter_audit_hidden})', flush=True)
+              f'- audited: {alg_instance.counter_audited} (hidden: {alg_instance.counter_audit_hidden})'
+              + (f' - polyak updates: {alg_instance.counter_polyak_updates}' if stage.polyak_averaging else ''),
+              flush=True)
         comm_sampler.Barrier()
     f = getattr(commSolver, "terminate", None)
     if callable(f):
@@ -252,4 +294,4 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
         f()
     comm_world.Barrier()
     comm_world.Barrier()
-    return []
+    return proposal_resolution

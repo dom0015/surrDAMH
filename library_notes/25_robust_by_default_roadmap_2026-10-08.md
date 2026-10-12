@@ -188,3 +188,39 @@ diagnostics, hardening, tests, docs (S4, S5, S7, S8, `Auto` plumbing) to sonnet;
 * **D6** Backlog items to clear now although outside the goal: write-only flags, seed last mile.
 * **D7** Hamiltonian mass estimation (fast mode): decisions MM1–MM3 of note 26 §10.8 — within-chain vs total
   pooling, eigenvalue cap at the prior variance, last-stage vs accumulated samples.
+
+---
+
+## 9. Plan update 2026-10-11 (after studies 27 and 28 and the author's decisions of 2026-10-11)
+
+Done since §7 was written: S0 (bounded prior), S2 (exact safety steps + audit), S3 (Polyak averaging), S1 (global error
+model), S6 (sub-chain adaptation on the sub-chain's own acceptance), `burn_in`, the report redesign, the automatic
+mode (preliminary). Studies: 27 (S3/S1 on GRF and a 2-D problem), 28 (illustrative 2-D, bimodal: adaptive pCN best,
+Hamiltonian traps chains, Auto 1/5 correct; plain-MH screening: only large steps — pCN β = 1, RW scale ≥ 1.5 — cross
+the saddle).
+
+Author decisions 2026-10-11:
+* **D7 — one persistent posterior-covariance estimate.** The sample statistics `(n, mean, M2)` of the chain states are
+  one object per chain, pooled across ranks at every stage boundary, carried over stages AND runs (continuation), updated
+  by every stage whatever its proposal, never discarded. Consumers: the random-walk shape (today), the Hamiltonian mass
+  `M = Σ̂⁻¹` (regularised: shrinkage + ridge, as the random walk does; a change of mass triggers a step-size re-adaptation
+  at fixed integration time `T`, note 16 §5 items 4–5), later the generalised pCN. The mass is updated at stage boundaries
+  only (within a stage it is fixed, so no new adaptation theory); the dimension-robust integrator must take a general
+  mass (prior flow solved in `M`-whitened coordinates).
+* **D8 — `Mixture` as an interface to a combined proposal built from `BlockProposal`.** One runtime class
+  (components, groups or None, probabilities); specs `Block(groups, proposals, probabilities=None)` with a disjoint-cover
+  check and `Mixture(proposals, probabilities)`; components may adapt in both (routing of `adapt()` to the chosen
+  component); carry-over keyed by component position (flat keys kept when a type occurs once); per-component
+  `adaptive_stats`; cycling option dropped; existing Block runs byte-identical.
+
+### Next steps, in order
+| # | item | lines (est.) | depends on |
+|---|---|---|---|
+| C1 | persistent covariance object (D7): carry `(n, mean, M2)` across stages/runs; mass `Σ̂⁻¹` for `Hamiltonian(mass="covariance")` with `T` instead of `num_steps` and step re-adaptation; dual-averaging state carried across stages when the mass is unchanged | ~250 | — |
+| C2 | combined proposal (D8): `Block`/`Mixture` specs, adaptation routing, positional carry-over, per-component stats | ~500 | C1 (carry-over format) |
+| C3 | tempered-dynamics Hamiltonian component (`tempered_fraction`, `tempered_beta`, longer `T`; acceptance unchanged) — the crossing mechanism that scales with dimension; prior-draw `PCN(beta=1)` component for low d | ~60 (+ C2 for the mixture) | C2 |
+| C4 | stall guard: a stage ends after N consecutive iterations without an exact evaluation or at an iteration cap derived from `max_evaluations`; Auto must never hang (study 28, fixed step 0.4) | ~40 | — |
+| C5 | delayed Polyak averaging (start after k₀ received networks of a chunk; study 27: the whole loss is in chunk 1) | ~20 | — |
+| C6 | S5 verdict diagnostics (R-hat, ESS, stagnation, audit statistic, warm-up disagreement = multimodality signal) and the Auto proposal choice from them (pCN/mixture when the LHS chains disagree, Hamiltonian otherwise; self-demotion at chunk boundaries); robust sub-chain length as a placeholder (~20) | ~400 | C2, C3 |
+| C7 | S4 surrogate hardening; S7/S8 leftovers; `continue_sampling_auto` | ~250 | — |
+| C8 | validation plan §6 on the note-19 GRF, the 2-D models incl. the bimodal one; fixes the placeholders | runs, no code | C1–C6 |

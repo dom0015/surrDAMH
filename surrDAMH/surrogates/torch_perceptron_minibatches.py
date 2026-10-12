@@ -1,3 +1,4 @@
+import copy
 import os
 import warnings
 from typing import Literal
@@ -197,6 +198,55 @@ class PyTorchNNEvaluator(Evaluator):
 
     def set_use_gradients(self, enabled: bool) -> None:
         self.use_gradients = enabled
+
+    def averageable_state(self) -> dict[str, npt.NDArray]:
+        """
+        The network's floating-point ``state_dict`` entries as float64 numpy copies (S3,
+        ``Stage.polyak_averaging``). Non-floating buffers, if a model has any, are left out and
+        kept from this evaluator by ``with_averageable_state``. With an attached ``error_model``
+        (S1) its two entries (``error_model.bias`` / ``error_model.cov``) are included as well.
+        """
+        state = {name: tensor.detach().cpu().numpy().astype(np.float64, copy=True)
+                 for name, tensor in self.model.state_dict().items() if torch.is_floating_point(tensor)}
+        error_state = super().averageable_state()
+        if error_state is not None:
+            state.update(error_state)
+        return state
+
+    def with_averageable_state(self, state: dict[str, npt.NDArray]) -> "PyTorchNNEvaluator":
+        """
+        A new evaluator (same class, sizes, output normalization and ``use_gradients``) whose
+        network is a deep copy of this one with the floating entries of ``state`` loaded; each
+        entry is cast to the dtype the model has for it (float32 for a network built here), so
+        prediction, ``jacobian`` and ``vjp`` are those of the averaged network. ``self`` is not
+        modified. Error-model entries of ``state`` (S1) become the new evaluator's
+        ``error_model``; without them it keeps this evaluator's.
+        """
+        from surrDAMH.modules.error_model import ErrorModel, split_error_model_state
+        state, error_state = split_error_model_state(state)
+        new = copy.copy(self)
+        new.model = copy.deepcopy(self.model)
+        current = new.model.state_dict()
+        unknown = sorted(set(state) - set(current))
+        if unknown:
+            raise KeyError(f"with_averageable_state: entries {unknown} are not in the model's state_dict")
+        updated = {}
+        for name, tensor in current.items():
+            if name in state and torch.is_floating_point(tensor):
+                value = np.asarray(state[name], dtype=np.float64)
+                if value.shape != tuple(tensor.shape):
+                    raise ValueError(f"with_averageable_state: entry {name!r} has shape {value.shape}, "
+                                     f"the model expects {tuple(tensor.shape)}")
+                updated[name] = torch.tensor(value, dtype=tensor.dtype, device=tensor.device)
+            else:
+                updated[name] = tensor
+        new.model.load_state_dict(updated)
+        new.model.eval()
+        new.output_mean = np.array(self.output_mean, copy=True)
+        new.output_scale = np.array(self.output_scale, copy=True)
+        if error_state:
+            new.error_model = ErrorModel.from_state(error_state)
+        return new
 
 
 # Maintainer notes (moved out of the class docstring on 2026-09-22):

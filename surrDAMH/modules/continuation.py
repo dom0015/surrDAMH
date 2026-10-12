@@ -39,10 +39,59 @@ def save_last_sample(conf, stage_name: str, rank_world: int, parameters: np.ndar
     )
 
 
+def initial_posterior_statistics(carried: dict, no_parameters: int):
+    """The chain's posterior statistics at the start of a run (C1): the carried
+    ``"posterior_statistics"`` vector of a continued run (``_merged_carry_over``), else empty.
+    ``n_seen`` from ``"posterior_statistics_n_seen"`` (2026-10-11); a carry-over written before
+    that key existed gives ``n_seen = n``."""
+    from surrDAMH.modules.posterior_statistics import PosteriorStatistics
+    vector = carried.get("posterior_statistics")
+    if vector is None:
+        return PosteriorStatistics(int(no_parameters))
+    n_seen = carried.get("posterior_statistics_n_seen")
+    return PosteriorStatistics.from_vector(vector, int(no_parameters),
+                                           n_seen=None if n_seen is None else int(np.asarray(n_seen)))
+
+
+def record_posterior_statistics(stage_carry_over: dict, summary: dict, statistics) -> None:
+    """Add the pooled posterior statistics to one stage's carry-over (C1): the vector
+    ``as_vector()`` under ``"posterior_statistics"`` (consumed by the next stage / run), the
+    undiscounted count ``n_seen`` under ``"posterior_statistics_n_seen"`` (2026-10-11, consumed
+    likewise) and the count under ``summary["posterior_statistics_n"]`` (report only)."""
+    stage_carry_over["posterior_statistics"] = statistics.as_vector()
+    stage_carry_over["posterior_statistics_n_seen"] = int(statistics.n_seen)
+    summary["posterior_statistics_n"] = int(statistics.n)
+
+
+def discount_burn_in_statistics(stage, statistics, summary: dict) -> int | None:
+    """
+    C1b (2026-10-11): at the end of a ``burn_in=True`` stage, AFTER the cross-rank pooling and the
+    adaptive hand-over (so the burn-in stage's own carried proposal is unchanged), reduce the weight
+    of the pooled posterior statistics to ``burn_in_statistics_count(d)`` states, keeping their mean
+    and covariance (``PosteriorStatistics.discount``), so that the early transient of the warm-up
+    no longer dominates the estimate the following stages build on. Recorded as
+    ``summary["posterior_statistics_discounted_from_n"]`` (carry-over file). ``is_excluded``
+    stages are NOT discounted (their states are not a transient of the next stage: the chain
+    restarts) -- and ``burn_in`` and ``is_excluded`` exclude each other anyway; no other stage is.
+    Returns the previous count, or ``None`` if nothing was discounted.
+    """
+    from surrDAMH.modules.posterior_statistics import burn_in_statistics_count
+    if not getattr(stage, "burn_in", False):
+        return None
+    previous = statistics.discount(burn_in_statistics_count(statistics.d))
+    if previous is not None:
+        summary["posterior_statistics_discounted_from_n"] = int(previous)
+    return previous
+
+
 def save_carry_over(conf, stage_name: str, carried_stage: dict, summary: dict) -> None:
     """
-    Persist one adaptive stage's cross-rank hand-over to ``sampling_output/carry_over/<stage_name>.npz``
+    Persist one stage's cross-rank hand-over to ``sampling_output/carry_over/<stage_name>.npz``
     (2026-09-21), so a report can show the proposal the following stage actually started from.
+    Written for EVERY stage since C1 (2026-10-11): ``carry_over__posterior_statistics`` (the pooled
+    ``PosteriorStatistics.as_vector()``), ``carry_over__posterior_statistics_n_seen`` (its
+    undiscounted count, since 2026-10-11) and ``summary__posterior_statistics_n`` are always present;
+    the proposal keys only after an adaptive stage.
 
     ``carried_stage`` is ``Proposal.carry_over()`` (what ``build_proposal`` consumes for the
     next stage) and ``summary`` is ``Proposal.adapted_summary()`` (diagnostic-only, never
@@ -70,7 +119,7 @@ def save_carry_over(conf, stage_name: str, carried_stage: dict, summary: dict) -
 def load_carry_over(output_dir: str, stage_name: str) -> tuple[dict, dict] | None:
     """
     Read one stage's carry-over file written by :func:`save_carry_over`, or ``None`` if it
-    does not exist (a non-adaptive stage, or a run that predates ``carry_over/``).
+    does not exist (a run that predates ``carry_over/``; before C1, also a non-adaptive stage).
 
     Args:
         output_dir: the run's ``Configuration.output_dir`` (the directory that CONTAINS

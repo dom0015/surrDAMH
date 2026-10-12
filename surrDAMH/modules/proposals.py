@@ -7,6 +7,8 @@ import numpy as np
 import numpy.typing as npt
 from typing import Callable
 
+from surrDAMH.modules.posterior_statistics import PosteriorStatistics
+
 
 def as_covariance_matrix(sd_or_cov: npt.ArrayLike, no_parameters: int) -> npt.NDArray:
     """
@@ -90,6 +92,15 @@ def subproposal_seed(block_seed: int, index: int) -> int:
     return (_SUBPROPOSAL_SEED_BASE + 1000 * int(block_seed) + int(index)) % 2**32
 
 
+def _own_acceptance_probabilities(log_acceptance_probability: float,
+                                  subchain_log_acceptance_probabilities: list[float] | None) -> list[float]:
+    """The acceptance probabilities of the moves an adaptive proposal itself generated (S6):
+    the outer one in an MH stage (``None``), the sub-chain's per-step ones in a DAMH stage."""
+    if subchain_log_acceptance_probabilities is None:
+        return [acceptance_probability(log_acceptance_probability)]
+    return [acceptance_probability(value) for value in subchain_log_acceptance_probabilities]
+
+
 class Proposal:
     """Parent class for proposal distributions."""
 
@@ -157,7 +168,18 @@ class Proposal:
           needs,
         * ``subchain_log_acceptance_probabilities``: in a DAMH stage, the per-step log
           acceptance probabilities the surrogate sub-chain computed (one per sub-chain step,
-          in order); ``None`` in an MH stage.
+          in order; ``-inf`` for a non-finite or out-of-bounds sub-chain proposal); ``None`` in
+          an MH stage. Passed on EVERY outer iteration, pre-rejected ones included.
+
+        Which signal drives what (S6, 2026-10-10): the proposal that generated the sub-chain
+        steps adapts its STEP on the sub-chain probabilities -- they are its own acceptance
+        probabilities (``GaussRandomWalk_adaptive`` / ``PCN_adaptive``: one Robbins-Monro step
+        per sub-chain step; the Hamiltonian dual averaging: their mean). The outer
+        ``log_acceptance_probability`` drives the step only in an MH stage, where it IS the
+        proposal's own acceptance probability; in a DAMH stage it measures the surrogate error,
+        not the step (``library_notes/16_adaptivity_options_research_2026-09-20.md`` §2 items 1,
+        2 and 8). State-based estimates (the random walk's covariance shape) use
+        ``current_sample``, once per outer iteration.
 
         The fixed signature makes a wrong keyword an error for every proposal, not only for
         the adaptive ones.
@@ -289,12 +311,14 @@ class GaussRandomWalk_adaptive(GaussRandomWalk):  # initiated by SAMPLERs
 
     Per ``adapt()`` call (one per outer iteration of the stage)::
 
-        alpha        = min(1, exp(log_acceptance_probability))
+        for alpha in alphas:     (see below: one value in an MH stage, K in a DAMH stage)
+            n_scale     += 1
+            log_sigma   += n_scale**(-0.7) * (alpha - target_rate)  [Andrieu & Thoms 2008 Alg. 4]
         n           += 1
-        log_sigma   += n**(-0.7) * (alpha - target_rate)          [Andrieu & Thoms 2008 Alg. 4]
-        (mean, M2)   = Welford update with the POST-decision chain state
+        (mean, M2)   = Welford update with the POST-decision chain state  [C1: done by the
+                       algorithm on the shared PosteriorStatistics, see "Statistics" below]
 
-    and, every ``period`` iterations once ``n >= warmup``::
+    and, every ``period`` iterations once ``statistics.n >= warmup``::
 
         C            = M2 / (n - 1)                               [Haario et al. 2001 estimator]
         delta        = min(1, 2d/n)
@@ -315,18 +339,45 @@ class GaussRandomWalk_adaptive(GaussRandomWalk):  # initiated by SAMPLERs
     prototype's absolute ``1e-6``, so the regularisation does not depend on the units of the
     parameters.
 
-    DAMH stages: ``adapt()`` is called on **every** outer iteration -- with the exact-posterior
-    acceptance probability of the sub-chain endpoint when the sub-chain moved, and with
-    ``-inf`` (probability 0) on a pre-rejected iteration. The rate driven to ``target_rate`` is
-    therefore the *overall* acceptance of an outer iteration; scoring only the moved iterations
-    feeds back the conditional second-stage rate, which tends to 1 and makes the scale diverge
-    (`16` §2 item 1, §4.2). For ``subchain_length > 1`` the whole multi-step move is scored,
-    so the per-step scale ends above its own optimum -- prefer ``subchain_length=1`` when
-    adapting.
+    Which signal drives what (S6, 2026-10-10). ``alphas`` is
 
-    Cross-rank hand-over: ``adapted_state()`` / ``set_pooled_state()`` / ``carry_over()`` pool the
-    SUFFICIENT STATISTICS of all chains (Chan et al. parallel combination of ``(n, mean, M2)``,
-    plus the mean log-scale) instead of averaging per-rank covariances; see the runners.
+    * MH stage (``subchain_log_acceptance_probabilities is None``): the single value
+      ``min(1, exp(log_acceptance_probability))`` -- bit for bit the recursion before S6
+      (``n_scale == n`` throughout);
+    * DAMH stage: ``min(1, exp(la_j))`` for every sub-chain step ``j = 1..K`` in order, i.e. the
+      proposal's OWN per-step acceptance probabilities against the surrogate posterior (``-inf``
+      = 0 for a non-finite / out-of-bounds sub-chain proposal), on every outer iteration
+      including the pre-rejected ones. The outer (exact) acceptance probability is NOT used for
+      the scale: it measures the surrogate error, not the step, and feeding it back made the
+      per-step scale 1.5-7x too large for ``K = 5..20`` (S6 evidence in CHANGELOG.md, note 21
+      §6 item 4, `16` §2 items 1-2). ``n_scale`` then counts sub-chain steps (``K`` per call), so
+      the gain ``n_scale**(-0.7)`` decays per sub-chain step.
+
+    The SHAPE (Welford statistics, covariance install every ``period`` calls once
+    ``statistics.n >= warmup``) and the ``adaptation_stats`` rows stay keyed on ``n`` = the number of
+    ``adapt()`` calls = outer iterations, in every stage. ``adaptation_stats`` column
+    ``mean_acceptance_probability`` is the mean of the ``alphas`` of the period: the outer
+    acceptance probability in an MH stage, the sub-chain per-step acceptance probability in a
+    DAMH stage. The OUTER acceptance of a DAMH stage is still reported (``notes``,
+    ``subchain_stats``) but no longer targeted.
+
+    Statistics (C1, 2026-10-11, author decision D7). The Welford statistics ``(n, mean, M2)`` live
+    in a ``PosteriorStatistics`` object (``modules/posterior_statistics.py``). In a sampling stage
+    it is the chain's ONE persistent object (``statistics=<shared>``): the algorithm updates it
+    once per outer iteration of every stage, BEFORE calling ``adapt()``, and the runners pool it
+    across ranks and carry it to the next stage and run. ``adapt()`` then only reads it: the
+    install condition is ``statistics.n >= warmup`` (every ``period`` ``adapt()`` calls). In the
+    first stage of a run the object starts empty and ``statistics.n == n``, so the stage is bit
+    for bit the code before C1; a LATER adaptive random-walk stage starts with the pooled
+    statistics of all previous stages and installs its shape at its first period boundary. With
+    ``statistics=None`` (default; a stand-alone proposal, the S2 exact step's own random walk)
+    the proposal owns a private object and updates it in ``adapt()`` itself, exactly as before.
+
+    Cross-rank hand-over: the runners pool the statistics (one ``Allgather`` of
+    ``PosteriorStatistics.as_vector()`` per stage end); ``adapted_state()`` /
+    ``set_pooled_state()`` exchange only the effective log-scale (averaged), and with several
+    rows ``set_pooled_state`` re-installs the shape from the (already pooled) statistics.
+    ``n_scale`` is not pooled.
     """
 
     #: column names of ``adaptive_stats/<stage>/rank%04d.csv`` (see docs/outputs.md)
@@ -334,7 +385,8 @@ class GaussRandomWalk_adaptive(GaussRandomWalk):  # initiated by SAMPLERs
                               "trace_C_over_d", "shrinkage_delta"]
 
     def __init__(self, no_parameters: int, sd_or_cov: npt.ArrayLike = 1.0, seed: int = 0,
-                 target_rate: float = 0.234, period: int = 10, warmup: int = 100) -> None:
+                 target_rate: float = 0.234, period: int = 10, warmup: int = 100,
+                 statistics: PosteriorStatistics | None = None) -> None:
         """
         Args:
             no_parameters: dimension of the parameter space.
@@ -344,8 +396,10 @@ class GaussRandomWalk_adaptive(GaussRandomWalk):  # initiated by SAMPLERs
             target_rate: target acceptance rate of the Robbins-Monro scale recursion
                 (``RandomWalk.target_rate``; 0.234 is the high-dimensional RWM optimum).
             period: re-estimate the covariance every ``period`` ``adapt()`` calls.
-            warmup: no covariance is installed before ``n >= warmup`` (the scale recursion runs
-                from the first call).
+            warmup: no covariance is installed before ``statistics.n >= warmup`` (the scale
+                recursion runs from the first call).
+            statistics: the chain's shared ``PosteriorStatistics`` (updated by the algorithm,
+                only read here); ``None`` = a private object updated by ``adapt()`` itself (C1).
         """
         Proposal.__init__(self)  # not GaussRandomWalk.__init__: the covariance is set below
         self.no_parameters = int(no_parameters)
@@ -355,9 +409,12 @@ class GaussRandomWalk_adaptive(GaussRandomWalk):  # initiated by SAMPLERs
         self.warmup = int(warmup)
         self.scale_factor = 2.38 ** 2 / self.no_parameters
 
-        self.n = 0
-        self.mean = np.zeros(self.no_parameters)
-        self.M2 = np.zeros((self.no_parameters, self.no_parameters))
+        self.n = 0  # adapt() calls = outer iterations: the period counter
+        self.n_scale = 0  # Robbins-Monro steps of log_sigma (= n in MH, sub-chain steps in DAMH)
+        self._owns_statistics = statistics is None
+        self.statistics = PosteriorStatistics(self.no_parameters) if statistics is None else statistics
+        if self.statistics.d != self.no_parameters:
+            raise ValueError(f"statistics of dimension {self.statistics.d} for a {self.no_parameters}-D random walk")
         self.log_sigma = 0.0
         self._trace_over_d = np.nan  # of the last installed covariance estimate
         self._shrinkage_delta = np.nan
@@ -366,6 +423,23 @@ class GaussRandomWalk_adaptive(GaussRandomWalk):  # initiated by SAMPLERs
         self.adaptation_stats_rows: list[tuple] = []
 
         self.set_covariance(sd_or_cov=sd_or_cov)
+
+    # the statistics' mean / scatter, under the names the proposal used before C1
+    @property
+    def mean(self) -> npt.NDArray:
+        return self.statistics.mean
+
+    @mean.setter
+    def mean(self, value: npt.NDArray) -> None:
+        self.statistics.mean = value
+
+    @property
+    def M2(self) -> npt.NDArray:
+        return self.statistics.M2
+
+    @M2.setter
+    def M2(self, value: npt.NDArray) -> None:
+        self.statistics.M2 = value
 
     # -- proposal -----------------------------------------------------------------------
     def set_covariance(self, sd_or_cov: npt.ArrayLike) -> None:
@@ -407,20 +481,22 @@ class GaussRandomWalk_adaptive(GaussRandomWalk):  # initiated by SAMPLERs
     def adapt(self, proposed_sample: npt.NDArray, log_acceptance_probability: float,
               current_sample: npt.NDArray,
               subchain_log_acceptance_probabilities: list[float] | None = None) -> None:
-        alpha = acceptance_probability(log_acceptance_probability)
+        # scale: one Robbins-Monro step per acceptance probability of THIS proposal's own moves
+        for alpha in _own_acceptance_probabilities(log_acceptance_probability,
+                                                   subchain_log_acceptance_probabilities):
+            self.n_scale += 1
+            self.log_sigma += self.n_scale ** (-0.7) * (alpha - self.target_rate)
+            self._period_alpha_sum += alpha
+            self._period_alpha_count += 1
         self.n += 1
-        self.log_sigma += self.n ** (-0.7) * (alpha - self.target_rate)
 
-        # Welford update of the mean/scatter of the POST-decision chain states
-        state = np.asarray(current_sample, dtype=float)
-        difference = state - self.mean
-        self.mean = self.mean + difference / self.n
-        self.M2 += np.outer(difference, state - self.mean)
+        # Welford update of the POST-decision chain state: done here only for a private object;
+        # a shared one has already been updated by the algorithm for this iteration (C1)
+        if self._owns_statistics:
+            self.statistics.update(current_sample)
 
-        self._period_alpha_sum += alpha
-        self._period_alpha_count += 1
-        if self.n >= self.warmup and self.n % self.period == 0 \
-                and self._install_covariance_from_statistics(self.n, self.M2):
+        if self.statistics.n >= self.warmup and self.n % self.period == 0 \
+                and self._install_covariance_from_statistics():
             self._refactor()  # base_cov changed: re-factorise (once per period at most)
         else:
             self._update_public_covariance()  # scale-only update, no factorisation needed
@@ -435,8 +511,12 @@ class GaussRandomWalk_adaptive(GaussRandomWalk):  # initiated by SAMPLERs
             self._period_alpha_sum = 0.0
             self._period_alpha_count = 0
 
-    def _install_covariance_from_statistics(self, n: int, scatter: npt.NDArray) -> bool:
-        """``base_cov`` from ``(n, M2)``: shrinkage towards ``(tr C / d) I`` plus a relative ridge.
+    def _install_covariance_from_statistics(self, n: int | None = None,
+                                            scatter: npt.NDArray | None = None) -> bool:
+        """``base_cov`` = ``2.38^2/d * statistics.covariance()``: the Welford scatter with shrinkage
+        towards ``(tr C / d) I`` plus a relative ridge (``PosteriorStatistics.shrunk_covariance``).
+        ``n``/``scatter`` given: from those instead of ``self.statistics`` (kept for the reference
+        implementations in the tests).
 
         The scale recursion learns ``log_sigma`` RELATIVE to ``base_cov``, so replacing
         ``base_cov`` by an estimate of a different magnitude would apply the learned scale to the
@@ -450,19 +530,18 @@ class GaussRandomWalk_adaptive(GaussRandomWalk):  # initiated by SAMPLERs
 
         Returns ``True`` iff a new ``base_cov`` was installed (so the caller knows whether the
         Cholesky factor has to be recomputed)."""
-        d = self.no_parameters
-        if n < 2:
+        statistics = self.statistics
+        if n is not None:
+            statistics = PosteriorStatistics(self.no_parameters)
+            statistics.n, statistics.M2 = int(n), np.asarray(scatter, dtype=float)
+        estimate = statistics.shrunk_covariance()
+        if estimate is None:
+            # n < 2, a chain that never moved, or a non-finite statistic: keep the previous
+            # covariance instead of installing a singular one the proposal could never leave
             return False
-        C = scatter / (n - 1)
-        trace_over_d = float(np.trace(C)) / d
-        if not np.all(np.isfinite(C)) or not np.isfinite(trace_over_d) or trace_over_d <= 0.0:
-            # a chain that never moved (or a non-finite statistic): keep the previous covariance
-            # instead of installing a singular one the proposal could never leave
-            return False
-        delta = min(1.0, 2.0 * d / n)
-        C = (1.0 - delta) * C + delta * trace_over_d * np.eye(d)
+        C_regularised, trace_over_d, delta = estimate
         previous_trace = float(np.trace(self.base_cov))
-        self.base_cov = self.scale_factor * (C + 1e-6 * trace_over_d * np.eye(d))
+        self.base_cov = self.scale_factor * C_regularised
         # keep exp(2 log_sigma) * tr(base_cov) unchanged (see the docstring)
         self.log_sigma += 0.5 * np.log(previous_trace / float(np.trace(self.base_cov)))
         self._trace_over_d = trace_over_d
@@ -476,65 +555,44 @@ class GaussRandomWalk_adaptive(GaussRandomWalk):  # initiated by SAMPLERs
         return float(self.log_sigma + 0.5 * np.log(float(np.trace(self.base_cov))))
 
     def adapted_state(self) -> npt.NDArray:
-        """``[n, mean (d), M2 (d*d), effective log-scale]`` -- fixed length, same on every rank.
+        """``[effective log-scale]`` -- length 1, same on every rank (C1: the Welford statistics
+        are pooled by the runner, ``PosteriorStatistics``, not through this vector).
 
-        The last entry is ``log_sigma + 0.5 log tr(base_cov)`` rather than ``log_sigma`` itself
+        The entry is ``log_sigma + 0.5 log tr(base_cov)`` rather than ``log_sigma`` itself
         (2026-09-21): ``log_sigma`` is only meaningful relative to this rank's own ``base_cov``,
         which differs between ranks at the end of an adaptive stage, so averaging it would give
         the pooled proposal a rank-dependent scale once the pooled covariance is installed."""
-        return np.concatenate((
-            np.array([float(self.n)]),
-            self.mean.astype(np.float64).ravel(),
-            self.M2.astype(np.float64).ravel(),
-            np.array([self._effective_log_scale()]),
-        ))
+        return np.array([self._effective_log_scale()])
 
     def set_pooled_state(self, states: npt.NDArray) -> None:
         """
-        Combine the ``adapted_state()`` rows of all chains into this proposal.
+        Combine the ``adapted_state()`` rows of all chains into this proposal. The runner has
+        ALREADY replaced ``self.statistics`` by the pooled statistics of all chains (C1).
 
-        ``(n_r, mean_r, M2_r)`` are combined by the Chan-Golub-LeVeque parallel formula, which
-        gives exactly the statistics of the concatenated chains; the effective log-scale
-        ``log_sigma + 0.5 log tr(base_cov)`` is averaged and, once the pooled covariance is
-        installed, converted back to the ``log_sigma`` that reproduces that effective scale with
-        the pooled base -- so every rank ends with the same ``sd_or_cov`` whatever its own
-        ``base_cov`` was before (2026-09-21).
-        Pooling the SAMPLES (rather than averaging per-rank covariances) is what Craiu et al.
-        (2009) / Solonen et al. (2012) recommend and what removes the 6-17x rank disagreement
-        the 2026-09-18 study measured.
+        With several rows the pooled covariance is installed from those statistics (once
+        ``statistics.n >= warmup``) and the averaged effective log-scale is converted back to the
+        ``log_sigma`` that reproduces it with the pooled base -- so every rank ends with the same
+        ``sd_or_cov`` whatever its own ``base_cov`` was before (2026-09-21). Pooling the SAMPLES
+        (rather than averaging per-rank covariances) is what Craiu et al. (2009) / Solonen et al.
+        (2012) recommend and what removes the 6-17x rank disagreement the 2026-09-18 study
+        measured.
 
-        With a single row there is nothing to pool: the statistics are this chain's own and the
-        adapted covariance is left EXACTLY as the stage ended it (a covariance rebuilt at an
-        arbitrary ``n`` would differ from the one installed at the last period boundary). That
-        keeps ``run_local`` reproducing MPI chain 0 of a one-sampler run.
+        With a single row there is nothing to pool: the adapted covariance is left EXACTLY as the
+        stage ended it (a covariance rebuilt at an arbitrary ``n`` would differ from the one
+        installed at the last period boundary). That keeps ``run_local`` reproducing MPI chain 0
+        of a one-sampler run.
         """
         states = np.atleast_2d(np.asarray(states, dtype=float))
-        d = self.no_parameters
-        expected = 1 + d + d * d + 1
-        if states.shape[1] != expected:
-            raise ValueError(f"expected adapted-state rows of length {expected}, got {states.shape}")
-
-        counts = states[:, 0]
-        means = states[:, 1:1 + d]
-        scatters = states[:, 1 + d:1 + d + d * d].reshape(-1, d, d)
-        total = float(counts.sum())
-        if total > 0:
-            pooled_mean = (counts[:, None] * means).sum(axis=0) / total
-            pooled_scatter = scatters.sum(axis=0)
-            for count, mean in zip(counts, means):
-                shift = mean - pooled_mean
-                pooled_scatter = pooled_scatter + count * np.outer(shift, shift)
-            self.n = int(round(total))
-            self.mean = pooled_mean
-            self.M2 = pooled_scatter
+        if states.shape[1] != 1:
+            raise ValueError(f"expected adapted-state rows of length 1, got {states.shape}")
         if states.shape[0] > 1:
-            if self.n >= self.warmup:
+            if self.statistics.n >= self.warmup:
                 # the install shifts log_sigma against THIS rank's previous base_cov; the
                 # assignment below overrides that with the rank-independent pooled scale
-                self._install_covariance_from_statistics(self.n, self.M2)
+                self._install_covariance_from_statistics()
             pooled_effective_log_scale = float(states[:, -1].mean())
             self.log_sigma = pooled_effective_log_scale - 0.5 * np.log(float(np.trace(self.base_cov)))
-        # single row: this chain's own state, log_sigma and base_cov are kept exactly as they are
+        # single row: this chain's own log_sigma and base_cov are kept exactly as they are
         self._refactor()
 
     def carry_over(self) -> dict:
@@ -547,17 +605,19 @@ class GaussRandomWalk_adaptive(GaussRandomWalk):  # initiated by SAMPLERs
         chain-iteration count) and the pooled ``mean`` -- everything ``carry_over``'s single
         ``scale = exp(2 log_sigma) * base_cov`` (the carried covariance) folds together."""
         return {"base_cov": self.base_cov, "log_sigma": float(self.log_sigma),
-                "n_pooled": int(self.n), "mean": self.mean}
+                "n_pooled": int(self.statistics.n), "mean": self.statistics.mean}
 
 
 class PCN_adaptive(PCN):
     """
     ``PCN`` whose step size ``beta`` is adapted by a Robbins-Monro recursion on its logit
-    (new 2026-09-20, recommendation 6 of `16` §5; prototype `RESULTS_PROTO.md` §1 "P6", §7)::
+    (new 2026-09-20, recommendation 6 of `16` §5; prototype `RESULTS_PROTO.md` §1 "P6", §7),
+    per ``adapt()`` call::
 
-        alpha        = min(1, exp(log_acceptance_probability))
+        for alpha in alphas:
+            n_scale     += 1
+            logit_beta  += n_scale**(-0.7) * (alpha - target_rate)
         n           += 1
-        logit_beta  += n**(-0.7) * (alpha - target_rate)
         beta         = sigmoid(logit_beta)
 
     Adapting the logit keeps ``beta`` in ``(0, 1)`` by construction, so no clipping is needed.
@@ -565,8 +625,11 @@ class PCN_adaptive(PCN):
     the best fixed ``beta`` on every problem and beats target 0.5 by 1.03-2.14x, while the
     optimal ``beta`` spans 0.1-0.8 across problems, i.e. a fixed default cannot serve them all.
 
-    In a DAMH stage the feedback is the same overall outer acceptance probability
-    ``GaussRandomWalk_adaptive`` uses (pre-rejected iterations scored as 0).
+    ``alphas`` as in ``GaussRandomWalk_adaptive`` (S6, 2026-10-10): in an MH stage the outer
+    acceptance probability (bit for bit the recursion before S6), in a DAMH stage the K per-step
+    acceptance probabilities of the sub-chain, which are this proposal's own; the outer DAMH
+    acceptance is reported, not targeted. ``n`` (outer iterations) keys the ``adaptation_stats``
+    rows, whose ``mean_acceptance_probability`` is the mean of the period's ``alphas``.
     """
 
     adaptation_stats_header = ["n", "mean_acceptance_probability", "beta"]
@@ -580,7 +643,8 @@ class PCN_adaptive(PCN):
                          prior_sd_or_cov=prior_sd_or_cov, seed=seed)
         self.target_rate = float(target_rate)
         self.period = int(period)
-        self.n = 0
+        self.n = 0  # adapt() calls = outer iterations (adaptation_stats period)
+        self.n_scale = 0  # Robbins-Monro steps of logit_beta (= n in MH, sub-chain steps in DAMH)
         self.logit_beta = float(np.log(beta / (1.0 - beta)))
         self._period_alpha_sum = 0.0
         self._period_alpha_count = 0
@@ -589,12 +653,14 @@ class PCN_adaptive(PCN):
     def adapt(self, proposed_sample: npt.NDArray, log_acceptance_probability: float,
               current_sample: npt.NDArray,
               subchain_log_acceptance_probabilities: list[float] | None = None) -> None:
-        alpha = acceptance_probability(log_acceptance_probability)
+        for alpha in _own_acceptance_probabilities(log_acceptance_probability,
+                                                   subchain_log_acceptance_probabilities):
+            self.n_scale += 1
+            self.logit_beta += self.n_scale ** (-0.7) * (alpha - self.target_rate)
+            self._period_alpha_sum += alpha
+            self._period_alpha_count += 1
         self.n += 1
-        self.logit_beta += self.n ** (-0.7) * (alpha - self.target_rate)
         self._set_beta_from_logit()
-        self._period_alpha_sum += alpha
-        self._period_alpha_count += 1
         if self.n % self.period == 0:
             self.adaptation_stats_rows.append((
                 self.n, self._period_alpha_sum / max(self._period_alpha_count, 1), self.beta))
@@ -628,6 +694,21 @@ class PCN_adaptive(PCN):
         return {"beta": float(self.beta)}
 
 
+#: upper bound on ``num_steps`` derived from ``Hamiltonian(integration_time=T)``: a dual averaging
+#: that transiently drives the step very small would otherwise make one proposal cost
+#: ``T / step_size`` gradient evaluations without bound (C1 safety cap, 2026-10-11)
+INTEGRATION_TIME_MAX_STEPS = 1000
+
+
+def num_steps_for_integration_time(integration_time: float, step_size: float) -> int:
+    """``num_steps = max(1, round(T / step_size))``, capped at ``INTEGRATION_TIME_MAX_STEPS``
+    (``1`` for a non-finite ratio)."""
+    ratio = float(integration_time) / float(step_size)
+    if not np.isfinite(ratio):
+        return 1 if ratio != np.inf else INTEGRATION_TIME_MAX_STEPS
+    return int(min(INTEGRATION_TIME_MAX_STEPS, max(1, round(ratio))))
+
+
 class Hamiltonian(Proposal):
     """
     Standard Hamiltonian (leapfrog) proposal with mass matrix ``sd_or_cov``.
@@ -638,7 +719,8 @@ class Hamiltonian(Proposal):
     in effect (``build_proposal`` asserts this).
     """
 
-    def __init__(self, no_parameters, step_size=0.1, num_steps=10, sd_or_cov=1.0, seed=0) -> None:
+    def __init__(self, no_parameters, step_size=0.1, num_steps=10, sd_or_cov=1.0, seed=0,
+                 integration_time=None, integration_time_jitter=0.0) -> None:
         """
         Hamiltonian proposal with leapfrog integrator for Hamiltonian dynamics.
 
@@ -646,15 +728,46 @@ class Hamiltonian(Proposal):
             no_parameters: number of parameters
             log_likelihood_gradient: callable — gradient of log-likelihood
             log_prior_gradient: callable — gradient of log-prior
-            sd_or_cov: scalar, vector of standard deviations, or covariance matrix
+            sd_or_cov: the MASS matrix ``M``: a scalar or a vector (``M = diag(value^2)``) or a
+                full symmetric positive-definite matrix (``M`` itself); momenta ``p ~ N(0, M)``,
+                kinetic energy ``0.5 p^T M^-1 p``
             step_size: float — leapfrog step size
-            num_steps: int — number of leapfrog steps
+            num_steps: int — number of leapfrog steps (``None`` with ``integration_time``)
             seed: random seed for reproducibility
+            integration_time: trajectory length ``T`` in time (C1, 2026-10-11), alternative to
+                ``num_steps``: ``num_steps = max(1, round(T / step_size))`` (at most
+                ``INTEGRATION_TIME_MAX_STEPS``), recomputed by every ``set_step_size``, so the
+                trajectory length stays ``T`` while a dual averaging adapts the step.
+            integration_time_jitter: ``j`` in ``[0, 1)`` (C1b, 2026-10-11), only with
+                ``integration_time``: every trajectory draws ``u ~ Uniform(1 - j, 1 + j)`` from this
+                proposal's own generator (before its momentum) and integrates for
+                ``num_steps = max(1, round(T u / step_size))`` steps (same cap). ``j = 0``
+                (default) draws nothing: bit-identical to a proposal without the option. Valid:
+                the trajectory length is drawn independently of the state, so each fixed-length
+                trajectory is a reversible (volume-preserving, momentum-flip) proposal and the
+                mixture over lengths is reversible as well. Breaks the near-periodicity of a
+                fixed ``T`` that makes HMC antithetic for some functionals (Neal 2011 §5.4.5).
         """
         super().__init__()
         self.no_parameters = no_parameters
         self.step_size = step_size
-        self.num_steps = num_steps
+        if integration_time is not None:
+            if num_steps is not None:
+                raise ValueError("give either num_steps or integration_time, not both")
+            if not float(integration_time) > 0.0:
+                raise ValueError(f"integration_time must be positive, got {integration_time}")
+            self.integration_time = float(integration_time)
+            self.num_steps = num_steps_for_integration_time(self.integration_time, float(step_size))
+        else:
+            self.integration_time = None
+            self.num_steps = 10 if num_steps is None else num_steps
+        jitter = float(integration_time_jitter)
+        if not 0.0 <= jitter < 1.0:
+            raise ValueError(f"integration_time_jitter must be in [0, 1), got {integration_time_jitter}")
+        if jitter > 0.0 and self.integration_time is None:
+            raise ValueError("integration_time_jitter > 0 needs integration_time (it jitters the trajectory "
+                             "length in time)")
+        self.integration_time_jitter = jitter
         self._generator = np.random.RandomState(seed=seed)
         self.set_covariance(sd_or_cov=sd_or_cov)
         self.p_current_start: npt.NDArray # current momentum, will be set in propose_sample
@@ -687,6 +800,17 @@ class Hamiltonian(Proposal):
             self._mass_eigenvalues = eigenvalues
             self._mass_eigenvectors = eigenvectors
 
+    def set_step_size(self, step_size: float) -> None:
+        """Install a new leapfrog step size; with ``integration_time`` set, ``num_steps`` follows
+        as ``max(1, round(T / step_size))`` (C1). Nothing else derived from the step is cached."""
+        self.step_size = float(step_size)
+        if self.integration_time is not None:
+            self.num_steps = num_steps_for_integration_time(self.integration_time, self.step_size)
+
+    def mass_matrix(self) -> npt.NDArray:
+        """The mass ``M`` as a full ``(d, d)`` matrix (the resolved mass the carry-over compares)."""
+        return as_covariance_matrix(self.sd_or_cov, self.no_parameters)
+
     def _generate_normal_sample_uncorrelated(self, mean: npt.NDArray) -> npt.NDArray:
         return self._generator.normal(mean, self.sd_or_cov)
 
@@ -694,6 +818,20 @@ class Hamiltonian(Proposal):
         return self._generator.multivariate_normal(mean, self.sd_or_cov)
 
     def propose_sample(self, current_sample: npt.NDArray) -> npt.NDArray:
+        if self.integration_time_jitter > 0.0:
+            # C1b: a jittered trajectory length, drawn (before the momentum) only when j > 0;
+            # self.num_steps keeps the nominal T / step_size, the trajectory uses its own count
+            u = self._generator.uniform(1.0 - self.integration_time_jitter, 1.0 + self.integration_time_jitter)
+            nominal_num_steps = self.num_steps
+            self.num_steps = num_steps_for_integration_time(self.integration_time * u, self.step_size)
+            self.last_num_steps = self.num_steps
+            try:
+                self.p_current_start = self.generate_normal_sample(np.zeros((self.no_parameters,)))
+                q, p_end = self._leapfrog(current_sample, self.p_current_start)
+            finally:
+                self.num_steps = nominal_num_steps
+            self.p_proposed_end = p_end
+            return q
         self.p_current_start = self.generate_normal_sample(np.zeros((self.no_parameters,)))
         q, p_end = self._leapfrog(current_sample, self.p_current_start)
         self.p_proposed_end = p_end
@@ -867,11 +1005,25 @@ class _DualAveragingStepSize:
     DAMH acceptance is flat over a 20x step range and therefore uninformative (`16` §5 item 4,
     `15` §2.7). In an MH stage the single outer acceptance probability is used.
 
-    The mass (``sd_or_cov``) and ``num_steps`` are NOT adapted. Only ``step_size`` changes, and
-    nothing derived from it is cached: ``Hamiltonian._leapfrog`` reads ``self.step_size`` per
-    step and ``HamiltonianInfinite._apply_prior_kinetic_flow`` recomputes its rotation angles
+    The mass (``sd_or_cov``) is NOT adapted (C1: it is fixed within a stage; ``mass="covariance"``
+    resolves it at stage start from the chain's posterior statistics). ``num_steps`` is fixed,
+    unless the proposal was built with ``integration_time=T``: then ``set_step_size`` sets
+    ``num_steps = max(1, round(T / step_size))`` with every new step, and the adaptation trace
+    gains a ``num_steps`` column (appended, only for such a proposal). Nothing else derived from
+    the step is cached: ``Hamiltonian._leapfrog`` reads ``self.step_size`` per step and
+    ``HamiltonianInfinite._apply_prior_kinetic_flow`` recomputes its rotation angles
     (``step_size / sqrt(mass eigenvalue)``) on every call, so the integrator can never run with
     a stale angle. ``set_step_size`` is the single place that changes it.
+
+    Carried across stages (C1, 2026-10-11): ``carry_over()`` hands on, besides the frozen
+    ``step_size = exp(log_eps_bar)``, the recursion state ``dual_averaging = [m, H_bar,
+    log_eps_bar, mu]`` (each averaged over the ranks) and the stage's mass matrix
+    ``hamiltonian_mass``. A following adaptive Hamiltonian stage with ``step_size=None`` whose
+    resolved mass is close to the carried one (C1b, 2026-10-11: relative spectral-norm change
+    ``r <= DA_CONTINUE_MASS_TOLERANCE``) CONTINUES the recursion (:meth:`continue_recursion`: no
+    restart at ``mu = log(10 eps0)``); after a larger change it starts a fresh recursion
+    (:meth:`restart_recursion`) from the carried step size rescaled to the new mass, with the small
+    restart offset ``DA_RESTART_FACTOR`` (``proposal_builder``).
     """
 
     adaptation_stats_header = ["m", "mean_acceptance_probability", "log_step_size",
@@ -895,10 +1047,33 @@ class _DualAveragingStepSize:
         self._period_alpha_sum = 0.0
         self._period_alpha_count = 0
         self.adaptation_stats_rows: list[tuple] = []
+        self._pooled_recursion: list[float] | None = None
+        if getattr(self, "integration_time", None) is not None:
+            # appended column, only for an integration-time proposal (existing traces unchanged)
+            self.adaptation_stats_header = list(type(self).adaptation_stats_header) + ["num_steps"]
 
-    def set_step_size(self, step_size: float) -> None:
-        """Install a new leapfrog step size (nothing derived from it is cached, see the docstring)."""
-        self.step_size = float(step_size)  # type: ignore[attr-defined]
+    def continue_recursion(self, state) -> None:
+        """Resume the recursion from a carried ``[m, H_bar, log_eps_bar, mu]`` (C1); the live
+        step size stays the one the proposal was built with (the carried ``exp(log_eps_bar)``)."""
+        m, H_bar, log_eps_bar, mu = (float(value) for value in np.asarray(state, dtype=float).ravel())
+        self.m = int(round(m))
+        self.H_bar = H_bar
+        self.log_eps_bar = log_eps_bar
+        self.mu = mu
+
+    def restart_recursion(self, step_size: float, restart_factor: float) -> None:
+        """Start a FRESH recursion from ``step_size`` with the restart offset ``mu =
+        log(restart_factor * step_size)`` (C1b: after a large mass change the builder passes the
+        carried step rescaled to the new mass and ``DA_RESTART_FACTOR = 2`` instead of the
+        default 10); ``m = 0``, ``H_bar = 0``, ``log_eps_bar = log(step_size)``."""
+        step_size = float(step_size)
+        if not (np.isfinite(step_size) and step_size > 0.0):
+            raise ValueError(f"restart_recursion needs a positive finite step size, got {step_size}")
+        self.m = 0
+        self.H_bar = 0.0
+        self.mu = float(np.log(float(restart_factor) * step_size))
+        self.log_eps_bar = float(np.log(step_size))
+        self.set_step_size(step_size)  # type: ignore[attr-defined]
 
     def adapt(self, proposed_sample: npt.NDArray, log_acceptance_probability: float,
               current_sample: npt.NDArray,
@@ -924,9 +1099,10 @@ class _DualAveragingStepSize:
         self._period_alpha_sum += alpha
         self._period_alpha_count += 1
         if m % self.period == 0:
-            self.adaptation_stats_rows.append((
-                m, self._period_alpha_sum / max(self._period_alpha_count, 1),
-                log_eps, self.log_eps_bar))
+            row = (m, self._period_alpha_sum / max(self._period_alpha_count, 1), log_eps, self.log_eps_bar)
+            if getattr(self, "integration_time", None) is not None:
+                row = row + (self.num_steps,)  # type: ignore[attr-defined]
+            self.adaptation_stats_rows.append(row)
             self._period_alpha_sum = 0.0
             self._period_alpha_count = 0
 
@@ -937,17 +1113,28 @@ class _DualAveragingStepSize:
     def set_pooled_state(self, states: npt.NDArray) -> None:
         """Average ``log_eps_bar`` over the chains and freeze the live step size at it.
 
-        ``m``/``H_bar``/``mu`` stay this chain's own: they only drive the recursion, which does
-        not continue past the end of the stage (the next stage builds a fresh proposal).
+        ``m``/``H_bar``/``mu`` stay this chain's own (the stage is over); their averages over the
+        chains, with the averaged ``log_eps_bar``, are what ``carry_over()["dual_averaging"]``
+        hands to a following stage that continues the recursion (C1).
         """
         states = np.atleast_2d(np.asarray(states, dtype=float))
         if states.shape[1] != 4:
             raise ValueError(f"expected adapted-state rows of length 4, got {states.shape}")
         self.log_eps_bar = float(states[:, 2].mean())
+        self._pooled_recursion = [float(value) for value in states.mean(axis=0)]
+        self._pooled_recursion[2] = self.log_eps_bar
         self.set_step_size(np.exp(self.log_eps_bar))
 
     def carry_over(self) -> dict:
-        return {"step_size": float(np.exp(self.log_eps_bar))}  # key = Hamiltonian.step_size (2026-09-21)
+        """``step_size`` (key = ``Hamiltonian.step_size``, 2026-09-21), plus (C1) the recursion
+        state ``dual_averaging = [m, H_bar, log_eps_bar, mu]`` and the stage's mass matrix
+        ``hamiltonian_mass`` (see the class docstring)."""
+        recursion = self._pooled_recursion
+        if recursion is None:
+            recursion = [float(self.m), float(self.H_bar), float(self.log_eps_bar), float(self.mu)]
+        return {"step_size": float(np.exp(self.log_eps_bar)),
+                "dual_averaging": np.array(recursion, dtype=float),
+                "hamiltonian_mass": self.mass_matrix()}  # type: ignore[attr-defined]
 
     def adapted_summary(self) -> dict:
         """Diagnostic-only snapshot (see ``Proposal.adapted_summary``): the same frozen,

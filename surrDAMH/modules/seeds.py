@@ -35,6 +35,13 @@ draw new starting points. With offset 0, ``no_stages_lineage=None`` and generati
 plain run, and the old manual ``initial_sample_type="continued"`` path) that is exactly the
 formula above.
 
+Repeated experiments (``Configuration.seed_offset``, study 29, 2026-10-12): the integer
+``seed_offset`` is added to every seed of the run on top of the generation shift
+(:func:`run_seed_offset`): every ``seed0`` (hence all five per-stage streams), the
+initial-sample seed and the LHS seed. ``0`` (default) is the formula above. Repetitions with
+DISJOINT streams need offsets at least ``SEED_STRIDE * no_stages * no_samplers`` apart (e.g.
+``seed_offset = 100_000 * k``) and below ``GENERATION_SEED_STRIDE`` if the run is continued.
+
 This module is intentionally dependency-free (only ``no_stages``/``rank`` integers in,
 integers out) so that both runners and ``modules/manifest.py`` can share it.
 """
@@ -56,10 +63,10 @@ EXACT_PROPOSAL_SEED_OFFSET = 5
 #: ``SEED_STRIDE * no_stages_lineage * no_samplers < GENERATION_SEED_STRIDE`` (2026-10-08).
 GENERATION_SEED_STRIDE = 1_000_000
 
-SEED_FORMULA = ("seed0 = 10*(no_stages*rank_world + i) + 1000000*generation; proposal_seed = seed0+1; "
+SEED_FORMULA = ("seed0 = 10*(no_stages*rank_world + i) + 1000000*generation + seed_offset; proposal_seed = seed0+1; "
                 "algorithm_seed = seed0+2; exact_step_seed = seed0+4; exact_proposal_seed = seed0+5; "
-                "initial_sample_seed = 10*no_stages*rank_world + 3 + 1000000*generation; "
-                "lhs_seed = 1000000*generation; continued runs: i = stage_index_offset + local index, "
+                "initial_sample_seed = 10*no_stages*rank_world + 3 + 1000000*generation + seed_offset; "
+                "lhs_seed = 1000000*generation + seed_offset; continued runs: i = stage_index_offset + local index, "
                 "no_stages = no_stages_lineage, generation = lineage generation (0 for a plain run)")
 
 
@@ -78,6 +85,17 @@ def generation_seed_offset(generation: int | None) -> int:
     return GENERATION_SEED_STRIDE * int(generation or 0)
 
 
+def run_seed_offset(generation: int | None, seed_offset: int | None = 0) -> int:
+    """Shift added to every seed of a run: ``generation_seed_offset(generation) + seed_offset``
+    (``Configuration.lineage_generation`` and ``Configuration.seed_offset``; 0 for a plain run)."""
+    return generation_seed_offset(generation) + int(seed_offset or 0)
+
+
+def conf_seed_offset(conf) -> int:
+    """:func:`run_seed_offset` of a ``Configuration`` (missing fields count as 0)."""
+    return run_seed_offset(getattr(conf, "lineage_generation", 0), getattr(conf, "seed_offset", 0))
+
+
 def initial_sample_seed(no_stages: int, rank_world: int) -> int:
     """Seed of the per-chain initial-sample generator (G4): stage 0's ``seed0`` + 3."""
     return stage_seed0(no_stages, rank_world, 0) + INITIAL_SAMPLE_SEED_OFFSET
@@ -85,4 +103,5 @@ def initial_sample_seed(no_stages: int, rank_world: int) -> int:
 
 __all__ = ["SEED_STRIDE", "PROPOSAL_SEED_OFFSET", "ALGORITHM_SEED_OFFSET",
            "INITIAL_SAMPLE_SEED_OFFSET", "EXACT_STEP_SEED_OFFSET", "EXACT_PROPOSAL_SEED_OFFSET", "SEED_FORMULA", "stage_seed0", "initial_sample_seed",
-           "seed_no_stages", "GENERATION_SEED_STRIDE", "generation_seed_offset"]
+           "seed_no_stages", "GENERATION_SEED_STRIDE", "generation_seed_offset", "run_seed_offset",
+           "conf_seed_offset"]

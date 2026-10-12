@@ -28,6 +28,9 @@ expected to as well. The file:line-referenced conformance table is
 | `vjp(x, v)` | `→ (J(x).T @ v, y)`. The base class derives it from `jacobian`; override it if a reverse-mode path is cheaper. |
 | `supports_gradients()` | Whether this instance provides derivatives. |
 | `set_use_gradients(enabled)` | Optional hook; silently no-ops for evaluators without gradients. |
+| `averageable_state()` | Optional (S3, 2026-10-09): the parameters as a dict of float64 numpy arrays that may be averaged entrywise (copies; same keys/shapes for every evaluator of one architecture), or `None` (base default: not averageable). Used by `Stage.polyak_averaging`. `PyTorchNNEvaluator` returns its floating `state_dict` entries. |
+| `with_averageable_state(state)` | Required when `averageable_state()` is not `None`: a NEW evaluator equal to this one but with the parameters `state`; `self` is unchanged (base: `NotImplementedError`). |
+| `error_model` | Attribute (S1, 2026-10-09; class default `None`): the `surrDAMH.modules.error_model.ErrorModel` (`bias`, `cov`) of this evaluator's residuals, set by the collector / local surrogate manager after every retraining from the updater's snapshots (`Updater.get_training_data_arrays()`, implemented by the network and polynomial updaters; other updaters contribute only the held-out set) and the held-out set. Used by `Stage.surrogate_error_model`. The base `averageable_state()` returns it as the entries `error_model.bias` / `error_model.cov` (and `with_averageable_state` rebuilds it from them); an evaluator that averages its own parameters adds them to this dict (`PyTorchNNEvaluator` does). A stage without `surrogate_error_model` strips these entries before averaging. |
 | `no_parameters`, `no_observations` | Real attributes, set by `Evaluator.__init__`. **Call `super().__init__(no_parameters, no_observations)`.** |
 
 `SurrogateAsSolver` (used for `Stage.use_only_surrogate=True`) turns the `(1, q)` batch

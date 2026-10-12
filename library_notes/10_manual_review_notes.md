@@ -1351,3 +1351,165 @@ complete; robust pre-rejects ~70 %, fast ~20 %; posterior means differ at the Mo
     (c) `Samples.load_snapshots` keeps `audited` rows with its approximate row-position weights; (d) the non-finite
     warning inside an exact step names the stage proposal's class, not the exact random walk; (e) the exact step scores
     with the installed evaluator and does not poll for a newer one (the next sub-chain does).
+11. **S3 implemented (2026-10-09):** `Stage.polyak_averaging` (off by default; Auto chunks on); `Evaluator.averageable_state()` /
+    `with_averageable_state()`; one install point `AlgorithmBase._install_evaluator` (average, then finiteness check);
+    `notes` column `polyak_updates`. Byte-identical with the flag off (18 files incl. Hamiltonian). Items for the author:
+    (a) **chains can receive different evaluator sequences** (the collector answers only posted requests), so their
+    averaged networks may differ — each chain stays exact per installed surrogate, but note 18's "same kernel on every
+    rank" wording does not hold for the averaged network; (b) in a frozen stage the newest evaluator REPLACES the start-up
+    one in the average (k stays 1); (c) the `use_only_surrogate` `as_solver()` path still uses the raw evaluator;
+    (d) float64 networks cannot be evaluated at all (pre-existing: `PyTorchNNEvaluator.__call__` is float32).
+12. **S1 implemented (2026-10-09):** `surrDAMH/modules/error_model.py` (`estimate_error_model` LW-shrunk full cov for m ≤ 50,
+    diagonal above; `corrected_likelihood` = `Normal(mean = y − ε̄, cov = Σ_noise + Σ_surr)` with the RELATIVE normalisation
+    −½ log det Σ_tot + ½ log det Σ_noise so log L̃ stays on the exact scale — agent's choice, affects raw_data and the audit
+    statistic; confirm); `Stage.surrogate_error_model` (off by default; Auto chunks on); the model travels on the pickled
+    evaluator; estimated on the collector/local manager from all snapshots ∪ held-out residuals; `surrogate_quality.csv`
+    columns `error_bias_norm`, `error_cov_trace`; averaged by S3 when both flags are on. Exactness with a biased surrogate
+    verified (posterior within 1 SE; stage-2 acceptance 0.39 → 0.74). Items: (a) `use_only_surrogate` stages are not
+    corrected; (b) the collector evaluates each new surrogate on all snapshots once per retraining (cost O(n), even when
+    no stage uses S1); (c) local runs keep the error-model history in memory, no CSV; (d) a scipy `cho_solve` with
+    non-finite input now passes with `check_finite=False` (divergent trajectories).
+13. **Study 2026-10-09 (`27_s3_s1_efficiency_study_2026-10-09.md`), items for the author:**
+    (a) **Robust-mode layout is the weak point**: RW DAMH with sub-chain length 1 reaches MH-level ESS/eval on GRF
+    (0.015–0.021) while the same RW with sub-chain 20 reaches 0.139 (6.8×) and the fast mode 0.66–0.70. The sub-chain
+    length 1 was chosen because of the S6 defect (sub-chain proposals adapt on the OUTER acceptance, note 21 §6 item 4).
+    Proposal: implement S6, then set the robust chunks to a sub-chain length placeholder (~20) — a decision.
+    (b) **Polyak costs 2.3–4.2× in the FIRST chunk on P1** (network still learning), nothing afterwards; proposal: start
+    the average only after the first k0 networks of a chunk, or skip it in chunk 1 — a decision (theory: the first chunk
+    is then a non-diminishing phase of finite length; harmless for the asymptotics).
+    (c) **Error model**: 2.4–3.6× on P1 robust, `audit_hidden` 0 vs ~290 per 5 runs; free on GRF. Keep on.
+    (d) **Fast-mode Hamiltonian trajectories leave the ±8 box in 2–7 % of DAMH iterations** on posteriors with sd ≤ 1:
+    most likely the dual-averaging restart at each chunk (`mu = log(10·ε0)` overshoot) — to investigate; carrying the
+    dual-averaging state across chunks would remove the restarts.
+    (e) **The shipped GRF example is a near-prior posterior** (rank-2 forward map, note 14 F3; reference sd 0.8–1.0): P2b
+    produced no blind spot, so "S1 in a blind spot" is COULD NOT CHECK on it; use the harder GRF of note 19 for the
+    validation plan.
+14. **S6 implemented (2026-10-10): adaptive `RandomWalk`/`PCN` in a DAMH stage adapt on the sub-chain's own acceptance**
+    (note 21 §6 item 4; CHANGELOG "Behaviour changes" 2026-10-10). `GaussRandomWalk_adaptive`/`PCN_adaptive.adapt`: one
+    Robbins-Monro scale step per sub-chain step (new counter `n_scale`); shape/period/`adaptive_stats`/pooling keyed on
+    outer calls `n` as before; MH path bit for bit. Adapted step at the end of a 20 000-evaluation DAMH stage, 2-D
+    linear-Gaussian, exact surrogate, 3 seeds (raw: session scratchpad `s6/`):
+
+    | proposal | K | BEFORE | AFTER | best fixed (ESS per sub-chain step) | ESS/eval BEFORE → AFTER |
+    |---|---|---|---|---|---|
+    | RW sd | 1 | 0.587 | 0.724 | 0.45 | 0.376 → 0.438 |
+    | RW sd | 5 | 1.50 | 0.715 | 0.45 | 0.622 → 0.654 |
+    | RW sd | 20 | 3.03 | 0.716 | 0.45 | 0.665 → 0.855 |
+    | pCN β | 1 | 0.579 | 0.708 | 0.45 | 0.376 → 0.470 |
+    | pCN β | 5 | 1.000 | 0.705 | 0.6 | 0.700 → 0.653 |
+    | pCN β | 20 | 1.000 | 0.705 | 0.45 | 0.878 → 0.876 |
+
+    Items for the author: (a) **pCN K = 5 loses 7 % ESS per exact evaluation** on this exact-surrogate toy (gains 1.5× per
+    sub-chain step) — ESS/eval with free pre-rejections rewards over-large steps; confirm that is acceptable; (b) K = 1
+    adaptive DAMH stages also change (pre-rejected iterations: 0 → sub-chain probability; with an inexact surrogate the
+    moved iterations too); (c) naming: the spec asked for `n` = scale counter and `n_outer` = shape counter; implemented
+    the other way round (`n` keeps its meaning everywhere — adapted_state, adaptive_stats, pooling — and `n_scale` is new),
+    so no reader of `n` changes; (d) the residual ≈ 1.6× above the per-step optimum is the 0.234 target in d = 2 (MH has it
+    too); (e) the robust-mode sub-chain length (item 13 (a)) is now unblocked but unchanged — a decision; (f) the HTML
+    report's adaptation-section text was updated to the new signal; not re-checked visually.
+15. **Study 2026-10-10 (`28_illustrative_2d_efficiency_2026-10-10.md`), items for the author:**
+    (a) **A DAMH stage stopped only by `max_evaluations` can effectively never end**: with a fixed Hamiltonian step 0.4,
+    96 % of proposals left the ±8 box and were rejected without an exact evaluation (~2 exact evaluations per second),
+    so the stage hung until the 900 s timeout (`runs/eps0.4*`). Needed: a stall guard (stop or demote after N consecutive
+    iterations without an exact evaluation, or an iteration cap derived from `max_evaluations`) — part of S5; Auto must
+    never be able to hang.
+    (b) **The illustrative posterior is bimodal** (modes (−1.81, 0.11) and (1.39, −0.80), saddle 11 nats below, left arm
+    30 % of the mass). Hamiltonian settings without exact steps trap one chain in the narrow arm (12 of 27 round-1 runs);
+    with S2 exact steps the Hamiltonian is correct 5/5 but slow (cand2 1.6× MH); adaptive pCN with sub-chain 1 on the
+    (32,32) network is the best (5.3× MH per evaluation, 5/5 correct). Neither Auto mode tries pCN; Auto fast 1/5
+    correct, Auto robust 1/5 correct (sub-chain 1, 73 % pre-rejection, safeguards 27 % of the budget).
+    (c) The audit found hidden mass only in Auto robust runs (1–37 per run); Hamiltonian runs 0–1.
+    (d) Repetitions shifted seeds via `lineage_generation` (a misuse of that field for a seed offset) — a proper
+    `seed_offset` for repeated experiments would be cleaner.
+    (e) Pending items (dual-averaging state and Welford statistics across chunks, delayed Polyak) affect the chunked and
+    safeguarded configurations; the numbers of those rows may change.
+16. **C1 (2026-10-11): one persistent posterior-covariance estimate, `mass="covariance"`, `integration_time`, carried
+    dual averaging** (CHANGELOG 2026-10-11 has the evidence tables; scratchpad `c1/` of that session). Items for the author:
+    (a) **Statistics are never discarded, burn-in included** (spec): the shape keeps the warm-up's initial transient; on the
+    10-D anisotropic problem the long MH → DAMH stage-2 shape error went 0.039 → 0.046 (others improved or unchanged).
+    A burn-in-aware reset or down-weighting would be a decision.
+    (b) **Covariance mass + `T = 3` is antithetic**: ESS/eval of the mean 67-72× the identity mass, of second moments only
+    1.6-2.2× (with `M ≈ Σ⁻¹` and `T ≈ π` the flow maps x → −x in whitened coordinates). Jittering `T` (note 16 §5 item 4)
+    is the standard fix; not in the spec, not implemented. `AUTO_FAST_INTEGRATION_TIME = 3.0` is a placeholder.
+    (c) **Beyond the spec**: `num_steps` derived from `T` is capped at 1000 (`INTEGRATION_TIME_MAX_STEPS`) so a transiently
+    tiny dual-averaged step cannot make one proposal unboundedly expensive; the `num_steps` trace column is appended only
+    for an `integration_time` stage (existing traces and the B12 column check unchanged); every stage now writes a
+    `carry_over/<stage>.npz` (non-adaptive: the statistics only) and `run_manifest.json` gains `proposal_resolution`.
+    (d) The S2 exact step's own random walk keeps PRIVATE statistics (so S2 stages stay byte-identical); it could read the
+    shared object instead — a decision.
+    (e) The dual-averaging carry continues only on an equal resolved mass; with `mass="covariance"` the statistics grow
+    during every stage, so consecutive covariance-mass stages always restart ("mass changed") — continuation in practice
+    happens for explicit masses only. The integrator is not part of the "same mass" test (per spec).
+    (f) Spec `Hamiltonian.num_steps` default changed from `10` to `None` (resolved to 10 in `__post_init__`), so the
+    printed spec and the manifest still show 10; `integration_time` appears as a new field in `describe()`/manifest.
+    (g) Not checked visually: the HTML report's new carry-over rows.
+17. **C1b (2026-10-11): jitter, dual-averaging continuation across a mass change, burn-in discount, S2 exact step on the
+    shared statistics** (CHANGELOG 2026-10-11 "C1b" has the evidence tables; scratchpad `c1b/` of that session). Items for
+    the author:
+    (a) **Burn-in discount vs. shrinkage**: the weight discount (`n ← max(100, 10 d)`) also feeds the estimator's shrinkage
+    `δ = min(1, 2d/n)` = 0.2, so a `mass="covariance"` stage right after a burn-in starts from a more isotropic mass (10-D:
+    cond of the preconditioned target 4.4 → 10.6, mean-ESS −16 %); from a far start both versions are poor. Options: the
+    spec's alternative (rebuild from the second half of the burn-in states), or a separate "shrinkage count" kept at the
+    undiscounted `n`. Not decided, not implemented. The RW shape gains clearly (C1 item 16 (a) resolved).
+    (b) **Step-rescaling factor**: derived `(det M_new / det M_old)^(1/(2d))` — the spec's tentative
+    `sqrt(det Σ̂_new / det Σ̂_old)^(1/d)` has the inverse exponent (checked analytically and by a leapfrog equivalence test).
+    The geometric mean is a compromise: identity → Σ⁻¹ on the 10-D problem predicts ×6.3, the dual averaging ends at ×15.
+    (c) **T = π/2 (Auto placeholder)** loses the antithetic "super-efficiency" for the mean (10-D Auto: x 0.67 → 0.22) while
+    x² gains 3.6×; T = 3 with jitter 0.5 gives x / x² = 0.85 / 0.25 there. Which functional to optimise is a decision.
+    (d) In Auto the chunk-2 restart persists (r = 2.2-2.4 in 10-D with the discount, 0.23-0.32 without; 0.8 in 2-D): the
+    warm-up's statistics and chunk 1's differ by more than 20 %. Chunks 3-4 continue.
+    (e) **Beyond the spec**: the discount is applied AFTER the adaptive hand-over (so the burn-in stage's carried random-walk
+    scale stays byte-identical); the exact random walk installs its shape at construction when ≥ 100 states exist (the
+    stage random walk waits for its first period boundary); `proposal_resolution` gains `mass_change_r`,
+    `integration_time_jitter`, `posterior_statistics_discounted_from_n`, and `"fresh (mass changed)"` became
+    `"restarted (mass changed)"`; jitter > 0 without `integration_time` raises.
+    (f) S on the 2-D S2 setups is neutral (within seed spread); no anisotropic S2 case was measured.
+18. **Stage-end pooling fix + `n_seen` shrinkage (2026-10-11; CHANGELOG "Bug fixes" 2026-10-11; scratchpad `c1c/`).**
+    (a) Bug: the stage-end `Allgather` pooled the ranks' FULL statistics, each containing the shared start, so with `R`
+    samplers the history was counted `R` times per boundary (2 samplers, 3 stages: n = 1200/3600/8400 vs true
+    1200/2400/3600). Fixed with `begin_stage()` / `stage_increment_vector()` / `finish_stage(rows)` on
+    `PosteriorStatistics` (the increment is a second Welford object fed by `update()`, so every algorithm update point is
+    covered without touching `algorithms.py`). With ONE row `finish_stage` keeps the former single-row formula on the
+    full object (bit-identity of local / one-sampler runs) instead of `start ⊕ increment` — mathematically equal, not
+    bitwise. Any multi-stage multi-sampler result produced since C1 (incl. Auto runs with ≥ 2 chains) used biased
+    statistics.
+    (b) Decision 1 implemented: shrinkage δ from `max(n, n_seen)`; resolves item 17 (a). The 10-D burn-in case gets the
+    pre-C1b mass back exactly (cond 4.35); its ESS/eval (1.43 ± 0.44, 3 seeds) is within the seed spread of both
+    1.60 (pre-C1b) and 1.34 (C1b) — not resolved with 3 seeds.
+    (c) Not changed, for the author: `proposal_resolution["mass_source"]` still prints `covariance (n=<discounted n>)`
+    and `posterior_statistics_n_end` is the discounted `n` (no `n_seen` in the manifest; it is in `carry_over/` and the
+    HTML report's carry-over rows, the latter not checked visually). `merge()` now sums `n_seen`; `from_rows` sets
+    `n_seen = n`. Carry-over files gain `carry_over__posterior_statistics_n_seen` on every stage.
+
+19. **Step-size tuning study, Part 1 only (2026-10-12; `29_step_size_tuning_study_2026-10-12.md`; Parts 2/3 on the exact
+    safety kernel not run — author decision 2026-10-12). Flagged, nothing changed in the package beyond prerequisites P1
+    (`Configuration.seed_offset`) and P2 (`Stage.exact_step_scale`, unexercised by any run):**
+    (a) **MH-stage adaptive Hamiltonian step collapse — low priority, not a planned usage** (note 29 §2.6; cause
+    corrected 2026-10-12, the first version said "untrained network at start", which is wrong): with
+    `algorithm="MH"`, `surrogate_model_updates=True` and the Hamiltonian on network gradients, the exact acceptance
+    has a ceiling below 1 as ε → 0 (the trajectory conserves the surrogate energy, not the exact one; ≈ the DAMH outer
+    acceptance: 0.5 on L10, 0.2–0.3 on B2). With the ceiling under the target 0.9 the dual averaging drives the step to
+    10⁻⁵–10⁻⁴ within 10 updates; `num_steps = T/ε` saturates at the 1 000-step cap, the effective trajectory shrinks to
+    0.01–0.5 and only then reaches the target; a 3 000-evaluation stage took 996 s (B2) / 671 s (L10) vs 10–27 s in
+    DAMH. DAMH is immune (sub-chain acceptance, surrogate vs itself, goes to 1). Supported and documented (WS7) but
+    built by no example or Auto layout. Options when it matters: sharpen the `docs/stages.md` warning (adaptive step
+    unsuitable here), warn or fix the step at stage construction, or stop adapting and report at the step cap.
+    (b) **Non-terminating DAMH stage with a too-large fixed step** (note 29 §1.2, §3): fixed `step_size ≥ 2 ε*` pre-rejects
+    45–100 % of proposals (out-of-box), `p1fix_B2_T3_f2_r0` ran 328 816 iterations for 1 726 of 3 000 evaluations per
+    chain before being killed; the scan needed `time_limit = 90 s`. Same failure as note 28's ε = 0.4. Decision needed:
+    a default cap on pre-rejections per accepted sample (or per exact evaluation) that ends the stage with a reported
+    failure instead of running forever.
+    (c) **B2 dual averaging not converged at 3 000 evaluations per chain** (note 29 §2.4): the live and frozen step still
+    fall 24–39 % during the second half of the stage, replicates differ 2× in `eps_bar`, and the first ~500 updates run
+    at 10–100× the final step (`mu = log(10 ε₀)` start, largest live step 673 at a = 0.6) with out-of-box pre-rejections
+    up to 18 %. On L10/G20 the transient is ≤ 2× and the drift ≤ 4 %. Information for the note-26 plan (eps dual
+    averaging): the start-up overshoot is problem dependent and the per-stage freeze may be too early on rough posteriors.
+    (d) **Surrogate error model halves ESS/eval on L10 in single runs** (note 29 §2.5): error model off → outer acceptance
+    0.59/0.71 vs 0.25/0.50 (T = 1/5), ESS/eval 0.105/0.248 vs 0.049/0.099, step unchanged; opposite sign to note 27's
+    P1 result (S1 gives 2.4–3.6× in robust mode). n = 1 each; not established. Needs repetitions before the S1 default
+    is reconsidered.
+    (e) **Information, not a defect**: "steps are forced too small" is false for ESS per exact evaluation — the adapted
+    step at a = 0.9 is ≥ 4× larger than the best fixed step on L10/G20 (sub-chain acceptance 0.99, scan edge), while
+    per second the adapted step is the best; the right target depends on the cost ratio, which is the note-26
+    `K*`/cost-model question. Low targets a ≤ 0.7 gave biased runs on B2/G20 in 8 of 16 cells; not separated from the
+    step size itself (G20 diagnostic with the same step fixed: 1 of 3 poor vs 3 of 3).

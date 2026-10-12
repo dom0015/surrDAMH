@@ -31,6 +31,7 @@ import surrDAMH.proposals as _proposals  # private alias: surrDAMH.stages must o
 POSTERIOR_AFFECTING_FIELDS: frozenset[str] = frozenset({
     "algorithm", "proposal", "subchain_length", "surrogate_model_updates",
     "use_only_surrogate", "is_excluded", "burn_in", "exact_step_probability", "audit_prerejected",
+    "polyak_averaging", "surrogate_error_model", "exact_step_scale",
 })
 
 #: Stage fields of the S2 safety components (2026-10-09); only meaningful on a DAMH stage.
@@ -97,6 +98,37 @@ class Stage:
             exact evaluation per audit (counted towards ``max_evaluations``). On a frozen stage
             (``surrogate_model_updates=False``) the audit only measures: nothing retrains on it.
             Default: ``0.0`` (off).
+        exact_step_scale: DAMH only, used only with ``exact_step_probability > 0``: ``None``
+            (default) = the exact step's random walk is adaptive as described above; a positive
+            number ``s`` = it is NON-adaptive with the fixed covariance ``s * (2.38^2 / d) *
+            Sigma_hat``, where ``Sigma_hat`` is the chain's shared posterior-statistics covariance
+            estimate at the stage start (the identity, with a printed note, while the statistics
+            hold fewer than 100 states or give no usable covariance). Resolved per chain at stage
+            start; recorded in the manifest's ``proposal_resolution``. Default: ``None``.
+        polyak_averaging: install, instead of each surrogate evaluator received during the stage,
+            the running MEAN of the parameters of all evaluators received so far in this stage
+            (weight ``1/k`` for the ``k``-th; restarted at every stage). The installed surrogate
+            then changes by ``O(1/k)`` per update -- the "diminishing adaptation" condition (A5)
+            of the ergodicity argument for on-the-fly retraining (library_notes 18 §6 N1, 20 §6).
+            Meaningful on a stage that receives evaluators (DAMH, or MH with a gradient proposal
+            and ``surrogate_model_updates=True``); ignored elsewhere. Only evaluators exposing a
+            parameter state (``Evaluator.averageable_state``: the neural network) are averaged;
+            others pass through unchanged, with one printed note per stage. Each chain averages
+            the evaluators IT received; chains may receive different subsets of the collector's
+            versions, so their averages can differ. Default: ``False``.
+        surrogate_error_model: use the global Gaussian approximation-error model of the surrogate
+            (S1, ``surrDAMH.modules.error_model``): every SURROGATE log-likelihood of the stage --
+            the DAMH sub-chain, the delayed-acceptance correction, the Hamiltonian potential and its
+            gradient, the S2 exact step's surrogate scoring -- becomes ``N(y; G~(u) + eps,
+            Sigma_noise + Sigma_surr)``, with the residual mean ``eps`` and covariance
+            ``Sigma_surr`` the collector estimated for the installed evaluator (its snapshots plus
+            the held-out set, ``Evaluator.error_model``). The exact likelihood is unchanged and the
+            correction uses the same surrogate likelihood, so a DAMH chain still targets the exact
+            posterior; what changes is which proposals pass the first stage (fewer confident
+            surrogate pre-rejections where the surrogate is poor). Needs a ``Normal`` likelihood
+            (otherwise one printed note and the flag is ignored); an evaluator without an error
+            model is used uncorrected (one printed note per stage). With ``polyak_averaging`` the
+            error model is averaged together with the network. Default: ``False``.
         name: set by the library (``alg0000_MH``, ...); the stage's output-directory name. Default: ``None``.
 
     If no stopping rule is given, ``max_evaluations=10`` is used with a printed note.
@@ -124,6 +156,9 @@ class Stage:
     burn_in: bool = False
     exact_step_probability: float = 0.0
     audit_prerejected: float = 0.0
+    polyak_averaging: bool = False
+    surrogate_error_model: bool = False
+    exact_step_scale: float | None = None
     name: str | None = None
 
     # ------------------------------------------------------------------ derived properties
@@ -156,6 +191,12 @@ class Stage:
             self.send_snapshots_to_collector = False
         self._resolve_surrogate_model_updates()
         self._validate_safety_fields()
+        if not isinstance(self.polyak_averaging, (bool, np.bool_)):
+            raise TypeError(f"Stage.polyak_averaging must be True or False, got {self.polyak_averaging!r}")
+        self.polyak_averaging = bool(self.polyak_averaging)
+        if not isinstance(self.surrogate_error_model, (bool, np.bool_)):
+            raise TypeError(f"Stage.surrogate_error_model must be True or False, got {self.surrogate_error_model!r}")
+        self.surrogate_error_model = bool(self.surrogate_error_model)
 
     def _validate_safety_fields(self) -> None:
         """
@@ -175,6 +216,16 @@ class Stage:
                       f"exactly), setting {name}=0")
                 value = 0.0
             setattr(self, name, value)
+        scale = self.exact_step_scale
+        if scale is not None:
+            if isinstance(scale, bool) or not isinstance(scale, (int, float, np.integer, np.floating)) \
+                    or not (np.isfinite(float(scale)) and float(scale) > 0.0):
+                raise ValueError(f"Stage.exact_step_scale must be None or a positive finite number, got {scale!r}")
+            self.exact_step_scale = float(scale)
+            if self.algorithm == "MH":
+                print("Warning: exact_step_scale is only used by a DAMH stage with exact_step_probability > 0, "
+                      "setting exact_step_scale=None")
+                self.exact_step_scale = None
 
     def _resolve_surrogate_model_updates(self) -> None:
         """
@@ -235,6 +286,13 @@ class Stage:
             if not self.send_snapshots_to_collector:
                 notes.append("audit_prerejected with send_snapshots_to_collector=False: audited points are written "
                              "to raw_data but not sent to the collector")
+        if self.algorithm == "DAMH" and self.exact_step_scale is not None:
+            if self.exact_step_probability > 0.0:
+                notes.append(f"exact_step_scale={self.exact_step_scale:g}: the exact step's random walk is NOT adaptive, "
+                             f"covariance {self.exact_step_scale:g} * 2.38^2/d * (pooled posterior covariance estimate "
+                             "at stage start; identity while fewer than 100 states have been seen)")
+            else:
+                notes.append("exact_step_scale is not used (exact_step_probability=0)")
         spec = self.proposal
         step_field = _proposals.STEP_FIELD.get(type(spec))
         if step_field is not None and getattr(spec, step_field) is None:
@@ -243,6 +301,22 @@ class Stage:
                          + ("" if self.adaptive else " (fixed for the whole stage, with a warning)"))
         if step_field is not None and not self.adaptive:
             notes.append("proposal not adaptive: target_rate is not used")
+        if isinstance(spec, _proposals.Hamiltonian):  # C1 (2026-10-11)
+            if isinstance(spec.mass, str) and spec.mass == "covariance":
+                notes.append("mass='covariance' = inverse of the chain's pooled posterior covariance estimate "
+                             "(statistics of all previous stages/runs), resolved at stage start, fixed within it; "
+                             "identity while fewer than 100 states have been seen")
+            if spec.integration_time is not None:
+                notes.append(f"integration_time={spec.integration_time:g}: num_steps = round(T / step_size), "
+                             "recomputed whenever the step adapts")
+            if spec.integration_time_jitter > 0.0:  # C1b
+                notes.append(f"integration_time_jitter={spec.integration_time_jitter:g}: every trajectory uses "
+                             f"T * u, u ~ Uniform({1 - spec.integration_time_jitter:g}, "
+                             f"{1 + spec.integration_time_jitter:g})")
+            if spec.adaptive and spec.step_size is None:
+                notes.append("the dual averaging continues the previous adaptive Hamiltonian stage's recursion "
+                             "if the resolved mass changed by at most 20% (spectral norm), else restarts from the "
+                             "carried step rescaled to the new mass")
         extra = [f"[note] {note}" for note in notes]
         return describe_fields(self, POSTERIOR_AFFECTING_FIELDS, f"{title} (* = posterior-/acceptance-rate-affecting):", extra)
 

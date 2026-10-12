@@ -25,7 +25,7 @@ POSTERIOR_AFFECTING_FIELDS: frozenset[str] = frozenset({
     "min_snapshots_initial", "min_snapshots_to_update",
     "max_collected_snapshots_per_loop", "use_surrogate_gradients", "initial_sample_type",
     "initial_samples_distribution", "continued_from_dir", "lhs_scale", "use_collector",
-    "stage_index_offset", "no_stages_lineage", "lineage_generation",
+    "stage_index_offset", "no_stages_lineage", "lineage_generation", "seed_offset",
 })
 
 #: How deep :func:`normalize_for_comparison` descends into containers/objects before it gives up
@@ -219,6 +219,15 @@ class Configuration:
             Generation of this run in its lineage (0 = not a continuation); shifts every seed
             by ``1_000_000 * lineage_generation`` (``surrDAMH.modules.seeds``). Default: ``0``.
             (posterior-affecting)
+        seed_offset: Non-negative integer added to EVERY seed of the run (all per-stage streams
+            of every chain -- proposal, acceptance, exact step and its random walk --, the
+            initial-sample seed and the LHS seed; ``surrDAMH.modules.seeds``), for repeated
+            experiments with otherwise identical settings. Recorded in ``run_manifest.json``
+            (``seeds.seed_offset``). For repetitions with disjoint streams use offsets at least
+            ``10 * no_stages * no_samplers`` apart, e.g. ``seed_offset = 100_000 * k``. Seeds the
+            user passes elsewhere (e.g. a surrogate updater's ``seed``) are not shifted. Kept by a
+            continuation (added to the generation shift). Default: ``0`` (the historical seeds).
+            (reproducibility-affecting)
         min_snapshots_initial: Minimum number of snapshots collected before the first
             surrogate model is trained. Default: ``1``. (posterior-affecting)
         min_snapshots_to_update: New snapshots that must have arrived since the last
@@ -290,6 +299,9 @@ class Configuration:
     no_stages_lineage: int | None = None
     lineage_generation: int = 0
 
+    # --- repeated experiments ---
+    seed_offset: int = 0
+
     # --- surrogate training ---
     min_snapshots_initial: int = 1
     min_snapshots_to_update: int = 0
@@ -324,6 +336,11 @@ class Configuration:
                 not isinstance(self.torch_threads, int) or isinstance(self.torch_threads, bool)
                 or self.torch_threads <= 0):
             raise ValueError(f"torch_threads must be None or a positive int, got {self.torch_threads!r}")
+        if isinstance(self.seed_offset, bool) or not isinstance(self.seed_offset, (int, np.integer)) \
+                or int(self.seed_offset) < 0:
+            raise ValueError(f"seed_offset must be a non-negative int, got {self.seed_offset!r}")
+        self.seed_offset = int(self.seed_offset)
+        self._requested_posterior_fields["seed_offset"] = self.seed_offset
         if self.paths_to_append is None:
             self.paths_to_append = []
         else:

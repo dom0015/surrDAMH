@@ -181,6 +181,10 @@ class PolynomialSklearnUpdater(Updater):  # initiated by COLLECTOR
     # from it. The state is the stored snapshots plus the constructor arguments; the ridge fit is
     # deterministic, so it is redone from the snapshots on the first get_evaluator().
 
+    def get_training_data_arrays(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """The stored ``(parameters, observations, multiplicity)`` (copies); used by the S1 error model."""
+        return self.par.copy(), self.obs.copy(), self.mul.copy()
+
     def get_initial_snapshots(self) -> list[npt.NDArray] | None:
         """The restored snapshots after ``load_state``/``load_training_data``, else ``None``."""
         if not getattr(self, "training_data_loaded", False):
