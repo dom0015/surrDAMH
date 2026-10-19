@@ -28,7 +28,7 @@ from surrDAMH.distributions.parent import Distribution
 from surrDAMH.modules import proposals
 from surrDAMH.modules.posterior_statistics import MASS_MIN_STATES, PosteriorStatistics
 from surrDAMH.modules.proposals import Proposal
-from surrDAMH.proposals import PCN, Block, Hamiltonian, RandomWalk
+from surrDAMH.proposals import PCN, STEP_FIELD, Block, Hamiltonian, Mixture, RandomWalk
 from surrDAMH.stages import Stage
 
 if TYPE_CHECKING:  # pragma: no cover - typing only, avoids importing mpi4py at runtime
@@ -225,6 +225,9 @@ def _build_simple(spec, no_parameters: int, prior: Distribution, seed: int, carr
             sd_or_cov=mass,
             integration_time=getattr(spec, "integration_time", None),
             integration_time_jitter=getattr(spec, "integration_time_jitter", 0.0),
+            tempered_fraction=getattr(spec, "tempered_fraction", 0.0),
+            tempered_beta=getattr(spec, "tempered_beta", 1.0),
+            likelihood_weight=getattr(spec, "likelihood_weight", 1.0),
             **adaptive_kwargs,
         )
         # dual-averaging carry (C1, rule of C1b): when this stage adapts from the carried step,
@@ -258,6 +261,11 @@ def _build_simple(spec, no_parameters: int, prior: Distribution, seed: int, carr
                                "step_size_initial": step_size_initial,
                                "dual_averaging": dual_averaging,
                                "mass_change_r": mass_change}
+        if proposal.tempering_on:  # C3: only for a tempered proposal (existing manifests unchanged)
+            proposal.resolution["tempered_fraction"] = proposal.tempered_fraction
+            proposal.resolution["tempered_beta"] = proposal.tempered_beta
+        if proposal.flattening_on:  # note 32: only for a flattened proposal (existing manifests unchanged)
+            proposal.resolution["likelihood_weight"] = proposal.likelihood_weight
         return proposal
     assert isinstance(spec, RandomWalk), type(spec)
     if spec.adaptive:
@@ -287,12 +295,50 @@ def _build_simple(spec, no_parameters: int, prior: Distribution, seed: int, carr
     return my_Prop
 
 
+def _build_mixture(spec: Mixture, conf, prior: Distribution, seed: int, carried: dict, stage_index,
+                   statistics: PosteriorStatistics | None) -> Proposal:
+    """
+    Runtime proposal of a ``Mixture`` spec (C2, 2026-10-12): every component is built by
+    ``_build_simple`` exactly as a bare stage proposal (full dimension, the full prior, the merged
+    ``carried`` dict and the chain's ``statistics``) with the seed ``subproposal_seed(seed, k)``,
+    and wrapped in a ``BlockProposal`` whose every group is all parameters (``is_mixture=True``).
+
+    V1 carry-over rule (note 23 §4.1): the components hand their tuned values on under the flat
+    keys of their type (``scale``/``beta``/``step_size``...), so two ADAPTIVE components of one
+    type would overwrite each other's carry-over -- refused here. Fixed duplicates are fine.
+    """
+    adaptive_types = [type(component) for component in spec.proposals if component.adaptive]
+    for spec_type in dict.fromkeys(adaptive_types):
+        if adaptive_types.count(spec_type) > 1:
+            indices = [k for k, component in enumerate(spec.proposals)
+                       if component.adaptive and type(component) is spec_type]
+            raise ValueError(
+                f"stage {stage_index}: Mixture components {indices} are both adaptive {spec_type.__name__} "
+                "proposals; their tuned values would be handed to later stages under the same carry-over "
+                "key and overwrite each other. Pin the step of all but one of them (e.g. "
+                f"{spec_type.__name__}({STEP_FIELD[spec_type]}=...), which is then fixed) or use "
+                "components of different types")
+    no_parameters = int(conf.no_parameters)
+    components = [_build_simple(component, no_parameters=no_parameters, prior=prior,
+                                seed=proposals.subproposal_seed(seed, k), carried=carried, conf=conf,
+                                stage_index=stage_index, statistics=statistics)
+                  for k, component in enumerate(spec.proposals)]
+    return proposals.BlockProposal(
+        no_parameters=no_parameters,
+        list_of_groups=[list(range(no_parameters)) for _ in components],
+        list_of_proposals=components,
+        seed=seed,
+        group_probabilities=spec.probabilities,
+        is_mixture=True,
+    )
+
+
 def build_proposal(stage: Stage, conf: "Configuration", prior: Distribution, seed: int,
                    carried: dict | None = None, stage_index: int | None = None,
                    statistics: PosteriorStatistics | None = None) -> Proposal:
     """
     Build the runtime proposal of one sampling stage from its ``stage.proposal`` spec
-    (``surrDAMH.proposals``: ``RandomWalk``/``PCN``/``Hamiltonian``/``Block``).
+    (``surrDAMH.proposals``: ``RandomWalk``/``PCN``/``Hamiltonian``/``Block``/``Mixture``).
 
     Args:
         stage: the stage whose proposal is constructed.
@@ -322,25 +368,27 @@ def build_proposal(stage: Stage, conf: "Configuration", prior: Distribution, see
     Returns:
         The proposal instance for this stage.
 
+    A ``Block`` builds its sub-proposals in group dimension without carry-over or shared
+    statistics; a ``Mixture`` builds every component like a bare proposal of the stage (full
+    dimension, ``carried``, ``statistics``) and wraps both in a ``BlockProposal`` (C2).
+
     Raises:
-        ValueError: ``PCN`` with a non-Gaussian internal prior; a ``Block`` whose sub-proposal
-            is adaptive (a block proposal never adapts, give every sub-proposal its step);
-            a gradient-needing proposal without ``conf.use_surrogate_gradients`` in effect.
+        ValueError: ``PCN`` (also as a ``Block``/``Mixture`` component) with a non-Gaussian
+            internal prior; a ``Mixture`` with two adaptive components of one type (V1 carry-over
+            rule, C2).
+        AssertionError: a gradient-needing proposal (incl. a Block/Mixture containing one)
+            without ``conf.use_surrogate_gradients`` in effect.
     """
     carried = {} if carried is None else carried
     spec = stage.proposal
 
     if isinstance(spec, Block):
         sub_proposals = []
+        # C2 (2026-10-12): sub-proposals may adapt (BlockProposal.adapt forwards to the one that
+        # proposed; the G2 guard is gone). They are built in group dimension with carried={} and
+        # no shared statistics (an adaptive random walk keeps a private one of its group), and the
+        # block hands nothing over (BlockProposal.carry_over() is {} for a block).
         for k, (group, sub_spec) in enumerate(zip(spec.groups, spec.proposals)):
-            if sub_spec.adaptive:
-                # G2 (2026-09-17): a BlockProposal never calls adapt() on its members, so an
-                # adaptive sub-proposal would silently stay at its start value. Fail fast.
-                raise ValueError(
-                    f"stage {stage_index}: adaptive covariance reduction is not defined for block "
-                    f"proposals (sub-proposal {k}: {sub_spec!r}); give every sub-proposal its step "
-                    "(scale/beta/step_size) or set adaptive=False on it"
-                )
             group = [int(i) for i in group]
             mean_g, cov_g = (None, None)
             if isinstance(sub_spec, (PCN, RandomWalk)) and _prior_is_gaussian(prior):
@@ -354,8 +402,11 @@ def build_proposal(stage: Stage, conf: "Configuration", prior: Distribution, see
             no_parameters=conf.no_parameters,
             list_of_groups=[list(g) for g in spec.groups],
             list_of_proposals=sub_proposals,
-            seed=seed
+            seed=seed,
+            group_probabilities=spec.probabilities,
         )
+    elif isinstance(spec, Mixture):
+        my_Prop = _build_mixture(spec, conf, prior, seed, carried, stage_index, statistics)
     else:
         my_Prop = _build_simple(spec, no_parameters=conf.no_parameters, prior=prior, seed=seed,
                                 carried=carried, conf=conf, stage_index=stage_index, statistics=statistics)

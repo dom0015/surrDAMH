@@ -118,7 +118,7 @@ before/after sample-stream comparison (the freeze changed DAMH-SMU streams for
 `subchain_length > 1`; `subchain_length=1` is unaffected).
 
 Since WS7 (2026-09-18) the same field also opts an **MH** stage with a gradient-based proposal
-(a `Hamiltonian` proposal, bare or inside a `Block`) into refreshing its
+(a `Hamiltonian` proposal, bare or inside a `Block`/`Mixture`) into refreshing its
 surrogate: it then polls once per iteration and re-installs the proposal's gradient functions
 when a newer evaluator arrives. There is no telescoping constraint to respect here, because an
 MH stage's accept/reject test uses the exact model only — the surrogate enters through the

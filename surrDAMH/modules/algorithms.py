@@ -23,7 +23,7 @@ from surrDAMH.modules.algorithm_interfaces import (AlgorithmConfiguration,
                                                    SnapshotCollector)
 from surrDAMH.modules.manifest import raw_data_columns, samples_columns
 from surrDAMH.modules.monitoring import SamplingOutputMonitor
-from surrDAMH.modules.proposals import Proposal
+from surrDAMH.modules.proposals import BlockProposal, Proposal
 from surrDAMH.modules.posterior_statistics import PosteriorStatistics
 from surrDAMH.modules.seeds import ALGORITHM_SEED_OFFSET, EXACT_STEP_SEED_OFFSET
 from surrDAMH.solvers import check_observations_shape
@@ -46,6 +46,16 @@ STATE_TYPE_AUDITED = "audited"
 S2_NOTES_COLUMNS: tuple[str, ...] = ("exact_steps", "exact_accepted", "audited", "audit_hidden")
 #: notes column appended by S3 (2026-10-09): ``counter_polyak_updates`` of the stage
 S3_NOTES_COLUMNS: tuple[str, ...] = ("polyak_updates",)
+#: notes column appended by C3 (2026-10-12) ONLY when the stage proposal (or a mixture/block
+#: component) tempers its trajectories: trajectories too short to temper (``n_t = 0``)
+C3_NOTES_COLUMNS: tuple[str, ...] = ("tempered_skipped",)
+#: ``subchain_stats`` column appended LAST (after ``kernel``; note 32, D-32-3, 2026-10-13) ONLY when
+#: the stage proposal is a ``Mixture`` (``BlockProposal`` with ``is_mixture``): the index of the
+#: component drawn for that outer iteration (it proposed the whole sub-chain), ``-1`` on an
+#: exact-step row (S2: the exact step's own random walk proposed, not a component; the draw made
+#: before the kernel choice is unused there). Every other stage's file -- also a ``Block`` stage's,
+#: pinned by ``test_fixed_block_runs_are_byte_identical_to_before_c2`` -- is unchanged; select by name.
+COMPONENT_SUBCHAIN_STATS_COLUMNS: tuple[str, ...] = ("component",)
 
 
 def check_initial_sample_in_box(prior: Distribution, parameters: npt.NDArray, chain: str) -> None:
@@ -305,6 +315,11 @@ class AlgorithmBase:
             sample.solver_tag,
         )
 
+    @property
+    def _component_column(self) -> bool:
+        """True iff ``subchain_stats`` carries the ``component`` column (Mixture stage, note 32)."""
+        return isinstance(self.proposal, BlockProposal) and self.proposal.is_mixture
+
     def _prepare_run(self) -> None:
         self.time_start = time.time()
         if self.current.observations is None:
@@ -327,7 +342,8 @@ class AlgorithmBase:
                 "outer_proposed_changed",
                 "outer_accepted",
                 "rank_world",
-                "kernel",  # S2 (2026-10-09), appended last: 0 = delayed-acceptance step, 1 = exact step
+                "kernel",  # S2 (2026-10-09): 0 = delayed-acceptance step, 1 = exact step
+                *(COMPONENT_SUBCHAIN_STATS_COLUMNS if self._component_column else ()),  # note 32, last
             ],
             condition=self.stage.save_to_file and self.stage.algorithm == "DAMH",
         )
@@ -600,13 +616,18 @@ class AlgorithmBase:
         # out_of_bounds (S0, 2026-10-09) and the S2 counters are appended last: readers select
         # notes columns by name
         # polyak_updates (S3, 2026-10-09) after them, also last
+        # tempered_skipped (C3, 2026-10-12) only for a tempering proposal, so other files are unchanged
+        tempering = bool(getattr(self.proposal, "tempering_on", False))
         self.monitor(data_name="notes", row=["accepted", "rejected", "pre-rejected", "sum", "seed", "out_of_bounds",
-                                             *S2_NOTES_COLUMNS, *S3_NOTES_COLUMNS],
+                                             *S2_NOTES_COLUMNS, *S3_NOTES_COLUMNS,
+                                             *(C3_NOTES_COLUMNS if tempering else ())],
                      condition=self.stage.save_to_file)
         no_all = self.counter_accepted + self.counter_rejected + self.counter_prerejected
         notes = [self.counter_accepted, self.counter_rejected, self.counter_prerejected, no_all, self.seed,
                  self.counter_out_of_bounds, self.counter_exact_steps, self.counter_exact_accepted,
                  self.counter_audited, self.counter_audit_hidden, self.counter_polyak_updates]
+        if tempering:
+            notes.append(int(self.proposal.tempered_skipped))
         self.monitor(data_name="notes", row=notes, condition=self.stage.save_to_file)
         self.monitor.close_files()
 
@@ -1215,7 +1236,8 @@ class Algorithm_DAMH(AlgorithmBase):  # initiated by SAMPLERs
                 outer_accepted = self._exact_iteration()
                 self.monitor(
                     data_name="subchain_stats",
-                    row=[i, self.stage.subchain_length, 0, np.nan, 0.0, 1, int(outer_accepted), self.rank_world, 1],
+                    row=[i, self.stage.subchain_length, 0, np.nan, 0.0, 1, int(outer_accepted), self.rank_world, 1,
+                         *((-1,) if self._component_column else ())],  # component: none proposed (note 32)
                     condition=self.stage.save_to_file and self.stage.algorithm == "DAMH",
                 )
                 if time.time() - self.time_start > self.stage.time_limit:
@@ -1316,6 +1338,7 @@ class Algorithm_DAMH(AlgorithmBase):  # initiated by SAMPLERs
                     int(outer_accepted),
                     self.rank_world,
                     0,  # kernel: delayed-acceptance step (S2)
+                    *((int(self.proposal.group_index),) if self._component_column else ()),  # note 32
                 ],
                 condition=self.stage.save_to_file and self.stage.algorithm == "DAMH",
             )

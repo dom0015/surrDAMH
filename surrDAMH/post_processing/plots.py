@@ -450,6 +450,7 @@ class SamplesPlots(SamplesStatistics):
             plt.grid()
 
             if observations is not None:
+                observations = np.asarray(observations, dtype=float).reshape(-1)  # a plain number for one observation (2026-10-14)
                 if len_grid == 1:
                     plt.plot(observations[chosen_observations], 0, 'ro', linestyle='None', markersize=6, label="observation")
                 else:

@@ -720,7 +720,8 @@ class Hamiltonian(Proposal):
     """
 
     def __init__(self, no_parameters, step_size=0.1, num_steps=10, sd_or_cov=1.0, seed=0,
-                 integration_time=None, integration_time_jitter=0.0) -> None:
+                 integration_time=None, integration_time_jitter=0.0,
+                 tempered_fraction=0.0, tempered_beta=1.0, likelihood_weight=1.0) -> None:
         """
         Hamiltonian proposal with leapfrog integrator for Hamiltonian dynamics.
 
@@ -747,7 +748,31 @@ class Hamiltonian(Proposal):
                 trajectory is a reversible (volume-preserving, momentum-flip) proposal and the
                 mixture over lengths is reversible as well. Breaks the near-periodicity of a
                 fixed ``T`` that makes HMC antithetic for some functionals (Neal 2011 §5.4.5).
+            tempered_fraction, tempered_beta: tempered trajectory (C3, 2026-10-12, note 30): per
+                trajectory of ``L`` steps, ``n_t = min(floor(f L), L // 2)`` and ``sqrt_alpha =
+                beta^(-1/(2 n_t))`` (``_tempering``); the momentum is multiplied by ``sqrt_alpha``
+                before each of the first ``n_t`` position updates and divided by it after each of
+                the last ``n_t``. Volume-preserving and reversible, so the acceptance is unchanged.
+                ``f = 0`` (default): no new statement runs, bit-identical to before. ``f > 0`` with
+                ``n_t = 0`` (``L < 2``): untempered, counted in ``self.tempered_skipped``.
+            likelihood_weight: ``tau`` in ``[0, 1]`` (flattened likelihood, note 32 §1): every
+                momentum kick uses ``tau * grad log L`` (``_likelihood_force``); a kick by any
+                position-dependent force keeps the map volume-preserving and reversible, so the
+                exact-energy acceptance is unchanged. ``1.0`` (default): the gradient array itself
+                is used, no multiplication, bit-identical to before.
         """
+        fraction, beta = float(tempered_fraction), float(tempered_beta)
+        if not 0.0 <= fraction <= 0.5:
+            raise ValueError(f"tempered_fraction must be in [0, 0.5], got {tempered_fraction}")
+        if not 0.0 < beta <= 1.0:
+            raise ValueError(f"tempered_beta must be in (0, 1], got {tempered_beta}")
+        weight = float(likelihood_weight)
+        if not 0.0 <= weight <= 1.0:
+            raise ValueError(f"likelihood_weight must be in [0, 1], got {likelihood_weight}")
+        self.tempered_fraction = fraction
+        self.tempered_beta = beta
+        self.likelihood_weight = weight
+        self.tempered_skipped = 0  # trajectories of a tempered proposal too short to temper (n_t = 0)
         super().__init__()
         self.no_parameters = no_parameters
         self.step_size = step_size
@@ -847,6 +872,37 @@ class Hamiltonian(Proposal):
         # p_part included into the prior part output
         return likelihood_part, prior_part + p_part
 
+    @property
+    def tempering_on(self) -> bool:
+        """True iff this proposal tempers its trajectories (``tempered_fraction > 0``, C3)."""
+        return self.tempered_fraction > 0.0
+
+    def _tempering(self, num_steps: int) -> tuple[int, float]:
+        """``(n_t, sqrt_alpha)`` of one trajectory of ``num_steps`` steps (C3, note 30 §3):
+        ``n_t = min(floor(f L), L // 2)``, ``sqrt_alpha = beta^(-1/(2 n_t))`` (so the reached
+        kinetic temperature ``alpha^n_t = 1/beta`` does not depend on ``L``). ``(0, 1.0)`` when
+        off or when ``n_t = 0``; the latter, with tempering on, increments ``tempered_skipped``."""
+        if self.tempered_fraction == 0.0:
+            return 0, 1.0
+        num_steps = int(num_steps)
+        n_t = min(int(np.floor(self.tempered_fraction * num_steps)), num_steps // 2)
+        if n_t == 0:
+            self.tempered_skipped += 1
+            return 0, 1.0
+        return n_t, float(self.tempered_beta ** (-0.5 / n_t))
+
+    @property
+    def flattening_on(self) -> bool:
+        """True iff the kicks use a flattened likelihood (``likelihood_weight < 1``, note 32)."""
+        return self.likelihood_weight < 1.0
+
+    def _likelihood_force(self, q: npt.NDArray) -> npt.NDArray:
+        """Likelihood part of the kick at ``q``: ``grad log L(q)`` itself when ``likelihood_weight
+        == 1`` (no multiplication, bit-identical), else ``likelihood_weight * grad log L(q)``."""
+        if self.likelihood_weight == 1.0:
+            return self.log_likelihood_gradient(q)
+        return self.likelihood_weight * self.log_likelihood_gradient(q)
+
     def _leapfrog(self, q0: npt.NDArray, p0_start: npt.NDArray) -> tuple[npt.NDArray, npt.NDArray]:
         """
         Leapfrog integrator for Hamiltonian dynamics.
@@ -866,20 +922,25 @@ class Hamiltonian(Proposal):
         the state but never modify it, so a finite trajectory is bit-identical to the version
         without them.
         """
+        n_t, sqrt_alpha = self._tempering(self.num_steps)  # C3: (0, 1.0) = untempered, nothing below runs
         q = q0.copy()
         p = p0_start.copy()
-        p = p - 0.5 * self.step_size * (self.log_likelihood_gradient(q) + self.log_prior_gradient(q))  # half step for momentum
+        p = p - 0.5 * self.step_size * (self._likelihood_force(q) + self.log_prior_gradient(q))  # half step for momentum
         if not _is_finite(p):
             return q, -p
         for i in range(self.num_steps):
+            if i < n_t:
+                p = p * sqrt_alpha  # C3 heating, before the position update
             q = q + self.step_size * self.M_inv @ p  # full step for position
+            if i >= self.num_steps - n_t:
+                p = p / sqrt_alpha  # C3 cooling, after the position update
             if not _is_finite(q):
                 return q, -p
             if i < self.num_steps - 1:
-                p = p - self.step_size * (self.log_likelihood_gradient(q) + self.log_prior_gradient(q))  # full step for momentum (except at the end)
+                p = p - self.step_size * (self._likelihood_force(q) + self.log_prior_gradient(q))  # full step for momentum (except at the end)
                 if not _is_finite(p):
                     return q, -p
-        p = p - 0.5 * self.step_size * (self.log_likelihood_gradient(q) + self.log_prior_gradient(q))  # final half step for momentum
+        p = p - 0.5 * self.step_size * (self._likelihood_force(q) + self.log_prior_gradient(q))  # final half step for momentum
         p_end = -p  # negate momentum (for reversibility — does not affect acceptance)
         return q, p_end
 
@@ -948,20 +1009,25 @@ class HamiltonianInfinite(Hamiltonian):
         checks do not touch the state, so a finite trajectory is bit-identical to the version
         without them.
         """
+        n_t, sqrt_alpha = self._tempering(self.num_steps)  # C3: (0, 1.0) = untempered, nothing below runs
         q = q0.copy()
         p = p0_start.copy()
-        p = p - 0.5 * self.step_size * self.log_likelihood_gradient(q)  # half step for momentum
+        p = p - 0.5 * self.step_size * self._likelihood_force(q)  # half step for momentum
         if not _is_finite(p):
             return q, -p
         for i in range(self.num_steps):
+            if i < n_t:
+                p = p * sqrt_alpha  # C3 heating, before the flow
             q, p = self._apply_prior_kinetic_flow(q, p)
+            if i >= self.num_steps - n_t:
+                p = p / sqrt_alpha  # C3 cooling, after the flow
             if not (_is_finite(q) and _is_finite(p)):
                 return q, -p
             if i < self.num_steps - 1:
-                p = p - self.step_size * self.log_likelihood_gradient(q)  # full step for momentum (except at the end)
+                p = p - self.step_size * self._likelihood_force(q)  # full step for momentum (except at the end)
                 if not _is_finite(p):
                     return q, -p
-        p = p - 0.5 * self.step_size * self.log_likelihood_gradient(q)  # final half step for momentum
+        p = p - 0.5 * self.step_size * self._likelihood_force(q)  # final half step for momentum
         p_end = -p  # negate momentum (for reversibility — does not affect acceptance)
         return q, p_end
 
@@ -1180,9 +1246,31 @@ class BlockProposal(Proposal):
     stream (before G5 all chains shared one, finding 1.9) and a sub-proposal object reused
     across stages is re-seeded at the start of each stage instead of continuing the previous
     stage's stream (finding A13).
+
+    Mixture and adaptation (C2, 2026-10-12, note 25 decision D8): the same class implements the
+    ``Mixture`` spec -- every group is ``list(range(no_parameters))`` and ``is_mixture=True`` --
+    and its sub-proposals ("components") may adapt, in both uses:
+
+    * ``adapt()`` is forwarded to the component of the current ``group_index`` only (the one that
+      proposed this iteration; ``choose_group`` is drawn once per outer iteration), with the
+      samples sliced to its group (identity for a mixture);
+    * ``adapted_state()`` concatenates the components' states in component order (a fixed
+      component contributes nothing); ``set_pooled_state`` splits the pooled rows column-wise by
+      the lengths recorded at construction and forwards each slice;
+    * ``carry_over()``: the merged dicts of the adaptive components for a mixture (full
+      dimension, same keys as bare proposals; the builder refuses two adaptive components of one
+      type), ``{}`` for a block (group-dimension values must not seed a full-dimension proposal);
+    * ``adapted_summary()``: ``{"component<k>.<key>": value}`` over all components;
+    * ``adaptation_stats_header`` / ``adaptation_stats_rows`` forward to the FIRST adaptive
+      component; its index is ``resolution["adaptive_stats_component"]`` (with a
+      ``RuntimeWarning`` when more than one component adapts, since the others are not traced).
+
+    A block or mixture with no adaptive component behaves exactly as before C2 (``adapt`` reaches
+    only the components' no-op, no ``resolution`` attribute is set).
     """
 
-    def __init__(self, no_parameters: int, list_of_proposals: list[Proposal], list_of_groups: list[list[int]], seed: int = 0, group_probabilities: list[float] | None = None) -> None:
+    def __init__(self, no_parameters: int, list_of_proposals: list[Proposal], list_of_groups: list[list[int]], seed: int = 0, group_probabilities: list[float] | None = None,
+                 is_mixture: bool = False) -> None:
         """ Block proposal that applies different proposal distributions to different groups of parameters.
         Args:
             no_parameters: total number of parameters
@@ -1192,6 +1280,8 @@ class BlockProposal(Proposal):
             seed: random seed for reproducibility; it also determines the sub-proposals'
                 seeds (see the class docstring and ``subproposal_seed``), overriding whatever
                 seed each sub-proposal was constructed with.
+            is_mixture: ``True`` for the ``Mixture`` spec (every group covers all parameters):
+                ``carry_over()`` then hands on the adaptive components' values (C2).
         """
         super().__init__()
         self.list_of_proposals = list_of_proposals
@@ -1211,6 +1301,29 @@ class BlockProposal(Proposal):
         # being updated (WS7). Zeros until the first propose_sample call, which reproduces the
         # pre-WS7 behaviour for a gradient evaluated before the chain ever moved.
         self.current_sample = np.zeros(no_parameters)
+        # C2: adaptive components = those with an adapted_state(); their state lengths are fixed
+        # per component, so the concatenated vector has the same length on every rank (Allgather)
+        self.is_mixture = bool(is_mixture)
+        self._adaptive_components = [k for k, proposal in enumerate(list_of_proposals)
+                                     if callable(getattr(proposal, "adapted_state", None))]
+        self._state_lengths = [np.asarray(proposal.adapted_state()).size if k in self._adaptive_components else 0
+                               for k, proposal in enumerate(list_of_proposals)]
+        if self._adaptive_components:
+            traced = self._adaptive_components[0]
+            if len(self._adaptive_components) > 1:
+                warnings.warn(
+                    f"{'Mixture' if self.is_mixture else 'Block'} proposal: components "
+                    f"{self._adaptive_components} adapt, but only component {traced} "
+                    f"({type(list_of_proposals[traced]).__name__}) is written to adaptive_stats "
+                    "(manifest proposal_resolution 'adaptive_stats_component')",
+                    RuntimeWarning, stacklevel=2)
+            self.resolution = {"adaptive_stats_component": traced}
+        if self.is_mixture:
+            # the components' own build records (e.g. a Hamiltonian's mass source), prefixed
+            records = {f"component{k}.{key}": value for k, proposal in enumerate(list_of_proposals)
+                       for key, value in getattr(proposal, "resolution", {}).items()}
+            if records:
+                self.resolution = {**getattr(self, "resolution", {}), **records}
 
     def _reseed_subproposals(self, seed: int) -> None:
         """Give every sub-proposal its own deterministic stream derived from ``seed`` (G5)."""
@@ -1270,3 +1383,87 @@ class BlockProposal(Proposal):
                 def group_log_prior_gradient_function(x, group=group):
                     return log_prior_gradient_function(self._full_gradient_argument(x, group))[group]
                 proposal.set_gradient_functions(group_log_likelihood_gradient_function, group_log_prior_gradient_function)
+
+    # -- adaptation (C2, 2026-10-12) ------------------------------------------------------
+    def adapt(self, proposed_sample: npt.NDArray, log_acceptance_probability: float,
+              current_sample: npt.NDArray,
+              subchain_log_acceptance_probabilities: list[float] | None = None) -> None:
+        """Forward to the component that proposed this iteration (``group_index``), with the
+        samples restricted to its group (a mixture's group is everything: passed unchanged).
+        A fixed component's ``adapt`` is the base-class no-op."""
+        proposal = self.list_of_proposals[self.group_index]
+        if not self.is_mixture:
+            group = self.list_of_groups[self.group_index]
+            proposed_sample = np.asarray(proposed_sample)[group]
+            current_sample = np.asarray(current_sample)[group]
+        proposal.adapt(proposed_sample=proposed_sample,
+                       log_acceptance_probability=log_acceptance_probability,
+                       current_sample=current_sample,
+                       subchain_log_acceptance_probabilities=subchain_log_acceptance_probabilities)
+
+    def adapted_state(self) -> npt.NDArray:
+        """The adaptive components' ``adapted_state()`` concatenated in component order (a fixed
+        component contributes nothing); length ``sum(self._state_lengths)`` on every rank."""
+        parts = [np.asarray(self.list_of_proposals[k].adapted_state(), dtype=float).ravel()
+                 for k in self._adaptive_components]
+        return np.concatenate(parts) if parts else np.zeros(0)
+
+    def set_pooled_state(self, states: npt.NDArray) -> None:
+        """Split the pooled ``adapted_state()`` rows column-wise by the components' state lengths
+        and hand each slice (all rows) to its component's ``set_pooled_state``."""
+        states = np.atleast_2d(np.asarray(states, dtype=float))
+        if states.shape[1] != sum(self._state_lengths):
+            raise ValueError(f"expected adapted-state rows of length {sum(self._state_lengths)}, got {states.shape}")
+        start = 0
+        for k, length in enumerate(self._state_lengths):
+            if k in self._adaptive_components:
+                self.list_of_proposals[k].set_pooled_state(states[:, start:start + length])
+            start += length
+
+    def carry_over(self) -> dict:
+        """Mixture: the adaptive components' ``carry_over()`` merged (full dimension, the keys of
+        bare proposals; the builder guarantees that no two of them share a type). Block: ``{}``,
+        the sub-proposals' values live in group dimension and must not seed later stages."""
+        if not self.is_mixture:
+            return {}
+        merged: dict = {}
+        for k in self._adaptive_components:
+            merged.update(self.list_of_proposals[k].carry_over())
+        return merged
+
+    def adapted_summary(self) -> dict:
+        """``{"component<k>.<key>": value}`` of every component's ``adapted_summary()``."""
+        summary: dict = {}
+        for k, proposal in enumerate(self.list_of_proposals):
+            for key, value in proposal.adapted_summary().items():
+                summary[f"component{k}.{key}"] = value
+        return summary
+
+    @property
+    def tempering_on(self) -> bool:
+        """True iff a component tempers its trajectories (C3)."""
+        return any(bool(getattr(proposal, "tempering_on", False)) for proposal in self.list_of_proposals)
+
+    @property
+    def flattening_on(self) -> bool:
+        """True iff a component flattens its likelihood (``likelihood_weight < 1``, note 32)."""
+        return any(bool(getattr(proposal, "flattening_on", False)) for proposal in self.list_of_proposals)
+
+    @property
+    def tempered_skipped(self) -> int:
+        """Sum of the components' ``tempered_skipped`` counters (C3; 0 if no component has one)."""
+        return sum(int(getattr(proposal, "tempered_skipped", 0)) for proposal in self.list_of_proposals)
+
+    @property
+    def adaptation_stats_header(self) -> list:
+        """Header of the first adaptive component's adaptation trace (``[]`` if none adapts)."""
+        if not self._adaptive_components:
+            return []
+        return list(getattr(self.list_of_proposals[self._adaptive_components[0]], "adaptation_stats_header", []))
+
+    @property
+    def adaptation_stats_rows(self) -> list:
+        """Rows of the first adaptive component's adaptation trace (``[]`` if none adapts)."""
+        if not self._adaptive_components:
+            return []
+        return getattr(self.list_of_proposals[self._adaptive_components[0]], "adaptation_stats_rows", [])

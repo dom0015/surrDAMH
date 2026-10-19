@@ -23,7 +23,7 @@ Where to look for what:
   ``PriorIndependentComponents``, ``GaussianMixture``, ``FromScipy``
 - ``surrDAMH.Stage``              -- one sampling stage (also ``surrDAMH.stages.Stage``)
 - ``surrDAMH.proposals``          -- proposal settings of a stage: ``RandomWalk``, ``PCN``,
-  ``Hamiltonian``, ``Block``
+  ``Hamiltonian``, ``Block``, ``Mixture``
 - ``surrDAMH.Solver``             -- base class for your forward model;
   ``surrDAMH.SolverSpec`` describes one that must be built in another process
 - ``surrDAMH.surrogates``         -- surrogate updaters (``PolynomialSklearnUpdater``,

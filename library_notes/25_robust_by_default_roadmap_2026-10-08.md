@@ -224,3 +224,13 @@ Author decisions 2026-10-11:
 | C6 | S5 verdict diagnostics (R-hat, ESS, stagnation, audit statistic, warm-up disagreement = multimodality signal) and the Auto proposal choice from them (pCN/mixture when the LHS chains disagree, Hamiltonian otherwise; self-demotion at chunk boundaries); robust sub-chain length as a placeholder (~20) | ~400 | C2, C3 |
 | C7 | S4 surrogate hardening; S7/S8 leftovers; `continue_sampling_auto` | ~250 | — |
 | C8 | validation plan §6 on the note-19 GRF, the 2-D models incl. the bimodal one; fixes the placeholders | runs, no code | C1–C6 |
+
+**Status 2026-10-12.** C1/C1b done (2026-10-11). **C2 done (2026-10-12)** with two deliberate cuts from D8, author-approved:
+(i) carry-over keying is note 23's V1 rule (flat keys; a Mixture with two adaptive components of one type is refused at
+build time) instead of positional keys; (ii) the adaptation trace records the first adaptive component only
+(`proposal_resolution["adaptive_stats_component"]`, one warning when several adapt) instead of per-component files.
+No new runtime class: a `Mixture` is a `BlockProposal` whose groups are all parameters; sub-proposals of a `Block` may
+adapt too (G2 lifted) but a Block hands nothing over. ~290 library lines, 19 tests (18 unit + 1 MPI), fixed Blocks
+byte-identical (pinned-hash test). C4 (stall guard) postponed by the author on 2026-10-12. **C3 done (2026-10-12, note 30: Neal tempered trajectory as
+`Hamiltonian(tempered_fraction, tempered_beta)`, pinned Mixture component; `PCN(beta=1)` prior draw already worked);
+validation = study 31.** Next: C5, C6 (uses C2+C3), C4, C7, C8.

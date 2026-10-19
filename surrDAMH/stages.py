@@ -49,13 +49,13 @@ class Stage:
         Stage(algorithm="DAMH", subchain_length=5, max_evaluations=200)  # surrogate-accelerated
         Stage(proposal=PCN(beta=0.2), time_limit=60)
 
-    with ``from surrDAMH.proposals import RandomWalk, PCN, Hamiltonian, Block``.
+    with ``from surrDAMH.proposals import RandomWalk, PCN, Hamiltonian, Block, Mixture``.
 
     Args:
         algorithm: ``"MH"`` (every proposal is evaluated with the exact model) or ``"DAMH"``
             (delayed acceptance: a surrogate pre-screens proposals, the exact model confirms). Default: ``"MH"``.
         proposal: how new samples are proposed; a ``RandomWalk`` (default), ``PCN``,
-            ``Hamiltonian`` or ``Block`` from ``surrDAMH.proposals``. Each carries its own step
+            ``Hamiltonian``, ``Block`` or ``Mixture`` from ``surrDAMH.proposals``. Each carries its own step
             and ``adaptive`` switch; by default the step is tuned online and handed to the
             following stages. Default: ``RandomWalk()``.
         max_evaluations: stop after this many exact-model evaluations. Default: unlimited.
@@ -164,21 +164,23 @@ class Stage:
     # ------------------------------------------------------------------ derived properties
     @property
     def adaptive(self) -> bool:
-        """Whether this stage's proposal tunes itself (``proposal.adaptive``; a ``Block`` never does)."""
+        """Whether this stage's proposal tunes itself (``proposal.adaptive``; a ``Block`` or ``Mixture``
+        iff one of its sub-proposals/components does)."""
         return bool(getattr(self.proposal, "adaptive", False))
 
     def proposal_needs_gradients(self) -> bool:
         """
-        True for a ``Hamiltonian`` proposal and for a ``Block`` containing one. Such a stage is
+        True for a ``Hamiltonian`` proposal and for a ``Block``/``Mixture`` containing one. Such a stage is
         handed a surrogate evaluator by both runners, and only such an MH stage may set
         ``surrogate_model_updates=True`` (WS7).
         """
         return bool(self.proposal.needs_gradients)
 
     def __post_init__(self):
-        if not isinstance(self.proposal, (_proposals.RandomWalk, _proposals.PCN, _proposals.Hamiltonian, _proposals.Block)):
+        if not isinstance(self.proposal, (_proposals.RandomWalk, _proposals.PCN, _proposals.Hamiltonian, _proposals.Block,
+                                         _proposals.Mixture)):
             raise TypeError(
-                "Stage.proposal must be a RandomWalk, PCN, Hamiltonian or Block from surrDAMH.proposals, "
+                "Stage.proposal must be a RandomWalk, PCN, Hamiltonian, Block or Mixture from surrDAMH.proposals, "
                 f"got {type(self.proposal).__name__}")
         if self.burn_in and self.is_excluded:
             raise ValueError("Stage: burn_in=True and is_excluded=True exclude each other -- burn_in continues the "
@@ -301,6 +303,22 @@ class Stage:
                          + ("" if self.adaptive else " (fixed for the whole stage, with a warning)"))
         if step_field is not None and not self.adaptive:
             notes.append("proposal not adaptive: target_rate is not used")
+        if isinstance(spec, (_proposals.Block, _proposals.Mixture)):  # C2 (2026-10-12)
+            kind = type(spec).__name__
+            notes.append(f"{kind}({len(spec.proposals)} components, probabilities="
+                         f"{'uniform' if spec.probabilities is None else list(spec.probabilities)})"
+                         + (": a Block hands nothing over to later stages" if kind == "Block" and spec.adaptive else ""))
+            for k, component in enumerate(spec.proposals):
+                where = f" on parameters {list(spec.groups[k])}" if kind == "Block" else ""
+                notes.append(f"component {k}{where}: {component!r}")
+                if isinstance(component, _proposals.Hamiltonian) and component.tempered_fraction > 0.0:
+                    notes.append(f"component {k}: {_tempered_note(component)}")
+                if isinstance(component, _proposals.Hamiltonian) and component.likelihood_weight < 1.0:
+                    notes.append(f"component {k}: {_flattened_note(component)}")
+        if isinstance(spec, _proposals.Hamiltonian) and spec.tempered_fraction > 0.0:  # C3 (2026-10-12)
+            notes.append(_tempered_note(spec))
+        if isinstance(spec, _proposals.Hamiltonian) and spec.likelihood_weight < 1.0:  # note 32 (2026-10-13)
+            notes.append(_flattened_note(spec))
         if isinstance(spec, _proposals.Hamiltonian):  # C1 (2026-10-11)
             if isinstance(spec.mass, str) and spec.mass == "covariance":
                 notes.append("mass='covariance' = inverse of the chain's pooled posterior covariance estimate "
@@ -319,6 +337,20 @@ class Stage:
                              "carried step rescaled to the new mass")
         extra = [f"[note] {note}" for note in notes]
         return describe_fields(self, POSTERIOR_AFFECTING_FIELDS, f"{title} (* = posterior-/acceptance-rate-affecting):", extra)
+
+
+def _tempered_note(spec) -> str:
+    """``describe()`` line of a tempered ``Hamiltonian`` spec (C3, note 30)."""
+    return (f"tempered_fraction={spec.tempered_fraction:g}, tempered_beta={spec.tempered_beta:g}: momentum x sqrt(alpha) "
+            f"on the first n_t = floor(f L) steps, / sqrt(alpha) on the last n_t (alpha = beta^(-1/n_t)); "
+            "no tempering when L < 2 (counted as tempered_skipped)")
+
+
+def _flattened_note(spec) -> str:
+    """``describe()`` line of a flattened-likelihood ``Hamiltonian`` spec (note 32 §1)."""
+    return (f"likelihood_weight={spec.likelihood_weight:g}: the trajectory's kicks use "
+            f"{spec.likelihood_weight:g} x grad log L (+ the full prior part); the acceptance uses the exact "
+            "energy, so the posterior is unchanged")
 
 
 def stage_name(stage: Stage, index: int) -> str:
@@ -344,7 +376,8 @@ def check_stage_list(list_of_stages) -> None:
         if isinstance(item, Stage):
             continue
         hint = ""
-        if isinstance(item, (_proposals.RandomWalk, _proposals.PCN, _proposals.Hamiltonian, _proposals.Block)):
+        if isinstance(item, (_proposals.RandomWalk, _proposals.PCN, _proposals.Hamiltonian, _proposals.Block,
+                             _proposals.Mixture)):
             hint = f"; a proposal is not a stage, wrap it: Stage(proposal={item!r}, max_evaluations=...)"
         raise TypeError(f"list_of_stages[{i}] is a {type(item).__name__}, not a surrDAMH.Stage{hint}")
 

@@ -352,7 +352,9 @@ def run_local(conf: Configuration, prior: Distribution, likelihood: Distribution
               "- out-of-bounds proposals:", alg_instance.counter_out_of_bounds,
               f"- exact steps: {alg_instance.counter_exact_accepted}/{alg_instance.counter_exact_steps} accepted",
               f"- audited: {alg_instance.counter_audited} (hidden: {alg_instance.counter_audit_hidden})"
-              + (f" - polyak updates: {alg_instance.counter_polyak_updates}" if stage.polyak_averaging else ""),
+              + (f" - polyak updates: {alg_instance.counter_polyak_updates}" if stage.polyak_averaging else "")
+              + (f" - tempered skipped: {alg_instance.proposal.tempered_skipped}"
+                 if getattr(alg_instance.proposal, "tempering_on", False) else ""),
               flush=True)
 
     if evaluator_provider is not None:

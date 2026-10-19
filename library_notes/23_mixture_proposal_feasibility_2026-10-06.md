@@ -1,5 +1,10 @@
 # 23 — A `Mixture` proposal (mixture of kernels): feasibility, size, and what it does to adaptation (2026-10-06)
 
+> **Implemented 2026-10-12 (C2)** with the V1 choices of §4.1 (flat keys, duplicate adaptive types refused) and a
+> variant of §4.3: the trace of the first adaptive component only, its index in the manifest. `Block` sub-proposals may
+> adapt as well (no hand-over). See CHANGELOG 2026-10-12, `tests/unit/test_mixture.py`, `tests/mpi/test_mpi_mixture.py`,
+> note 25 §9 status line.
+
 **Design note**, not a record of implemented work. The question (author, 2026-10-06): how difficult,
 how impactful and how large would it be to add a proposal spec `Mixture(list_of_proposals,
 list_of_probabilities)` that draws one of several kernels per iteration; are all current proposals

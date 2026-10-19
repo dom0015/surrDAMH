@@ -20,7 +20,7 @@ sampling_output/
   notes/<stage.name>/rank%04d.csv          accepted, rejected, pre-rejected, sum, seed, out_of_bounds,
                                            exact_steps, exact_accepted, audited, audit_hidden,
                                            polyak_updates                                                (header row)
-  subchain_stats/<stage.name>/rank%04d.csv iteration, subchain_max_length, subchain_accepted, subchain_acceptance_rate, correction_log_ratio, outer_proposed_changed, outer_accepted, rank_world, kernel   (header row; DAMH stages only)
+  subchain_stats/<stage.name>/rank%04d.csv iteration, subchain_max_length, subchain_accepted, subchain_acceptance_rate, correction_log_ratio, outer_proposed_changed, outer_accepted, rank_world, kernel[, component]   (header row; DAMH stages only; `component` only for Mixture stages, 2026-10-13)
   adaptive_stats/<stage.name>/rank%04d.csv  one row per adaptation period                                (header row; adaptive=True stages only)
   carry_over/<stage.name>.npz              carry_over__*, summary__*                                    (one file per stage since C1 (before: per adaptive stage), no rank suffix; written once by sampler rank 0 / run_sampling_local)
   last_sample/<stage.name>/rank%04d.npz    parameters (float64), no_parameters                          (one file per chain, written after each stage)
@@ -133,6 +133,7 @@ summary (and the HTML summary table) sums every column except `seed`, and the co
 counts `audited` as exact evaluations. S3 (2026-10-09) appends `polyak_updates`: the number `k` of
 received evaluators averaged into the installed one by `Stage.polyak_averaging` (0 when the flag is
 off, on a stage that receives no evaluator, or for a surrogate without `averageable_state()`).
+C3 (2026-10-12) appends `tempered_skipped`, LAST and ONLY for a stage whose proposal (or a `Block`/`Mixture` component) tempers its trajectories (`Hamiltonian(tempered_fraction > 0)`): the number of trajectories too short to temper (`n_t = 0`, see `docs/stages.md`, "Tempered trajectories"), summed over the components; other stages' files are unchanged. The stage-end line printed by the sampler gains ` - tempered skipped: N` under the same condition.
 
 ### `subchain_stats/<stage>/rank%04d.csv` (DAMH stages only)
 
@@ -141,7 +142,13 @@ subchain_acceptance_rate, correction_log_ratio, outer_proposed_changed, outer_ac
 rank_world, kernel`. `kernel` (S2, 2026-10-09, appended last, present on every DAMH stage) is `0` for a
 delayed-acceptance iteration and `1` for an exact step (`Stage.exact_step_probability`), whose row has
 `subchain_accepted = 0`, `subchain_acceptance_rate = NaN`, `correction_log_ratio = 0`,
-`outer_proposed_changed = 1` and `outer_accepted` the exact decision. (This CSV column is still literally named `subchain_max_length` in
+`outer_proposed_changed = 1` and `outer_accepted` the exact decision.
+
+`component` (2026-10-13, `library_notes/32_*` D-32-3) is appended LAST (after `kernel`) and ONLY on a DAMH
+stage whose proposal is a `Mixture` (a `Block` or plain proposal keeps the columns above; select by
+name). On a delayed-acceptance row (`kernel = 0`) it is the index of the `Mixture` component drawn for
+that outer iteration, which proposed the whole sub-chain; on an exact-step row (`kernel = 1`) it is `-1`
+(no component proposed). (This CSV column is still literally named `subchain_max_length` in
 `surrDAMH/modules/algorithms.py`, unlike the `Stage` field itself, which was renamed to
 `subchain_length` — apparent oversight in the library, not fixed here.)
 
@@ -170,6 +177,12 @@ hold `warmup=100` states, where the covariance is not yet re-estimated (the Robb
 persistent ones (`docs/stages.md`, "Posterior statistics"): in a later adaptive random-walk stage
 they are already informative and the first row has a value. The Hamiltonian's `m` counts *sub-chain* steps in a DAMH stage, so it advances
 by `subchain_length` per outer iteration.
+
+For a `Block`/`Mixture` stage with an adaptive sub-proposal (C2, 2026-10-12) the file holds the trace
+of the FIRST adaptive component only, in that component's format (table above); `run_manifest.json`
+`proposal_resolution[i]["adaptive_stats_component"]` is that component's index, and a
+`RuntimeWarning` (once per process) names it when more than one component adapts. A `Block`/`Mixture`
+of fixed sub-proposals writes no file.
 
 No file is written for a stage whose proposal does not adapt, and none for a stage with
 `save_to_file=False`; `read_run` then reports `adaptive_stats[stage] is None`
@@ -204,6 +217,13 @@ Two groups of keys, each value stored as a numpy array of its own dtype (a scala
   `posterior_statistics_discounted_from_n` (the pooled count before the burn-in discount; the
   `posterior_statistics` vector and `posterior_statistics_n` are the discounted ones).
 
+For a `Mixture` stage (C2) the `carry_over__<key>` entries are those of its adaptive components under
+the usual keys (a following plain `RandomWalk()` stage reads `scale` from the mixture's adaptive random
+walk), and every `summary__` key is prefixed by the component index, `summary__component<k>.<key>`
+(e.g. `summary__component1.log_sigma`); a `Block` hands nothing over (no `carry_over__` step keys), its
+summary keys are `component<k>.<key>` likewise. The HTML report's carry-over block does not display the
+prefixed keys yet (no crash).
+
 `read_run` reports `carry_over[stage] is None` only for a run produced before this file existed
 (or, before C1, for a non-adaptive stage; such a stage's file now holds only the posterior
 statistics).
@@ -220,7 +240,7 @@ Written by rank 0 (or by `run_sampling_local`) before role dispatch and finalize
 `manifest_version`, `format_version` (`2`), `surrdamh_version`, `runner`
 (`"mpi"`/`"local"`), timestamps, `hostname`, package versions, `git` (commit/dirty/branch),
 the full `configuration`/`stages`/`prior`/`likelihood` summaries (each stage entry is every
-`Stage` dataclass field by name, including `is_excluded` and `burn_in` — see `docs/stages.md` and
+`Stage` dataclass field by name, including `is_excluded` and `burn_in`, and its `proposal` spec with all its fields — since C3 (2026-10-12) every `Hamiltonian` spec lists `tempered_fraction` (`0.0`) and `tempered_beta` (`1.0`) even when tempering is off, and since 2026-10-13 `likelihood_weight` (`1.0`) even when the likelihood is not flattened — see `docs/stages.md` and
 the selection mask below), `surrogate`
 (updater/evaluator class + scalar hyperparameters), `solver`, `seeds` (`modules.seeds.SEED_FORMULA`:
 `seed0 = 10*(no_stages*rank+i) + 1_000_000*generation` and every per-rank/per-stage seed —
@@ -243,7 +263,10 @@ Hamiltonian stage `mass_source` (`"spec"`, `"covariance (n=...)"`, `"identity (n
 restart: the rescaled step) and `dual_averaging` (`"fresh"`, `"continued"`, `"restarted (mass
 changed)"` — C1b; C1 wrote `"fresh (mass changed)"` — or `null` for a fixed step) with
 `mass_change_r` (C1b: the relative spectral-norm mass change the decision used, `null` when no
-recursion was carried); written by rank 0 / the
+recursion was carried); for a `Block`/`Mixture` stage with an adaptive sub-proposal (C2, 2026-10-12)
+also `adaptive_stats_component` (index of the component whose trace is in `adaptive_stats/`), and for a
+`Mixture` every component's own build record prefixed `component<k>.` (e.g. `component1.mass_source`
+of a `Hamiltonian(mass="covariance")` component); for a tempered `Hamiltonian` (C3, 2026-10-12) also `tempered_fraction` and `tempered_beta` — only when tempering is on, so other entries are unchanged (inside a mixture `component<k>.tempered_fraction`/`component<k>.tempered_beta`); for a flattened-likelihood `Hamiltonian` (2026-10-13) also `likelihood_weight`, only when it is `< 1` (inside a mixture `component<k>.likelihood_weight`); written by rank 0 / the
 local runner). Manifest writing/finalizing never aborts a run — any failure there is printed as a
 `WARNING`, not raised.
 

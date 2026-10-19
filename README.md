@@ -61,6 +61,9 @@ See examples in the **toy_examples** folder, e.g.:
 | `neural_network_surrogate.py` | MLP surrogate instead of the polynomial one | `mpiexec -n 4 python3 -m mpi4py neural_network_surrogate.py` |
 | `post_processing_with_html_report.py` | sampling + `html_report_extended` in one script | `python3 post_processing_with_html_report.py` |
 | `toy_example_hamilton.py` | advanced workflow (pCN → DAMH + Hamiltonian proposal, minibatch MLP, test data, surrogate restart) on a trivial solver | `mpiexec -n 4 python3 -m mpi4py toy_example_hamilton.py` |
+| `mixture_proposal_example.py` | `Mixture` proposal (fixed small step + adaptive random walk), then a plain stage that continues from its tuned scale | `mpiexec -n 4 python3 -m mpi4py mixture_proposal_example.py` |
+| `bimodal_3d_example.py` | 3-D bimodal problem (`solver_examples/bimodal3d.py`: modes at ±(1, 1, 1), one `valley_depth` knob in nats, exact 1-D-quadrature reference); adaptive random walk, prints mode masses and crossings | `mpiexec -n 4 python3 -m mpi4py bimodal_3d_example.py` |
+| `bimodal_asym_example.py` | asymmetric bimodal problem, any d (`solver_examples/bimodal_asym.py`: likelihood-made barrier `G(u) = (u·e − c)²`, modes at different prior radii with unequal mass, no symmetry connects them; `sigma_for_depth`, exact 1-D-quadrature reference) | `mpiexec -n 4 python3 -m mpi4py bimodal_asym_example.py` |
 | `sampling_diffusion_grf.py` | the same workflow on the GRF-diffusion forward model (**FEniCSx**) | `mpiexec -n 4 python3 -m mpi4py sampling_diffusion_grf.py` |
 | `sampling_diffusion_grf_simplified.py` | the same solver, MH only, no surrogate (**FEniCSx**) | `python3 sampling_diffusion_grf_simplified.py` |
 | `sampling_TSX.py` | real TSX inversion; needs `wrapper.py`, `tunnel_with_subdomains.py` and mesh files (**FEniCSx**) | see the file header |

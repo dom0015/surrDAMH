@@ -18,8 +18,9 @@ Untracked, ~0.9 GB. 139 analysed runs (72 grid + 4 best-cell repetitions + 3 MH-
 
 **Read first (limits of what was measured):**
 
-* **Only Part 1 was run** (is the adaptive step tuned correctly?). Nothing here says anything about the exact
-  safety kernel (`exact_step_probability`, `exact_step_scale`, `audit_prerejected`); all runs have them off.
+* **Only Part 1 was run** (is the adaptive step tuned correctly?), plus nine follow-up runs on 2026-10-12 (§2.7:
+  the S1 error-model effect on L10 confirmed with 3 + 3 runs, and one smoke run per problem of the exact safety
+  kernel). Nothing else here measures `exact_step_probability`, `exact_step_scale` or `audit_prerejected`.
 * **The ESS/eval metric counts exact evaluations only** (whole budget incl. the held-out set). Surrogate
   trajectories are free in it. For the two cheap models (L10 linear, B2 1 µs) this is the metric of the
   specification, not of wall time; ESS/s is given alongside and ranks differently (§3).
@@ -240,6 +241,59 @@ budget (`runs/p1mh_*`, `figures/fig_part1_traces_mh_vs_damh.png`):
   at stage construction; stop the adaptation and report when `num_steps` saturates at the cap. A clean answer to
   question (vi) would need an MH stage on the exact model's own gradients (possible only for L10 here).
 
+### 2.7 Follow-up runs 2026-10-12 (author request): S1 error-model check on L10, P2 smoke runs
+
+Nine runs added after the report was written (`jobs/s1check.jsonl`, `jobs/p2smoke.jsonl`; `logs/batch_progress.txt`
+17:32–17:35; all return code 0, all pass the posterior check). Same driver and setup as Part 1, `time_limit = 120 s`
+guard on the DAMH stage (never reached).
+
+**S1 check: surrogate error model on vs off, L10 best cell (a = 0.9, T = 5), 3 repetitions each (`runs/s1chk_L10_em{1,0}_r*`).**
+Confirms the single-run diagnostic of §2.5:
+
+| error model | ESS/eval (3 reps) | mean ± sd | ESS(x²)/eval | outer acc | pre-rej | `eps_bar` | L | verdict |
+|---|---|---|---|---|---|---|---|---|
+| on | 0.108 / 0.090 / 0.140 | 0.113 ± 0.026 | 0.094 / 0.089 / 0.135 | 0.49 / 0.51 / 0.57 | 0.10 | 0.277 / 0.346 / 0.278 | 18 / 14 / 18 | 3 ok |
+| off | 0.222 / 0.259 / 0.322 | **0.267 ± 0.051** | 0.201 / 0.273 / 0.235 | 0.70 / 0.79 / 0.80 | 0.10 | 0.267 / 0.324 / 0.270 | 19 / 16 / 19 | 3 ok |
+
+The error model costs **2.4× ESS per exact evaluation on L10** (every "off" replicate beats every "on" replicate),
+entirely through the outer acceptance (0.52 → 0.77); the adapted step and the trajectory length are unchanged
+(same seeds per replicate: `eps_bar` agrees within 7 %). The "on" replicates also reproduce the Part-1 best-cell
+runs (0.100 / 0.088 / 0.161 there) to within the DAMH-SMU non-reproducibility. Mechanism, consistent with the data
+but not measured directly: on a problem where the network is accurate (the exact-surrogate diagnostic of §2.5 gives
+outer acceptance 1.0), inflating the sub-chain likelihood by the residual covariance makes the sub-chain accept
+proposals the exact posterior then rejects. This is the opposite sign to note 27's P1 result (2.4–3.6× gain in
+robust mode) and leaves the S1 default-on of Auto (note 25) problem dependent: it pays when the surrogate is biased
+and costs when it is good. Decision for the author; a conditional default (error model on only while the
+held-out residual is large relative to the noise) is the obvious candidate and is not implemented.
+
+**P2 smoke runs: `Stage.exact_step_scale = 1.0`, `exact_step_probability = 0.1`, `audit_prerejected = 0.05`, best
+cell per problem, 1 run each (`runs/p2smoke_{L10,B2,G20}_pe0.1_se1_r0`).** First runs that exercise prerequisite P2
+in a real stage. Every new field is present and consistent: manifest `proposal_resolution` carries `exact_step_scale`,
+`exact_step_covariance_source` ("covariance (n=100)" L10/B2, "(n=200)" G20), `exact_step_covariance_trace`;
+`Stage.describe()` shows the field; `notes` carries `exact_steps`, `exact_accepted`, `audited`, `audit_hidden`;
+`subchain_stats` has the `kernel` column (L10 rank 0: 300 exact / 2 998 DA iterations ≈ 0.09); no warning or
+traceback in the logs.
+
+| problem | exact steps (share of exact evals) | exact-step acceptance | audits (hidden) | ESS/eval | Part-1 cell | outer acc | verdict |
+|---|---|---|---|---|---|---|---|
+| L10 | 2 597 (0.081) | **0.026** | 112 (0) | 0.081 | 0.116 ± 0.039 | 0.42 | ok |
+| B2 | 2 910 (0.091) | 0.070 | 195 (0) | 0.019 | 0.035 ± 0.017 | 0.38 | ok |
+| G20 | 1 382 (0.086) | 0.28 | 70 (0) | 0.85 | 1.09 ± 0.04 | 0.90 | ok |
+
+**Finding for Part 2's design: the fixed exact-step covariance is only as good as the warm-up's statistics.**
+`exact_step_covariance_trace` is the trace of `scale · 2.38²/d · Σ̂`, so Σ̂'s trace at stage start was 3.20 on L10
+against the true posterior trace 0.62 (5× too wide; the warm-up MH with prior-scale steps has not resolved the
+0.05–0.5 posterior sds), 3.45 on B2 against 3.31, 15.5 on G20 against 18.9. The exact random walk on L10 therefore
+proposes 2.3× too far in every direction and accepts 2.6 %; it is non-adaptive by design (P2), so nothing corrects it
+within the stage. The DAMH stage proposal uses the same Σ̂ as its mass and is unaffected, because the dual averaging
+rescales the step. Consequences: (i) on L10 the Part-2 scale grid {0.5, 1, 2, 4} lies entirely above the useful
+range — scales down to ~0.05 would be needed, or the scale should be defined relative to the statistics at the END
+of the previous chunk rather than the discounted warm-up; (ii) the single-run cost of the kernel at p = 0.1 is
+0.70× (L10), 0.53× (B2, within noise), 0.78× (G20) of the Part-1 ESS/eval — the exact steps spend 8–9 % of the
+evaluations and almost never move on L10/B2; (iii) no audit found a hidden region (0 of 377), as expected on these
+problems (§ "Read first": no blind spot by construction).
+
+
 ---
 
 ## 3. Fixed-step scan at the best (a, T): adapted vs optimal step
@@ -348,7 +402,9 @@ is not settled (§2.3). Steps ≥ 4ε* are unusable on every problem.
   cost (§2.6); (b) fixed steps ≥ 2ε* can make a DAMH stage non-terminating (§1.2, §3) — a cap on pre-rejections
   per accepted sample, or on wall time by default, would turn this into a reported failure; (c) B2 dual averaging
   not converged at 3 000 evaluations per chain and a 10–100× start transient (§2.4); (d) the surrogate error model
-  halves ESS/eval on L10 in single runs (§2.5), opposite to note 27's P1 result.
+  costs 2.4× ESS/eval on L10 (3 + 3 runs, §2.7), opposite to note 27's P1 result — S1 default-on is problem
+  dependent; (e) a fixed `exact_step_scale` inherits the warm-up's covariance error (L10: 5× too wide, exact-step
+  acceptance 2.6 %, §2.7) — Part 2's scale grid must go below 0.5 or re-base on the previous chunk's statistics.
 
 ---
 

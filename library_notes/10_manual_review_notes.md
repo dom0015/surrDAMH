@@ -1504,12 +1504,103 @@ complete; robust pre-rejects ~70 %, fast ~20 %; posterior means differ at the Mo
     at 10–100× the final step (`mu = log(10 ε₀)` start, largest live step 673 at a = 0.6) with out-of-box pre-rejections
     up to 18 %. On L10/G20 the transient is ≤ 2× and the drift ≤ 4 %. Information for the note-26 plan (eps dual
     averaging): the start-up overshoot is problem dependent and the per-stage freeze may be too early on rough posteriors.
-    (d) **Surrogate error model halves ESS/eval on L10 in single runs** (note 29 §2.5): error model off → outer acceptance
-    0.59/0.71 vs 0.25/0.50 (T = 1/5), ESS/eval 0.105/0.248 vs 0.049/0.099, step unchanged; opposite sign to note 27's
-    P1 result (S1 gives 2.4–3.6× in robust mode). n = 1 each; not established. Needs repetitions before the S1 default
-    is reconsidered.
+    (d) **Surrogate error model (S1) costs 2.4× ESS/eval on L10 — confirmed 2026-10-12 with 3 + 3 runs** (note 29 §2.7;
+    first seen in the single runs of §2.5): on at a = 0.9, T = 5: 0.113 ± 0.026; off: 0.267 ± 0.051; every "off" replicate
+    beats every "on" one; outer acceptance 0.52 → 0.77, adapted step and trajectory length unchanged; all 6 pass the
+    posterior check. Opposite sign to note 27's P1 (S1 gives 2.4–3.6× in robust mode). **Decision needed**: S1 is on by
+    default in both Auto modes (note 25); it pays when the surrogate is biased and costs 2.4× when it is accurate. The
+    obvious candidate is a conditional default (on only while the held-out residual covariance is large relative to
+    the noise covariance, re-decided at each chunk start) — not implemented, not specified.
+    (f) **Fixed `exact_step_scale` (P2) inherits the warm-up's covariance error** (note 29 §2.7, smoke runs): the exact
+    random walk's covariance is `scale · 2.38²/d · Σ̂` with Σ̂ the discounted statistics at stage start; on L10 Σ̂'s
+    trace was 3.20 vs the true 0.62 (the prior-scale warm-up has not resolved the 0.05–0.5 posterior sds), so at scale 1
+    the exact step accepted 2.6 % (B2 7 %, G20 28 % with Σ̂ within 20 % of the truth). Non-adaptive by design, so
+    nothing corrects it within the stage. Information for Part 2 (scale grid must reach ~0.05 on L10) and for the S2
+    default in Auto: an exact step scaled from the previous chunk's end statistics, or the adaptive exact walk
+    (`exact_step_scale=None`), is safer than a fixed scale from the warm-up. All P2 manifest/notes/subchain_stats
+    fields verified present and consistent in the three smoke runs; no code change needed for P2 itself.
     (e) **Information, not a defect**: "steps are forced too small" is false for ESS per exact evaluation — the adapted
     step at a = 0.9 is ≥ 4× larger than the best fixed step on L10/G20 (sub-chain acceptance 0.99, scan edge), while
     per second the adapted step is the best; the right target depends on the cost ratio, which is the note-26
     `K*`/cost-model question. Low targets a ≤ 0.7 gave biased runs on B2/G20 in 8 of 16 cells; not separated from the
     step size itself (G20 diagnostic with the same step fixed: 1 of 3 poor vs 3 of 3).
+20. **C2 combined proposal implemented (2026-10-12; CHANGELOG 2026-10-12; note 25 §9 status line). Flagged for review:**
+    (a) **Two cuts from D8, approved by the author in session**: V1 carry-over keying (flat keys, two adaptive components of
+    one type refused) instead of positional keys; trace of the first adaptive component only instead of per-component
+    files. Both can be added later without breaking what exists (positional keys would be a new carry-over key; per-
+    component trace files a new directory layout).
+    (b) **Pinned-hash byte-identity test** (`tests/unit/test_mixture.py::test_fixed_block_runs_are_byte_identical_to_before_c2`):
+    MD5 of every output file of three fixed-Block stages, recorded in this container from the pre-C2 code. It proves the
+    C2 diff changed nothing for fixed Blocks, but the hashes are environment-specific (BLAS/float formatting): on another
+    machine it may fail without a regression. Decision: keep as is, or demote to a documented manual check.
+    (c) **Adaptive Block sub-proposals keep private group-dimension statistics** that are not pooled across ranks (a Block
+    hands nothing over, so harmless), and the HTML report's carry-over block does not show the `component<k>.*` summary
+    keys (no crash). Cosmetic; add a display when a mixture stage appears in a report that matters.
+    (d) **`Stage.describe()` now prints component lines also for existing fixed Blocks** (console only, not in any file).
+    (e) Not changed, by design: the DAMH sub-chain of one outer iteration uses the component drawn for that iteration for
+    all its steps (sub-chain length > 1 does not re-draw per step).
+    (f) **One existing MPI test inverted**: `tests/mpi/test_mpi_hangs.py::test_i6_adaptive_block_proposal_allreduce` asserted the
+    G2 refusal (finding 2.5); it is now `test_i6_adaptive_block_proposal_pools_and_finishes` (2 sampler ranks pool the adaptive
+    sub-proposal, exit 0, no carry-over, `adaptive_stats_component == 0`). Full MPI suite after C2: 59 passed.
+21. **C3 tempered-trajectory Hamiltonian implemented (2026-10-12; note 30; CHANGELOG 2026-10-12). Flagged for review:**
+    (a) **Manifest `stages` entries gain `tempered_fraction: 0.0`, `tempered_beta: 1.0` for EVERY `Hamiltonian` spec**
+    (`_json_safe` writes all dataclass fields, as C1's `integration_time*` did): additive keys in `run_manifest.json` of
+    existing configurations; `proposal_resolution` gains keys only when tempering is on. Accept or special-case.
+    (b) **`tempered_skipped` is a conditional last `notes` column** (only when the stage proposal or a component tempers);
+    readers select by name. The local runner's `StageResult` has no counter field; the stage-end print has it.
+    (c) **Pinned-hash byte-identity test** for untempered Hamiltonian runs (both integrators), environment-specific like
+    item 20(b); same decision applies.
+    (d) **Crossings cannot be attributed to a mixture component** (no component column in `subchain_stats`, C2 cut);
+    study 31 reports totals only. ~10 lines to add the drawn component index as a column when wanted.
+    (e) Design limits, not defects: a tempered component never adapts (D-C3-2), tempers nothing when `L < 2`
+    (counted), and takes the DEFAULT step 0.1 when no adaptive Hamiltonian stage precedes it (a warm-up random walk
+    carries no `step_size`) — the recommended layout is an adaptive Hamiltonian stage/chunk before the mixture.
+    (f) **Study 31 (`31_c3_efficiency_study_2026-10-12.md`): a tempered component at the CARRIED adapted step mostly proposes
+    outside the ±8 prior box** (B2: out-of-box ≈ 0.33 of all iterations at every tempered setting; M3-20: 0.2–0.3), so within
+    the specified grid the component crosses 4–17× more than plain H but 1.3–13× LESS than the prior draw `PCN(beta=1)`,
+    and 46/48 tempered B2 runs are poor. With the tempered step pinned at ½ the adapted step and β = 0.001 (6 follow-up
+    runs, M3-10/M3-20), all pass, crossings are 3.5–3.9× the prior draw's and 170–420× plain's, ESS/eval 2.9–3.3× the
+    prior draw's, at ~2× plain's wall time (115–146 leapfrog steps per tempered trajectory). **Decision needed**: a
+    relative-step option for pinned components (`step_size="carried/2"`-like, or `step_factor=0.5`) so the C6 placeholder
+    (p_t 0.3, β 0.001, f 0.35, T_t = 3 T, step ½ carried) can be expressed; today only an absolute step can be pinned.
+    (g) **The `Hamiltonian` docstring's "climb a barrier of order log(1/β) nats" understates the runs** (β = 0.03 did not
+    cross Δ = 10 reliably, β = 0.001 with the half step did); the relation between β, f, T and the crossable barrier is not
+    settled (3-D only; note 30's "scales with dimension" claim untested). Docstring wording to soften.
+    (h) **`ess_min_per_eval` rewards non-mixing on multimodal problems** (plain H on M3-20: the study's highest ESS/eval,
+    1.21, with 20/24 chains never crossing and 3/3 poor). Study 31 adds a "mode ESS" from the per-chain mode fractions;
+    the S5 verdict (C6) should use a between-chain statistic, not the min-over-parameters ESS alone.
+22. **Flattened-likelihood Hamiltonian + `subchain_stats` component column (2026-10-13; note 32; CHANGELOG 2026-10-13).
+    Flagged for review:**
+    (a) **Every `Hamiltonian` spec's repr/manifest `stages` entry now shows `likelihood_weight=1.0`** (additive, as the C1/C3
+    fields); `proposal_resolution` only when τ < 1.
+    (b) **`component` column only for Mixture DAMH stages, not Block** (keeps the C2 pinned-hash test and matches D-32-3's
+    wording); exact-step rows carry −1 (the exact random walk proposed, not a component). To extend to Block stages: drop
+    `is_mixture` in `AlgorithmBase._component_column` and re-record two hashes of the C2 fingerprint test.
+    (c) **Relative-step option (item 21(f)) declined for now by the author (2026-10-13)**; study 33 pins absolute half steps.
+    (d) Design limit, not a defect: a flattened component never adapts (same rule as C3); τ = 0 allowed (prior dynamics).
+23. **Study 33 (`33_flattened_vs_tempered_study_2026-10-13.md`, 252 runs, raw in `toy_examples/tmp_flattened_study_2026-10-13/`):**
+    (a) **Result**: the flattened-likelihood component with τ = 0.05 (or 0), T_t = T, carried step, p = 0.3 mixed on all six
+    problems (18/18 runs; 90–100 % of the crossings made by it; cheapest per crossing in evaluations, gradients and
+    seconds; needs no halved step); the tempered-momentum reference fails on B2 (out-of-box 0.33) and falls 20× from d = 3
+    to d = 30; the prior draw collapses with d as predicted. Note 32's prediction that momentum tempering would not fall
+    with d is NOT confirmed. **Caveat (manager's)**: on the symmetric M-family the τ → 0 component with T ∋ π is the
+    antipodal prior rotation u → −u, which maps mode onto mode exactly; the result is not a generic one until an
+    asymmetric likelihood-made barrier in d ≥ 10 is tested. B2 (asymmetric, d = 2) supports it: 3/3 mixed, 3× the prior
+    draw's crossings.
+    (b) **Recommendation pending that test**: C6 placeholder = flattened component `likelihood_weight=0.05`, T_t = T,
+    `step_size=None`, p = 0.3, instead of the tempered one; the C3 code stays (valid, documented) but would not be the
+    Auto default. Decision for the author.
+    (c) **Half-step definition**: "½ carried step" = half of `step_end_stage1` (the carried value), not of the measured
+    stage's end step; study 31's numbers were already that. Recorded in `half_steps.json`.
+    (d) **Wall times of the M3-10/M10-10 blocks inflated** by other load on the host (load average up to 27); ESS/s and
+    s/crossing there are pessimistic. Network-training overflow warning in 50/252 logs, pre-existing, not investigated.
+    (e) **"ok" posterior verdict vs "mixed" disagree in 40 runs, all "ok but not mixed"**: the min-ESS-based posterior check
+    passes stuck runs (item 21(h) confirmed); the mixing verdict must come from the mode R-hat / mode ESS in C6.
+    (f) **Study 34 (2026-10-14, `34_asymmetric_barrier_quick_study_2026-10-14.md`) ran the test of (a)**: on the asymmetric
+    likelihood-made barrier (`bimodal_asym.py`, d = 10/30) the flattened τ = 0.05 component mixes 5/5 with crossings 9.6 → 9.1,
+    the tempered reference 10.3 → 3.9 (far-mode mass 0.175/0.111 vs 0.141 at d = 30, 2–3× wall time, 3–4 % out-of-box
+    even at the halved step). The note-33 result is NOT a symmetry artefact. **Decision for the author**: remove the
+    tempered-momentum option (fields `tempered_fraction`/`tempered_beta`, the two integrator branches, the `tempered_skipped`
+    notes column/print, `describe()` line, 22 tests, docs/CHANGELOG entries; ~1 h; untempered streams unchanged so the
+    pinned-hash tests stay valid) or keep it as a documented, non-default option. Untested for both mechanisms: a
+    likelihood informing many directions with a barrier between modes; d > 30.

@@ -5,16 +5,17 @@ rule. `list_of_stages` is run in order by every sampler rank (or by `run_samplin
 `stage_name(stage, i)` derives its output-directory name (`alg%04d_<MH|MH-adaptive|DAMH|DAMH-SMU>`).
 
 Proposal settings live in their own spec objects (`surrDAMH.proposals`: `RandomWalk`, `PCN`,
-`Hamiltonian`, `Block`), passed as `Stage(proposal=...)` — see the second table below.
+`Hamiltonian`, `Block`, `Mixture`), passed as `Stage(proposal=...)` — see the second table below.
 
 ```python
-from surrDAMH.proposals import RandomWalk, PCN, Hamiltonian, Block
+from surrDAMH.proposals import RandomWalk, PCN, Hamiltonian, Block, Mixture
 from surrDAMH.stages import Stage
 
 Stage(max_evaluations=1000)                                      # MH, random walk tuned online
 Stage(proposal=RandomWalk(scale=0.5), max_evaluations=1000)      # MH, fixed step
 Stage(algorithm="DAMH", subchain_length=5, max_evaluations=200)  # surrogate-accelerated
 Stage(proposal=PCN(beta=0.2), time_limit=60)
+Stage(proposal=Mixture([RandomWalk(scale=0.05), RandomWalk()], probabilities=[0.1, 0.9]))  # C2
 ```
 
 ## `Stage` fields
@@ -22,12 +23,12 @@ Stage(proposal=PCN(beta=0.2), time_limit=60)
 | Field | Type | Default | Meaning | Posterior-affecting? |
 |---|---|---|---|---|
 | `algorithm` | `"MH"\|"DAMH"` | `"MH"` | MH = plain Metropolis-Hastings; DAMH = delayed acceptance (see `docs/concepts.md`). | **yes** |
-| `proposal` | `RandomWalk\|PCN\|Hamiltonian\|Block` | `RandomWalk()` | How new samples are proposed; a spec from `surrDAMH.proposals`. Each carries its own step (`scale`/`beta`/`step_size`) and `adaptive` switch — see the "Proposal specs" table below. | **yes** |
+| `proposal` | `RandomWalk\|PCN\|Hamiltonian\|Block\|Mixture` | `RandomWalk()` | How new samples are proposed; a spec from `surrDAMH.proposals`. Each carries its own step (`scale`/`beta`/`step_size`) and `adaptive` switch — see the "Proposal specs" table below. | **yes** |
 | `max_evaluations` | `int` | `sys.maxsize` | Stop after this many full-model (exact) evaluations. | no (chain length only) |
 | `max_samples` | `int` | `sys.maxsize` | Stop after this many samples (outer-iteration chain states). If none of `max_evaluations`/`max_samples`/`time_limit` is set, `max_evaluations` defaults to 10 with a printed notice. | no (chain length only) |
 | `time_limit` | `float` | `inf` | Stop after this many seconds. | no (chain length only) |
 | `subchain_length` | `int` | `1` | DAMH only: surrogate-only MH steps between two exact-model evaluations. | **yes** (DAMH only) |
-| `surrogate_model_updates` | `bool\|None` | `None` | Keep picking up newer surrogate evaluators during the stage. Tri-state on input, always a plain `bool` after `__post_init__`: `None` = "what this stage type has always done", i.e. `True` for DAMH (DAMH-SMU: the sub-chain surrogate is refreshed once per sub-chain) and `False` for MH. Since WS7 (2026-09-18) an **MH** stage whose proposal needs surrogate gradients (a `Hamiltonian` proposal, bare or inside a `Block`) may set it to `True`: the stage then polls the collector once per iteration and re-installs the proposal's gradient functions whenever a newer evaluator arrives, instead of keeping the one it fetched at stage start. The chain stays exact either way — an MH accept/reject test uses the exact model only, so any gradient field gives a valid MH kernel; only mixing/efficiency changes. On any other MH stage `True` is refused with a printed warning and resolved to `False` (before WS7 that happened silently). The stage directory name is unaffected (`_DAMH-SMU` remains a DAMH-only suffix; an opted-in MH stage is still `alg%04d_MH`). | **yes** (DAMH kernel; MH: proposal gradients only) |
+| `surrogate_model_updates` | `bool\|None` | `None` | Keep picking up newer surrogate evaluators during the stage. Tri-state on input, always a plain `bool` after `__post_init__`: `None` = "what this stage type has always done", i.e. `True` for DAMH (DAMH-SMU: the sub-chain surrogate is refreshed once per sub-chain) and `False` for MH. Since WS7 (2026-09-18) an **MH** stage whose proposal needs surrogate gradients (a `Hamiltonian` proposal, bare or inside a `Block` or `Mixture`) may set it to `True`: the stage then polls the collector once per iteration and re-installs the proposal's gradient functions whenever a newer evaluator arrives, instead of keeping the one it fetched at stage start. The chain stays exact either way — an MH accept/reject test uses the exact model only, so any gradient field gives a valid MH kernel; only mixing/efficiency changes. On any other MH stage `True` is refused with a printed warning and resolved to `False` (before WS7 that happened silently). The stage directory name is unaffected (`_DAMH-SMU` remains a DAMH-only suffix; an opted-in MH stage is still `alg%04d_MH`). | **yes** (DAMH kernel; MH: proposal gradients only) |
 | `use_only_surrogate` | `bool` | `False` | Replace the exact model with the surrogate entirely for this stage (via `SurrogateAsSolver`) — exploration only, the samples do not follow the posterior. | **yes** |
 | `save_to_file` | `bool` | `True` | Write this stage's `samples/`/`notes/` CSVs. | no (output only) |
 | `send_snapshots_to_collector` | `bool` | `True` | Whether this stage's exact-model evaluations feed the surrogate's training data. Forced to `False` when `use_only_surrogate=True`. | affects surrogate training data, not this stage's own posterior |
@@ -51,8 +52,8 @@ this stage itself started at, throwing away everything the stage did. Both are i
 `POSTERIOR_AFFECTING_FIELDS` and so are marked `*` in `Stage.describe()`.
 
 `Stage.adaptive` is a **read-only property**, not a field: `bool(getattr(self.proposal,
-"adaptive", False))`, i.e. it mirrors `proposal.adaptive` and is always `False` for a `Block`
-(a `Block` has no `adaptive` field/kwarg at all — see below). There is no `Stage(adaptive=...)`
+"adaptive", False))`, i.e. it mirrors `proposal.adaptive`; for a `Block`/`Mixture` that is a read-only property,
+`True` iff any sub-proposal/component adapts (see below). There is no `Stage(adaptive=...)`
 kwarg any more; set `adaptive=` on the proposal spec instead.
 
 ## Proposal specs (`surrDAMH.proposals`)
@@ -73,7 +74,7 @@ then tunes it starting from the given value.
 | `RandomWalk` | `scale` | `float\|ArrayLike\|None` | `None` | Step in the prior's internal space: a scalar sd, a vector of per-parameter sds, or a covariance matrix. `None`: the covariance tuned by the previous adaptive random-walk stage, else the prior covariance scaled by `2.38²/d` (sd `1.0` + warning if the prior has no `get_covariance()`). | **yes** |
 | `RandomWalk` | `adaptive` | `bool\|None` | `None` | Tune `scale` online (shrinkage-regularised Haario covariance estimate + Robbins–Monro log-scale). `None` = `True` iff `scale` is `None`. `adaptive=True` with a `scale` starts tuning from that value; `adaptive=False` without a `scale` runs the whole stage at the default (a warning is printed). | **yes** |
 | `RandomWalk` | `target_rate` | `float\|None` | `None` | Acceptance rate the tuning aims at; `None` = `0.234` (the high-dimensional RWM optimum). | **yes**, when `adaptive=True` |
-| `PCN` | `beta` | `float\|None` | `None` | Step in `(0, 1)`. `None`: the value tuned by the previous adaptive pCN stage, else `0.5`. Needs a Gaussian internal prior (`Normal`/`PriorIndependentComponents`). | **yes** |
+| `PCN` | `beta` | `float\|None` | `None` | Step in `(0, 1]`. `None`: the value tuned by the previous adaptive pCN stage, else `0.5`. `beta=1` proposes an independent draw from the prior, so the acceptance probability is the likelihood ratio (a "prior-draw" component, e.g. inside a `Mixture`; low dimension only). Needs a Gaussian internal prior (`Normal`/`PriorIndependentComponents`). | **yes** |
 | `PCN` | `adaptive` | `bool\|None` | `None` | Tune `beta` online (Robbins–Monro on the logit of `β`); `None` = `True` iff `beta` is `None`. | **yes** |
 | `PCN` | `target_rate` | `float\|None` | `None` | `None` = `0.234`. | **yes**, when `adaptive=True` |
 | `Hamiltonian` | `step_size` | `float\|None` | `None` | Leapfrog step; `None`: the value tuned by the previous adaptive Hamiltonian stage, else `0.1`. | **yes** |
@@ -84,13 +85,116 @@ then tunes it starting from the given value.
 | `Hamiltonian` | `integrator` | `"leapfrog"\|"dimension_robust"` | `"leapfrog"` | `"leapfrog"` = standard HMC; `"dimension_robust"` = the prior part of the dynamics is solved exactly (harmonic-oscillator rotation) and only the likelihood gradient is integrated numerically — the dimension-robust "infinite-dimensional" HMC scheme (formerly the separate `"HamiltonianInfinite"` proposal type), recommended for a standard-normal internal prior. | **yes** |
 | `Hamiltonian` | `adaptive` | `bool\|None` | `None` | Tune `step_size` online (dual averaging); `None` = `True` iff `step_size` is `None`. `mass` and `num_steps` are never tuned (with `integration_time`, `num_steps` follows the step). With `step_size=None` and a resolved mass within `DA_CONTINUE_MASS_TOLERANCE = 0.2` of the previous adaptive Hamiltonian stage's (relative spectral-norm change `r = ‖M_new − M_old‖₂ / ‖M_old‖₂`, C1b 2026-10-11; C1 required an identical mass), the dual averaging **continues** that stage's recursion (`m`, `H̄`, `log ε̄`, `μ` carried; no restart at `μ = log(10 ε₀)`); after a larger change it restarts from the carried step **rescaled to the new mass**, `ε₀ = ε_carried · (det M_new / det M_old)^(1/(2d))` (for `M = Σ̂⁻¹`: `(det Σ̂_old / det Σ̂_new)^(1/(2d))` — a larger covariance estimate means a lighter mass and a smaller step), with the small offset `μ = log(DA_RESTART_FACTOR · ε₀)`, `DA_RESTART_FACTOR = 2` (placeholders); printed note, branch and `r` in `proposal_resolution`. | **yes** |
 | `Hamiltonian` | `target_rate` | `float\|None` | `None` | `None` = `0.8` (`16` §5 item 4 — `0.65` overshot by ~2x into the `εL ≈ 2π` resonance in the prototype). | **yes**, when `adaptive=True` |
+| `Hamiltonian` | `tempered_fraction` | `float` in `[0, 0.5]` | `0.0` | C3 (2026-10-12): share `f` of each trajectory's `L` steps that are tempered at EACH end, `n_t = min(floor(f L), L // 2)` (with jitter, `L` is that trajectory's own count). `0.0` = off, byte-identical to before C3. `> 0` needs `tempered_beta < 1` and `adaptive=False` — see "Tempered trajectories" below. | **yes** |
+| `Hamiltonian` | `tempered_beta` | `float` in `(0, 1]` | `1.0` | C3: the inverse temperature reached in the middle of the trajectory: per-step factor `alpha = beta^(-1/n_t)`, so the reached temperature `1/beta` does not depend on `L` (nor on the adapted step). `< 1` iff `tempered_fraction > 0`. | **yes** |
+| `Hamiltonian` | `likelihood_weight` | `float` in `[0, 1]` | `1.0` | Flattened likelihood (2026-10-13): `tau`; every momentum kick uses `tau * grad log L` (prior part unchanged); acceptance uses the exact energy. `1.0` = off, bit-identical. `< 1` needs `adaptive=False` — see "Flattened likelihood" below. | **yes** |
 | `Block` | `groups` | `list[list[int]]` | `[]` (must be non-empty) | Parameter indices of each group, e.g. `[[0, 1], [2, 3, 4]]`; the groups must cover all parameters without overlap. | **yes** |
-| `Block` | `proposals` | `list[RandomWalk\|PCN\|Hamiltonian]` | `[]` (must match `groups` in length) | One proposal spec per group. Their steps must be given — a block proposal does not adapt; `adaptive=True` on a sub-proposal raises (see "Invalid combinations" below). A `Block` cannot contain another `Block`. | **yes** |
+| `Block` | `proposals` | `list[RandomWalk\|PCN\|Hamiltonian]` | `[]` (must match `groups` in length) | One proposal spec per group. Since C2 (2026-10-12) a sub-proposal MAY adapt (`RandomWalk()` etc. with no step): see "Mixtures and adaptive blocks" below. A `Block` cannot contain another `Block` or a `Mixture`. | **yes** |
+| `Block` | `probabilities` | `list[float]\|None` | `None` | C2: probability of drawing each group per outer iteration (only the drawn group's parameters move). Positive, normalised at build; `None` = uniform, the draw before C2 (unchanged). | **yes** |
+| `Mixture` | `proposals` | `list[RandomWalk\|PCN\|Hamiltonian]` | `[]` (at least two) | C2 (2026-10-12): components that each propose ALL parameters; no `Block`/`Mixture` inside (refused in both directions). | **yes** |
+| `Mixture` | `probabilities` | `list[float]\|None` | `None` (uniform) | Positive, one per component, stored as given and normalised at build. | **yes** |
 
-`Block.adaptive` is a **class attribute fixed at `False`**, not a dataclass field: a `Block`
-never adapts and has no `adaptive` kwarg to pass in the first place (`Block(adaptive=True)`
-raises a plain `TypeError` from the dataclass constructor, not a `ValueError` about adaptivity
-— see below).
+`Block.adaptive` and `Mixture.adaptive` are **read-only properties** (C2), not dataclass fields:
+`True` iff any sub-proposal/component adapts, so `Block(adaptive=True)` still raises a plain
+`TypeError` from the dataclass constructor. A `Block` of fixed sub-proposals is not adaptive and
+runs byte-identically to before C2.
+
+### Mixtures and adaptive blocks (C2, 2026-10-12)
+
+`Mixture([...], probabilities=...)`: every outer iteration draws ONE component and that component
+proposes the move of all parameters (in a DAMH stage it drives the whole sub-chain of that
+iteration). A fixed-weight mixture of reversible kernels is reversible, so the target is unchanged
+(`library_notes/23_*`, `25_*` §9 D8). Each component is built like a bare stage proposal: full
+dimension, consuming the carried steps of earlier stages and the shared posterior statistics
+(`Hamiltonian(mass="covariance")`, the random walk's adaptive shape), with the same guards (`PCN`
+needs a Gaussian prior, `Hamiltonian` needs `use_surrogate_gradients`). `needs_gradients` is true
+if any component needs them, and a `Hamiltonian` component makes an MH stage eligible for
+`surrogate_model_updates=True` like a bare one.
+
+- **What adapts.** A component adapts as it would alone (step `None` = adaptive, "adapt unless
+  pinned"), but only on the iterations it proposed: `adapt()` reaches only that component (the
+  pre-rejected, non-finite and out-of-box iterations included). Adaptive components are pooled over
+  the chains at stage end like bare proposals.
+- **Hand-over.** A `Mixture` hands its adaptive components' values on under the same keys as bare
+  proposals (`scale`, `beta`, `step_size`, `dual_averaging`, `hamiltonian_mass`): a following
+  plain `RandomWalk()` stage starts from the mixture's adaptive random walk's scale. A `Block`
+  hands NOTHING over (its sub-proposals live in group dimension) and its adaptive sub-proposals
+  start from their defaults, never from carry-over.
+- **V1 restriction.** At most one ADAPTIVE component per spec type in a `Mixture`: two adaptive
+  `RandomWalk()`s would hand over under the same key, so `build_proposal` raises `ValueError`
+  (pin the step of all but one, e.g. `RandomWalk(scale=0.05)`, which is then fixed, or use
+  different types). Fixed duplicates are fine. The positional carry-over keying of note 25 D8 is
+  not implemented.
+- **Trace.** `adaptive_stats/<stage>/rank%04d.csv` holds the trace of the FIRST adaptive component
+  only, in that component's format (`docs/outputs.md`); its index is
+  `proposal_resolution[i]["adaptive_stats_component"]` in `run_manifest.json`, and one
+  `RuntimeWarning` per process names it when more than one component adapts.
+
+`Stage.describe()` prints a `Block(...)`/`Mixture(...)` note and one line per component (console
+only). Runnable example: `toy_examples/mixture_proposal_example.py`.
+
+### Tempered trajectories (C3, 2026-10-12)
+
+`Hamiltonian(tempered_fraction=f, tempered_beta=beta)` runs Neal's tempered trajectory (Neal 2011,
+§5.5.2; `library_notes/30_*`): on a trajectory of `L` steps the momentum is multiplied by
+`sqrt(alpha)` before each of the first `n_t = min(floor(f L), L // 2)` position/flow updates and
+divided by `sqrt(alpha)` after each of the last `n_t`, `alpha = beta^(-1/n_t)`. The middle of the
+trajectory thus moves at kinetic temperature `1/beta` and can cross barriers that an untempered
+trajectory of the same length cannot. Both integrators (`leapfrog`, `dimension_robust`) support it.
+The heating and cooling steps are placed palindromically, so the trajectory followed by the
+momentum flip is a volume-preserving involution and the acceptance test is the ordinary one — the
+posterior is unchanged (`library_notes/30_*` §2); an untempered run is byte-identical to before C3.
+
+- **Validation** (`ValueError` at spec construction): `tempered_fraction` outside `[0, 0.5]` or
+  `tempered_beta` outside `(0, 1]`; `tempered_fraction > 0` without `tempered_beta < 1` or the
+  reverse (the message names both); `tempered_fraction > 0` with `adaptive=True` after resolution —
+  a tempered component does not adapt its step (note 30 §4), so give `adaptive=False` (and
+  `step_size=None` to take the carried step, or a value).
+- **No tempering when `n_t = 0`** (`L < 2`, or `f L < 1`): that trajectory is an ordinary one and is
+  counted per stage as `tempered_skipped` (`notes` column and stage-end print, `docs/outputs.md`).
+- **Recommended use:** a pinned component of a `Mixture` next to an adaptive Hamiltonian component, with
+  an `integration_time` 2-4x that component's, e.g.
+
+  ```python
+  Mixture([Hamiltonian(integrator="dimension_robust", mass="covariance",
+                       integration_time=3, integration_time_jitter=0.5),
+           Hamiltonian(integrator="dimension_robust", mass="covariance",
+                       integration_time=9, integration_time_jitter=0.5,
+                       adaptive=False, tempered_fraction=0.3, tempered_beta=0.1)],
+          probabilities=[0.8, 0.2])
+  ```
+
+  The pinned component with `step_size=None` takes the carried step of the previous adaptive
+  Hamiltonian stage/chunk. **Caveat:** where the adapted step gives `L = 1-3` (study 29 §2.3) the
+  component tempers nothing unless its own `T` is long enough — watch `tempered_skipped`.
+
+`Stage.describe()` adds one note line for a tempered `Hamiltonian` (for a `Block`/`Mixture`
+component prefixed `component k:`).
+
+### Flattened likelihood (2026-10-13)
+
+`Hamiltonian(likelihood_weight=tau)` multiplies the likelihood gradient in every momentum kick of the
+trajectory by `tau` in `[0, 1]` (`tau * grad log L` instead of `grad log L`); the prior part of the
+dynamics, the position updates, the half kicks, the finiteness checks and the momentum flip are
+unchanged (`library_notes/32_*` §1). The trajectory followed by the flip is still a volume-preserving
+involution and the acceptance test uses the exact energy, so the posterior is unchanged (note 32 §1.1,
+the argument of note 30 §2); `tau = 1` (default) is off and byte-identical to before (the gradient array
+is used itself, not multiplied).
+
+- **`tau = 0` (prior dynamics):** with `integrator="dimension_robust"`, `mass=1`,
+  `integration_time=pi/2` and no jitter the proposal is an independent draw from the prior (choose the
+  step so that `round(T / step) * step = pi/2`).
+- **Validation** (`ValueError` at spec construction): `likelihood_weight` outside `[0, 1]`;
+  `likelihood_weight < 1` with `adaptive=True` after resolution — a flattened-likelihood component does
+  not adapt its step (note 32 §1.2), so give `adaptive=False` (and `step_size=None` to take the carried
+  step, or a value).
+- **Intended use:** a pinned component of a `Mixture` (`adaptive=False`, taking the carried step of the
+  previous adaptive Hamiltonian stage/chunk), next to an adaptive component.
+- **Combinable with tempering:** `tempered_fraction`/`tempered_beta` (C3) may be given together with
+  `likelihood_weight < 1` on the same component.
+
+`Stage.describe()` adds one note line for a flattened `Hamiltonian` (for a `Block`/`Mixture` component
+prefixed `component k:`).
 
 Note for an **MH** stage with a `Hamiltonian` proposal: the only acceptance statistic available
 there is the exact-model one, which also pays for the *surrogate gradient field's* error, so an
@@ -122,7 +226,7 @@ Raised at `build_proposal`/`stage_name` time — i.e. when `Problem.run_sampling
 - Unknown `algorithm` (anything other than `"MH"`/`"DAMH"`) — `ValueError` from `stage_name`,
   and it fires on every rank at start-up (stage names are assigned before role dispatch) rather
   than only when a sampler reaches that stage.
-- A DAMH or Hamiltonian-proposal (bare or inside a `Block`) **first** stage with no evaluator
+- A DAMH or Hamiltonian-proposal (bare or inside a `Block`/`Mixture`) **first** stage with no evaluator
   available yet — see `docs/configuration.md`'s "DAMH without a collector" table; without a
   collector-side start-up handshake success or a fixed `surrogate_evaluator`, this deadlocks (or
   now raises, once the WS8 handshake covers it — see
@@ -130,21 +234,21 @@ Raised at `build_proposal`/`stage_name` time — i.e. when `Problem.run_sampling
 - `PCN` with a prior that is not `Normal`/`PriorIndependentComponents` — `ValueError` from
   `build_proposal` (pCN's acceptance ratio drops the prior term, which is only valid for a
   Gaussian internal prior).
-- A `Hamiltonian` proposal (bare or inside a `Block`) without
+- A `Hamiltonian` proposal (bare or inside a `Block`/`Mixture`) without
   `Configuration.use_surrogate_gradients=True` in effect — `AssertionError` from
   `build_proposal`.
-- A `RandomWalk`/`PCN`/`Hamiltonian` sub-proposal inside a `Block` with `adaptive=True` —
-  `ValueError` from `build_proposal` (`surrDAMH/modules/proposal_builder.py`, the `Block`
-  branch: it checks `sub_spec.adaptive` for each sub-proposal before building it; give every
-  sub-proposal an explicit step instead). This check is **not** in `Block.__post_init__` itself
-  — that only validates that `groups`/`proposals` have matching, non-empty length and that no
-  sub-proposal is itself a `Block`. Note also that a bare sub-proposal spec with no step given
-  (e.g. `RandomWalk()` inside a `Block`) resolves its own `adaptive` to `True` in its own
-  `__post_init__` regardless of being inside a `Block` — so it passes construction and only
-  fails later, at `build_proposal` time, when the stage actually runs.
-- `Block(..., adaptive=True)` — a **different** error at a **different** (construction) time
-  from the previous item: `Block` has no `adaptive` field/kwarg at all (`adaptive = False` is a
-  plain class attribute, not a dataclass field), so this raises `TypeError: __init__() got an
+- A `Mixture` with two ADAPTIVE components of the same spec type (V1 rule, C2) — `ValueError` from
+  `build_proposal`, suggesting to pin a step. (Before C2 an adaptive sub-proposal inside a `Block`
+  raised here too; that guard is gone, a `Block` sub-proposal may now adapt.) A `Mixture` with
+  fewer than two components, or a `Block`/`Mixture` nested in either, raises `ValueError` at
+  construction.
+- `Hamiltonian` with `tempered_fraction` outside `[0, 0.5]` or `tempered_beta` outside `(0, 1]`, with
+  `tempered_fraction > 0` but `tempered_beta == 1` (or the reverse), or with `tempered_fraction > 0`
+  and a resolved `adaptive=True` (C3) — `ValueError` at spec construction.
+- `Hamiltonian` with `likelihood_weight` outside `[0, 1]`, or with `likelihood_weight < 1` and a resolved
+  `adaptive=True` (2026-10-13) — `ValueError` at spec construction.
+- `Block(..., adaptive=True)` — `Block` has no `adaptive` field/kwarg (`adaptive` is a read-only
+  property), so this raises `TypeError: __init__() got an
   unexpected keyword argument 'adaptive'` immediately, not a `ValueError` from `build_proposal`.
 - Any field name from the pre-2026-09-21 `Stage` API (the proposal-related kwargs that moved
   into `surrDAMH.proposals`, or `adaptive_corr_limit=`/`adaptive_sample_limit=`) passed to
