@@ -19,8 +19,10 @@ sampling_output/
                                            log_likelihood, log_prior                                    (header row; only if save_snapshots_to_file)
   notes/<stage.name>/rank%04d.csv          accepted, rejected, pre-rejected, sum, seed, out_of_bounds,
                                            exact_steps, exact_accepted, audited, audit_hidden,
-                                           polyak_updates                                                (header row)
+                                           polyak_updates[, tempered_skipped][, installations, versions_received]   (header row)
   subchain_stats/<stage.name>/rank%04d.csv iteration, subchain_max_length, subchain_accepted, subchain_acceptance_rate, correction_log_ratio, outer_proposed_changed, outer_accepted, rank_world, kernel[, component]   (header row; DAMH stages only; `component` only for Mixture stages, 2026-10-13)
+  installations/<stage.name>/rank%04d.csv   iteration, version, collector_version                       (header row; only stages with Stage.installation set, 2026-10-23)
+  versions/<stage.name>/rank%04d.csv        iteration, version, collector_version                       (header row; one row per RECEIVED evaluator; only stages with Stage.installation set, 2026-10-23)
   adaptive_stats/<stage.name>/rank%04d.csv  one row per adaptation period                                (header row; adaptive=True stages only)
   carry_over/<stage.name>.npz              carry_over__*, summary__*                                    (one file per stage since C1 (before: per adaptive stage), no rank suffix; written once by sampler rank 0 / run_sampling_local)
   last_sample/<stage.name>/rank%04d.npz    parameters (float64), no_parameters                          (one file per chain, written after each stage)
@@ -134,6 +136,26 @@ counts `audited` as exact evaluations. S3 (2026-10-09) appends `polyak_updates`:
 received evaluators averaged into the installed one by `Stage.polyak_averaging` (0 when the flag is
 off, on a stage that receives no evaluator, or for a surrogate without `averageable_state()`).
 C3 (2026-10-12) appends `tempered_skipped`, LAST and ONLY for a stage whose proposal (or a `Block`/`Mixture` component) tempers its trajectories (`Hamiltonian(tempered_fraction > 0)`): the number of trajectories too short to temper (`n_t = 0`, see `docs/stages.md`, "Tempered trajectories"), summed over the components; other stages' files are unchanged. The stage-end line printed by the sampler gains ` - tempered skipped: N` under the same condition.
+2026-10-23 (paper §6.5) appends `installations, versions_received`, LAST and ONLY for a stage with `Stage.installation` set (`docs/stages.md`, "Installation rules (2026-10-23)"): the committed installs of a received surrogate version during the stage and the versions received from the provider during the stage, both without the stage-start one (under `AveragedInstallation` every finite received version is installed, so the two agree unless a version was refused as non-finite; under `RandomisedInstallation` versions that were superseded before a coin succeeded are received but never installed). Other stages' files are unchanged. The stage-end line gains ` - installations: I/V versions received` under the same condition.
+
+### `installations/<stage>/rank%04d.csv` (stages with `Stage.installation` only, 2026-10-23)
+
+Header `iteration, version, collector_version`, written at stage start (so the file exists, possibly
+with the header only), then one row per committed install during the stage: the outer iteration at
+whose start (`RandomisedInstallation`) or in whose sub-chain poll (`AveragedInstallation`) the version
+was installed, the version's number among the versions this chain received during the stage
+(1-based, the stage-start one not counted; the same count as `notes.versions_received`), and
+`collector_version` = `Evaluator.version` of the installed evaluator: the collector's publication
+index (1 = the first evaluator it published; the `k`-th row of `surrogate_quality_test.csv` belongs
+to publication `k`), or the local surrogate manager's count; `-1` for an evaluator without one
+(a fixed user-given evaluator). The number of rows equals `notes.installations`. Under
+`RandomisedInstallation` an install at iteration `i` means the `i`-th uniform of
+`np.random.RandomState(installation_seed)` (`run_manifest.json` `seeds`) was below `lambda_{i-1}`.
+`versions/<stage>/rank%04d.csv` has the same columns with one row per RECEIVED evaluator (the
+iteration at whose start it was received); under `RandomisedInstallation` the difference between a
+version's rows in the two files is the lag of its installation, and versions absent from
+`installations/` were superseded before a coin succeeded. Both files exist only when
+`Stage.installation` is set.
 
 ### `subchain_stats/<stage>/rank%04d.csv` (DAMH stages only)
 
@@ -246,7 +268,9 @@ the selection mask below), `surrogate`
 `seed0 = 10*(no_stages*rank+i) + 1_000_000*generation` and every per-rank/per-stage seed —
 `proposal_seed = seed0+1`, `algorithm_seed = seed0+2`, and since S2 (2026-10-09) `exact_step_seed =
 seed0+4` (exact-step choice and audit draws) and `exact_proposal_seed = seed0+5` (the exact step's
-random walk), listed for every stage though drawn from only by a DAMH stage that uses them — plus
+random walk, or its prior draws with `exact_step_proposal="prior"`), and since 2026-10-23
+`installation_seed = seed0+6` (the coins of `Stage.installation=RandomisedInstallation`), listed for
+every stage though drawn from only by a stage that uses them — plus
 whether `initial_sample_type` makes the run reproducible — `generation` is 0 and `no_stages` this
 run's own stage count for a plain run, see "`lineage`" below for a continuation), `mpi` layout,
 `environment` (thread-count env vars), `unverified_options` (e.g.

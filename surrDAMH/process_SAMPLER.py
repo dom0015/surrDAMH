@@ -22,7 +22,7 @@ from surrDAMH.modules import algorithms as alg
 from surrDAMH.modules import lhs_normal as lhs
 from surrDAMH.modules.proposal_builder import build_exact_step_proposal, build_proposal
 from surrDAMH.modules.seeds import (EXACT_PROPOSAL_SEED_OFFSET, EXACT_STEP_SEED_OFFSET,
-                                    conf_seed_offset, initial_sample_seed, seed_no_stages,
+                                    INSTALLATION_SEED_OFFSET, conf_seed_offset, initial_sample_seed, seed_no_stages,
                                     stage_seed0)
 from surrDAMH.solvers import Solver
 from surrDAMH.stages import Stage, stage_name
@@ -145,13 +145,15 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
         posterior_statistics.begin_stage()
         my_Prop = build_proposal(stage=stage, conf=conf, prior=prior, seed=seed0+1,
                                  carried=carried, stage_index=i_global, statistics=posterior_statistics)
-        # S2: the exact step's own random walk (seed0 + 5), only when the stage uses it
+        # S2: the exact step's own random walk (seed0 + 5), only when the stage uses it; or its prior
+        # proposal (Stage.exact_step_proposal="prior", 2026-10-23) on the same stream
         exact_proposal = None
         if stage.algorithm == "DAMH" and stage.exact_step_probability > 0.0:
             exact_proposal = build_exact_step_proposal(conf=conf, prior=prior, seed=seed0 + EXACT_PROPOSAL_SEED_OFFSET,
                                                        carried=carried, stage_index=i_global,
                                                        statistics=posterior_statistics,
-                                                       scale=stage.exact_step_scale)
+                                                       scale=stage.exact_step_scale,
+                                                       kind=stage.exact_step_proposal)
 
         # choice of communicators for this stage:
         if stage.send_snapshots_to_collector:
@@ -198,7 +200,9 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
                                  initial_sample_is_carried_over=initial_sample_is_carried_over,
                                  exact_step_seed=seed0 + EXACT_STEP_SEED_OFFSET,
                                  exact_proposal=exact_proposal,
-                                 posterior_statistics=posterior_statistics)
+                                 posterior_statistics=posterior_statistics,
+                                 # 2026-10-23: coins of Stage.installation=RandomisedInstallation
+                                 installation_seed=seed0 + INSTALLATION_SEED_OFFSET)
         alg_instance.run()
 
         # C1: pool the posterior statistics of all chains at EVERY stage end (one Allgather of a
@@ -284,6 +288,7 @@ def run_SAMPLER(conf: Configuration, prior: Distribution, likelihood: Distributi
               f'- exact steps: {alg_instance.counter_exact_accepted}/{alg_instance.counter_exact_steps} accepted',
               f'- audited: {alg_instance.counter_audited} (hidden: {alg_instance.counter_audit_hidden})'
               + (f' - polyak updates: {alg_instance.counter_polyak_updates}' if stage.polyak_averaging else '')
+              + (f' - installations: {alg_instance.counter_installations}/{alg_instance.counter_versions_received} versions received' if stage.installation is not None else '')
               + (f' - tempered skipped: {alg_instance.proposal.tempered_skipped}'
                  if getattr(alg_instance.proposal, 'tempering_on', False) else ''),
               flush=True)

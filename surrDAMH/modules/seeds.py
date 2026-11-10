@@ -17,7 +17,8 @@ by G4 on 2026-09-17)::
     algorithm_seed        = seed0 + 2     # AlgorithmBase._generator (acceptance draws)
     initial_sample_seed   = seed0(rank, 0) + 3   # initial sample of the chain (G4)
     exact_step_seed       = seed0 + 4     # S2: "which kernel" + audit draws (AlgorithmBase._generator_exact)
-    exact_proposal_seed   = seed0 + 5     # S2: the exact step's own random walk
+    exact_proposal_seed   = seed0 + 5     # S2: the exact step's own random walk (or its prior draws)
+    installation_seed     = seed0 + 6     # 2026-10-23: coins of Stage.installation=RandomisedInstallation
 
 The stride of 10 leaves room for further per-stage streams; the initial-sample seed uses
 stage 0's ``seed0`` because the initial sample is drawn once per chain, before the stage
@@ -37,7 +38,7 @@ formula above.
 
 Repeated experiments (``Configuration.seed_offset``, study 29, 2026-10-12): the integer
 ``seed_offset`` is added to every seed of the run on top of the generation shift
-(:func:`run_seed_offset`): every ``seed0`` (hence all five per-stage streams), the
+(:func:`run_seed_offset`): every ``seed0`` (hence all six per-stage streams), the
 initial-sample seed and the LHS seed. ``0`` (default) is the formula above. Repetitions with
 DISJOINT streams need offsets at least ``SEED_STRIDE * no_stages * no_samplers`` apart (e.g.
 ``seed_offset = 100_000 * k``) and below ``GENERATION_SEED_STRIDE`` if the run is continued.
@@ -58,6 +59,10 @@ INITIAL_SAMPLE_SEED_OFFSET = 3
 EXACT_STEP_SEED_OFFSET = 4
 #: S2: the exact step's own adaptive random walk (built only when ``exact_step_probability > 0``).
 EXACT_PROPOSAL_SEED_OFFSET = 5
+#: 2026-10-23 (paper §6.5): per-(chain, stage) stream of the randomised-installation coins
+#: (``AlgorithmBase._generator_install``). Drawn from only when ``Stage.installation`` is a
+#: ``RandomisedInstallation``: one uniform per outer iteration ``i >= 1``.
+INSTALLATION_SEED_OFFSET = 6
 #: Added (times the lineage generation) to every seed of a continued run, so its streams are
 #: disjoint from those of all earlier runs of its lineage as long as every run has
 #: ``SEED_STRIDE * no_stages_lineage * no_samplers < GENERATION_SEED_STRIDE`` (2026-10-08).
@@ -65,6 +70,7 @@ GENERATION_SEED_STRIDE = 1_000_000
 
 SEED_FORMULA = ("seed0 = 10*(no_stages*rank_world + i) + 1000000*generation + seed_offset; proposal_seed = seed0+1; "
                 "algorithm_seed = seed0+2; exact_step_seed = seed0+4; exact_proposal_seed = seed0+5; "
+                "installation_seed = seed0+6; "
                 "initial_sample_seed = 10*no_stages*rank_world + 3 + 1000000*generation + seed_offset; "
                 "lhs_seed = 1000000*generation + seed_offset; continued runs: i = stage_index_offset + local index, "
                 "no_stages = no_stages_lineage, generation = lineage generation (0 for a plain run)")
@@ -102,6 +108,7 @@ def initial_sample_seed(no_stages: int, rank_world: int) -> int:
 
 
 __all__ = ["SEED_STRIDE", "PROPOSAL_SEED_OFFSET", "ALGORITHM_SEED_OFFSET",
-           "INITIAL_SAMPLE_SEED_OFFSET", "EXACT_STEP_SEED_OFFSET", "EXACT_PROPOSAL_SEED_OFFSET", "SEED_FORMULA", "stage_seed0", "initial_sample_seed",
+           "INITIAL_SAMPLE_SEED_OFFSET", "EXACT_STEP_SEED_OFFSET", "EXACT_PROPOSAL_SEED_OFFSET",
+           "INSTALLATION_SEED_OFFSET", "SEED_FORMULA", "stage_seed0", "initial_sample_seed",
            "seed_no_stages", "GENERATION_SEED_STRIDE", "generation_seed_offset", "run_seed_offset",
            "conf_seed_offset"]

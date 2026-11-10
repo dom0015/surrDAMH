@@ -23,6 +23,7 @@ from typing import Literal as _Literal
 
 import numpy as np
 
+from surrDAMH.installation import AveragedInstallation, RandomisedInstallation
 from surrDAMH.modules.describe import describe_fields
 import surrDAMH.proposals as _proposals  # private alias: surrDAMH.stages must offer Stage only
 
@@ -32,7 +33,11 @@ POSTERIOR_AFFECTING_FIELDS: frozenset[str] = frozenset({
     "algorithm", "proposal", "subchain_length", "surrogate_model_updates",
     "use_only_surrogate", "is_excluded", "burn_in", "exact_step_probability", "audit_prerejected",
     "polyak_averaging", "surrogate_error_model", "exact_step_scale",
+    "exact_step_proposal", "installation",  # 2026-10-23, paper §6.5
 })
+
+#: Values of ``Stage.exact_step_proposal`` (2026-10-23, paper §6.5).
+_EXACT_STEP_PROPOSALS: tuple[str, ...] = ("random_walk", "prior")
 
 #: Stage fields of the S2 safety components (2026-10-09); only meaningful on a DAMH stage.
 _S2_FIELDS: tuple[str, ...] = ("exact_step_probability", "audit_prerejected")
@@ -105,6 +110,29 @@ class Stage:
             estimate at the stage start (the identity, with a printed note, while the statistics
             hold fewer than 100 states or give no usable covariance). Resolved per chain at stage
             start; recorded in the manifest's ``proposal_resolution``. Default: ``None``.
+        exact_step_proposal: DAMH only, used only with ``exact_step_probability > 0`` (2026-10-23,
+            paper §6.5): ``"random_walk"`` (default) = the exact step's random walk described above;
+            ``"prior"`` = the exact step proposes ``y ~ prior`` (an independence sampler drawn in the
+            internal space from the exact-proposal stream ``seed0 + 5``) and accepts with
+            ``min{1, L(y)/L(x)}`` -- the prior cancels against the proposal; nothing adapts. Under a
+            log-likelihood bounded above it makes the stage's kernels simultaneously uniformly
+            ergodic (paper thm:prior-step). A draw outside the prior bound is rejected unevaluated. Refused
+            together with ``exact_step_scale`` (``ValueError``); reset with a warning on an MH stage.
+            Recorded in the manifest's ``proposal_resolution`` (``exact_step_proposal: "prior"``).
+            Default: ``"random_walk"``.
+        installation: ``None`` (default: every received surrogate version is installed at the next
+            poll, as always), or an installation rule from ``surrDAMH.installation`` (2026-10-23,
+            paper §6.5) that makes the installed surrogate satisfy diminishing adaptation:
+            ``RandomisedInstallation(n_lambda, a_lambda)`` installs the newest received version
+            before outer iteration ``n + 1`` only with probability ``lambda_n``, together with the
+            adaptive sub-chain parameters (which otherwise stay frozen between installs);
+            ``AveragedInstallation(j0, a_zeta, weight_box)`` installs the running average with gains
+            ``zeta_j`` of the received versions (projected onto the weight box) and needs fixed
+            sub-chain parameters (``ValueError`` on an adaptive proposal, or on an adaptive exact
+            random walk). Refused together with ``polyak_averaging=True``; reset with a warning on
+            a stage that receives no versions (``surrogate_model_updates=False``). ``notes`` gains
+            ``installations, versions_received`` and the stage writes ``installations/`` (see
+            ``docs/outputs.md``). Default: ``None``.
         polyak_averaging: install, instead of each surrogate evaluator received during the stage,
             the running MEAN of the parameters of all evaluators received so far in this stage
             (weight ``1/k`` for the ``k``-th; restarted at every stage). The installed surrogate
@@ -159,6 +187,8 @@ class Stage:
     polyak_averaging: bool = False
     surrogate_error_model: bool = False
     exact_step_scale: float | None = None
+    exact_step_proposal: _Literal["random_walk", "prior"] = "random_walk"
+    installation: RandomisedInstallation | AveragedInstallation | None = None
     name: str | None = None
 
     # ------------------------------------------------------------------ derived properties
@@ -199,6 +229,7 @@ class Stage:
         if not isinstance(self.surrogate_error_model, (bool, np.bool_)):
             raise TypeError(f"Stage.surrogate_error_model must be True or False, got {self.surrogate_error_model!r}")
         self.surrogate_error_model = bool(self.surrogate_error_model)
+        self._validate_installation()
 
     def _validate_safety_fields(self) -> None:
         """
@@ -218,6 +249,12 @@ class Stage:
                       f"exactly), setting {name}=0")
                 value = 0.0
             setattr(self, name, value)
+        kind = self.exact_step_proposal
+        if not isinstance(kind, str) or kind not in _EXACT_STEP_PROPOSALS:
+            raise ValueError(f"Stage.exact_step_proposal must be one of {list(_EXACT_STEP_PROPOSALS)}, got {kind!r}")
+        if kind == "prior" and self.exact_step_scale is not None:
+            raise ValueError("Stage: exact_step_proposal='prior' and exact_step_scale conflict -- exact_step_scale "
+                             "fixes the exact step's RANDOM WALK, the prior proposal has no scale; set only one")
         scale = self.exact_step_scale
         if scale is not None:
             if isinstance(scale, bool) or not isinstance(scale, (int, float, np.integer, np.floating)) \
@@ -228,6 +265,52 @@ class Stage:
                 print("Warning: exact_step_scale is only used by a DAMH stage with exact_step_probability > 0, "
                       "setting exact_step_scale=None")
                 self.exact_step_scale = None
+        if self.algorithm == "MH" and kind != "random_walk":
+            print(f"Warning: exact_step_proposal={kind!r} is only used by a DAMH stage with exact_step_probability > 0, "
+                  "setting exact_step_proposal='random_walk'")
+            self.exact_step_proposal = "random_walk"
+
+    def _validate_installation(self) -> None:
+        """
+        Check ``installation`` (2026-10-23, paper §6.5). Called after ``surrogate_model_updates`` is
+        resolved and ``polyak_averaging`` is a bool.
+
+        * not ``None``, a ``RandomisedInstallation`` or an ``AveragedInstallation`` -> ``TypeError``;
+        * together with ``polyak_averaging=True`` -> ``ValueError`` (the legacy running mean and an
+          ``AveragedInstallation`` are two averaging rules; use one or the other);
+        * on a stage that receives no versions (``surrogate_model_updates`` resolved to ``False``: a
+          frozen DAMH stage, an MH stage without a gradient proposal that opted in) -> printed
+          warning and reset to ``None``;
+        * ``AveragedInstallation`` needs FIXED sub-chain parameters (paper def:averaged): an adaptive
+          proposal -> ``ValueError``; with ``exact_step_probability > 0`` the exact step must be the
+          prior proposal or the fixed random walk (``exact_step_scale``) -> ``ValueError`` otherwise.
+        """
+        rule = self.installation
+        if rule is None:
+            return
+        if not isinstance(rule, (RandomisedInstallation, AveragedInstallation)):
+            raise TypeError("Stage.installation must be None, a RandomisedInstallation or an AveragedInstallation "
+                            f"from surrDAMH.installation, got {type(rule).__name__}")
+        if self.polyak_averaging:
+            raise ValueError("Stage: installation and polyak_averaging=True conflict -- polyak_averaging=True is the "
+                             "legacy running mean of the received versions (stage-start network included), "
+                             "AveragedInstallation the paper's rule; set only one of them")
+        if not self.surrogate_model_updates:
+            print(f"Warning: installation={rule!r} is only used by a stage that receives surrogate versions "
+                  "(surrogate_model_updates=True), setting installation=None")
+            self.installation = None
+            return
+        if isinstance(rule, AveragedInstallation):
+            if self.adaptive:
+                raise ValueError("Stage: installation=AveragedInstallation(...) needs fixed sub-chain parameters, but the "
+                                 f"proposal {type(self.proposal).__name__} adapts; pin its step (e.g. "
+                                 "RandomWalk(scale=...), PCN(beta=...), Hamiltonian(step_size=...)) or set adaptive=False, "
+                                 "or use RandomisedInstallation")
+            if self.exact_step_probability > 0.0 and self.exact_step_proposal != "prior" \
+                    and self.exact_step_scale is None:
+                raise ValueError("Stage: installation=AveragedInstallation(...) needs fixed sub-chain parameters, but the "
+                                 "exact step's random walk adapts; set exact_step_proposal='prior' or a fixed "
+                                 "exact_step_scale")
 
     def _resolve_surrogate_model_updates(self) -> None:
         """
@@ -295,6 +378,26 @@ class Stage:
                              "at stage start; identity while fewer than 100 states have been seen)")
             else:
                 notes.append("exact_step_scale is not used (exact_step_probability=0)")
+        if self.algorithm == "DAMH" and self.exact_step_proposal == "prior":  # 2026-10-23, paper §6.5
+            if self.exact_step_probability > 0.0:
+                notes.append("exact_step_proposal='prior': the exact step proposes y ~ prior (independence sampler, "
+                             "stream seed0+5) and accepts with min{1, L(y)/L(x)}; nothing adapts; draws outside the "
+                             "prior bound are rejected unevaluated")
+            else:
+                notes.append("exact_step_proposal is not used (exact_step_probability=0)")
+        rule = self.installation
+        if isinstance(rule, RandomisedInstallation):  # 2026-10-23, paper §6.5
+            notes.append(f"installation: before outer iteration n+1 the newest received surrogate version is installed "
+                         f"with probability lambda_n = min(1, (n/{rule.n_lambda:g})^-{rule.a_lambda:g}) (coins from "
+                         "stream seed0+6); adaptive sub-chain parameters change only at installs")
+        elif isinstance(rule, AveragedInstallation):
+            box = "" if rule.weight_box is None else f", each version clipped to [-{rule.weight_box:g}, {rule.weight_box:g}]"
+            notes.append(f"installation: the running average of the received surrogate versions with gain "
+                         f"zeta_j = min(1, (j/{rule.j0})^-{rule.a_zeta:g}){box} is installed (averageable evaluators "
+                         "only, i.e. the neural network; others are installed unchanged)")
+            if self.proposal_needs_gradients():
+                notes.append("installation=AveragedInstallation with a Hamiltonian proposal: the paper's averaged rule "
+                             "covers sub-chains with a fixed proposal density only; RandomisedInstallation covers both")
         spec = self.proposal
         step_field = _proposals.STEP_FIELD.get(type(spec))
         if step_field is not None and getattr(spec, step_field) is None:

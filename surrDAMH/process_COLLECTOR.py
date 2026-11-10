@@ -250,6 +250,8 @@ def run_COLLECTOR(conf: Configuration, surrogate_updater: Updater, surrogate_del
     surrogate_test_csv_path = os.path.join(conf.output_dir, "sampling_output", "surrogate_quality_test.csv")
     surrogate_test_rows = []  # accumulate rows with unweighted and posterior-weighted metrics
     surrogate_update_index = 1 if evaluator_instance is not None else 0
+    if evaluator_instance is not None:
+        evaluator_instance.version = surrogate_update_index  # 2026-10-23: version id (Evaluator.version)
 
     # start-up handshake (WS8, finding 2.2): tell every sampler whether a surrogate evaluator can
     # be provided before any new snapshot arrives. A sampler whose first stage needs a surrogate
@@ -368,6 +370,7 @@ def run_COLLECTOR(conf: Configuration, surrogate_updater: Updater, surrogate_del
                 _check_evaluator_pickle_size(evaluator_instance, conf.max_buffer_size)
                 monitoring_evaluator = evaluator_instance  # update monitoring evaluator
                 surrogate_update_index += 1
+                evaluator_instance.version = surrogate_update_index  # 2026-10-23: version id (Evaluator.version)
 
                 if surrogate_test_data is not None:
                     try:

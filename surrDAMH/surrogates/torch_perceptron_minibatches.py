@@ -18,9 +18,22 @@ OutputNormalization = Literal["identity", "likelihood", "manual"]
 OUTPUT_NORMALIZATIONS: tuple[str, ...] = ("identity", "likelihood", "manual")
 
 
+def _validate_input_clip(input_clip):
+    """``None`` or a positive finite number (2026-10-23, paper §6.2); returns it as float or None."""
+    if input_clip is None:
+        return None
+    if (isinstance(input_clip, bool) or not isinstance(input_clip, (int, float, np.floating, np.integer))
+            or not np.isfinite(input_clip) or input_clip <= 0):
+        raise ValueError(f"input_clip must be None or a positive finite number, got {input_clip!r}")
+    return float(input_clip)
+
+
 class PyTorchMLP(nn.Module):
-    def __init__(self, input_size, output_size, hidden_layers, activation, seed):
+    def __init__(self, input_size, output_size, hidden_layers, activation, seed, input_clip=None):
         super().__init__()
+        # input_clip (2026-10-23, paper §6.2): fixed componentwise clip of the input to
+        # [-b, b] before the first layer; None = no clipping (forward pass unchanged).
+        self.input_clip = _validate_input_clip(input_clip)
         self.input_size = input_size
         self.output_size = output_size
         self.hidden_layers = tuple(hidden_layers)
@@ -58,6 +71,10 @@ class PyTorchMLP(nn.Module):
                     torch.cuda.set_rng_state_all(cuda_rng_state)
 
     def forward(self, x):
+        # getattr guard: models pickled before input_clip existed have no such attribute
+        b = getattr(self, "input_clip", None)
+        if b is not None:
+            x = torch.clamp(x, -b, b)
         return self.network(x)
 
     @staticmethod
@@ -108,12 +125,15 @@ class PyTorchNNEvaluator(Evaluator):
         apply_desired_torch_threads_lazy()
 
     def clone_model_to_cpu(self, model):
+        # input_clip (2026-10-23, paper §6.2): the clone clips too; jacobian/vjp differentiate
+        # through self.model(x), so the gradient is exactly 0 in a clipped coordinate (|x_k| > b).
         model_clone = model.__class__(
             model.input_size,
             model.output_size,
             model.hidden_layers,
             model.activation,
             seed=None,
+            input_clip=getattr(model, "input_clip", None),
         )
         model_clone.load_state_dict(model.state_dict())
         return model_clone.to("cpu").eval()
@@ -289,6 +309,12 @@ class NeuralNetworkUpdater(Updater):
 
         hidden_layer_sizes: widths of the hidden layers, e.g. ``(64, 64)``.
         activation: hidden-layer activation function.
+        input_clip: ``None`` (default, no clipping) or ``b > 0``: clip every input coordinate to
+            ``[-b, b]`` before the first layer (fixed map, applied in training and prediction
+            alike, so the installed network is bounded and Lipschitz in its weights uniformly in
+            ``x``; the box must enclose the region the chain visits; inputs are in the chain's
+            internal space, standard-normal units for Gaussian priors, so a value like 8 is
+            generous) (2026-10-23, paper §6.2).
         seed: seeds the weight initialisation and the minibatch/replay sampling; ``None`` =
             not reproducible.
 
@@ -335,6 +361,7 @@ class NeuralNetworkUpdater(Updater):
         hidden_layer_sizes: tuple[int, ...] = (100,),
         activation: Literal["silu", "relu", "tanh", "gelu", "elu", "leaky_relu", "identity"] = "silu",
         seed: int | None = None,
+        input_clip: float | None = None,
         # --- training ---
         solver: Literal["adamw", "adam", "lbfgs"] = "adamw",
         learning_rate: float = 1e-3,
@@ -361,6 +388,7 @@ class NeuralNetworkUpdater(Updater):
         apply_desired_torch_threads_lazy()
         super().__init__(no_parameters, no_observations, weighting=weighting)
         self.hidden_layer_sizes = tuple(hidden_layer_sizes)
+        self.input_clip = _validate_input_clip(input_clip)
         self.solver_name = solver.lower()
         self.activation_name = activation
         self.learning_rate_init = learning_rate
@@ -406,7 +434,8 @@ class NeuralNetworkUpdater(Updater):
         self._last_added_indices = np.empty((0,), dtype=np.int64)
         self._rng = np.random.default_rng(seed)
 
-        self.model = PyTorchMLP(no_parameters, no_observations, self.hidden_layer_sizes, activation, seed)
+        self.model = PyTorchMLP(no_parameters, no_observations, self.hidden_layer_sizes, activation, seed,
+                             input_clip=self.input_clip)
         self.model.to(self.device)
         self.optimizer = self._build_optimizer()
         self.criterion = nn.MSELoss(reduction="none")
@@ -491,6 +520,7 @@ class NeuralNetworkUpdater(Updater):
             "hidden_layer_sizes": tuple(self.hidden_layer_sizes),
             "solver": self.solver_name,
             "activation": self.activation_name,
+            "input_clip": self.input_clip,
             "learning_rate": self.learning_rate_init,
             "iterations_batch": self.iterations_batch,
             "loss_target": self.loss_target,
@@ -518,6 +548,7 @@ class NeuralNetworkUpdater(Updater):
             "hidden_layer_sizes",
             "solver",
             "activation",
+            "input_clip",  # a checkpoint without the key counts as None
             "batch_size",
         ):
             if checkpoint_hparams.get(key) != current[key]:

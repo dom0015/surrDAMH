@@ -16,7 +16,8 @@ import numpy.typing as npt
 
 from surrDAMH.distributions.normal import Normal
 from surrDAMH.distributions.parent import Distribution
-from surrDAMH.modules.error_model import corrected_likelihood, split_error_model_state
+from surrDAMH.installation import AveragedInstallation, RandomisedInstallation
+from surrDAMH.modules.error_model import ERROR_MODEL_STATE_KEYS, corrected_likelihood, split_error_model_state
 from surrDAMH.modules.algorithm_interfaces import (AlgorithmConfiguration,
                                                    EvaluatorProvider,
                                                    ObservationProvider,
@@ -25,7 +26,7 @@ from surrDAMH.modules.manifest import raw_data_columns, samples_columns
 from surrDAMH.modules.monitoring import SamplingOutputMonitor
 from surrDAMH.modules.proposals import BlockProposal, Proposal
 from surrDAMH.modules.posterior_statistics import PosteriorStatistics
-from surrDAMH.modules.seeds import ALGORITHM_SEED_OFFSET, EXACT_STEP_SEED_OFFSET
+from surrDAMH.modules.seeds import ALGORITHM_SEED_OFFSET, EXACT_STEP_SEED_OFFSET, INSTALLATION_SEED_OFFSET
 from surrDAMH.solvers import check_observations_shape
 from surrDAMH.stages import Stage
 
@@ -56,6 +57,27 @@ C3_NOTES_COLUMNS: tuple[str, ...] = ("tempered_skipped",)
 #: before the kernel choice is unused there). Every other stage's file -- also a ``Block`` stage's,
 #: pinned by ``test_fixed_block_runs_are_byte_identical_to_before_c2`` -- is unchanged; select by name.
 COMPONENT_SUBCHAIN_STATS_COLUMNS: tuple[str, ...] = ("component",)
+#: ``notes`` columns appended LAST (2026-10-23, paper §6.5) ONLY when ``Stage.installation`` is set:
+#: committed installs during the stage and versions received from the provider during the stage
+#: (both without the stage-start one); every other stage's file is unchanged.
+INSTALLATION_NOTES_COLUMNS: tuple[str, ...] = ("installations", "versions_received")
+#: header of ``installations/<stage>/rank%04d.csv`` (written only when ``Stage.installation`` is set):
+#: one row per committed install during the stage; ``collector_version`` = ``Evaluator.version`` of
+#: the installed evaluator (the collector's publication index; -1 when the evaluator has none)
+INSTALLATIONS_COLUMNS: tuple[str, ...] = ("iteration", "version", "collector_version")
+#: header of ``versions/<stage>/rank%04d.csv`` (written only when ``Stage.installation`` is set):
+#: one row per evaluator RECEIVED during the stage (installed or not), same columns
+VERSIONS_COLUMNS: tuple[str, ...] = ("iteration", "version", "collector_version")
+
+
+def _evaluator_version(evaluator) -> int:
+    """``Evaluator.version`` of a received evaluator as an int for the CSVs (2026-10-23); ``-1`` if
+    none, not a number, or not finite (a user evaluator may carry anything under that name)."""
+    try:
+        version = float(getattr(evaluator, "version", None))
+    except (TypeError, ValueError):
+        return -1
+    return int(version) if np.isfinite(version) else -1
 
 
 def check_initial_sample_in_box(prior: Distribution, parameters: npt.NDArray, chain: str) -> None:
@@ -186,7 +208,8 @@ class AlgorithmBase:
                  evaluator_provider: EvaluatorProvider | None = None, seed: int = 0,
                  initial_sample_is_carried_over: bool = False, exact_step_seed: int | None = None,
                  exact_proposal: Proposal | None = None,
-                 posterior_statistics: PosteriorStatistics | None = None) -> None:
+                 posterior_statistics: PosteriorStatistics | None = None,
+                 installation_seed: int | None = None) -> None:
         """
         ``seed`` seeds the acceptance stream (``seed0 + 2``). ``exact_step_seed`` (S2) seeds the
         stream of the DAMH exact-step choice and of the audit draws (``seed0 + 4``; default:
@@ -201,6 +224,11 @@ class AlgorithmBase:
         state once per OUTER iteration -- MH, DAMH delayed-acceptance and pre-rejected iterations,
         S2 exact steps -- after the accept/reject decision and BEFORE the proposal's ``adapt()``;
         an adaptive random walk built with the same object only reads it.
+
+        ``installation_seed`` (2026-10-23, paper §6.5) seeds the stream of the randomised-installation
+        coins (``seed0 + 6``; default: derived from ``seed`` like ``exact_step_seed``). Nothing is
+        drawn from it unless ``Stage.installation`` is a ``RandomisedInstallation``; then exactly one
+        uniform per outer iteration ``i >= 1`` (``_randomised_installation_step``).
         """
         self.stage = stage
         self.proposal = proposal
@@ -266,6 +294,27 @@ class AlgorithmBase:
         # the evaluator last RECEIVED from the provider (the installed one is its average when
         # polyak_averaging is on, the same object otherwise)
         self._last_received_evaluator = None
+        # Installation rules (2026-10-23, paper §6.5, Stage.installation). Creating the RandomState
+        # draws nothing; it is drawn from only under a RandomisedInstallation.
+        self.installation = getattr(stage, "installation", None)
+        self._randomised_rule = isinstance(self.installation, RandomisedInstallation)
+        if installation_seed is None:
+            installation_seed = int(seed) - ALGORITHM_SEED_OFFSET + INSTALLATION_SEED_OFFSET
+        self.installation_seed = int(installation_seed)
+        self._generator_install = np.random.RandomState(self.installation_seed)
+        # randomised rule: the newest RECEIVED, not yet installed evaluator, as (version, evaluator)
+        self._pending_candidate: tuple[int, Any] | None = None
+        # committed installs / evaluators received during the stage, both without the stage-start one
+        self.counter_installations = 0
+        self.counter_versions_received = 0
+        self._current_iteration = 0  # outer iteration in progress, for the installations rows
+        if self._randomised_rule:
+            # the adaptive sub-chain parameters change only at installs (paper §6.5 step (4)); the
+            # proposals keep running their recursions and apply them in apply_pending_adaptation()
+            for prop in (self.proposal, self.exact_proposal):
+                set_deferred = getattr(prop, "set_deferred_adaptation", None)
+                if set_deferred is not None:
+                    set_deferred(True)
         # S1 (2026-10-09), Stage.surrogate_error_model: the likelihood every SURROGATE log-likelihood
         # (and its gradient) of this stage uses. It is the exact likelihood object itself unless the
         # flag is on, the likelihood is a Normal and the installed evaluator carries an error_model;
@@ -289,6 +338,9 @@ class AlgorithmBase:
         self._observations_shape_checked = False  # C3, see _evaluate_sample
         self.monitor.set_header("samples", samples_columns(self.no_parameters))
         self.monitor.set_header("raw_data", raw_data_columns(self.no_parameters, self.no_observations))
+        if self.installation is not None:  # 2026-10-23: the files exist (header) whenever a rule is set
+            self.monitor(data_name="installations", row=list(INSTALLATIONS_COLUMNS), condition=self.stage.save_to_file)
+            self.monitor(data_name="versions", row=list(VERSIONS_COLUMNS), condition=self.stage.save_to_file)
         self._prepare_run()
         self._initialize_current_approximation()
 
@@ -618,9 +670,12 @@ class AlgorithmBase:
         # polyak_updates (S3, 2026-10-09) after them, also last
         # tempered_skipped (C3, 2026-10-12) only for a tempering proposal, so other files are unchanged
         tempering = bool(getattr(self.proposal, "tempering_on", False))
+        # installations, versions_received (2026-10-23) only under Stage.installation, last
+        rule = self.installation is not None
         self.monitor(data_name="notes", row=["accepted", "rejected", "pre-rejected", "sum", "seed", "out_of_bounds",
                                              *S2_NOTES_COLUMNS, *S3_NOTES_COLUMNS,
-                                             *(C3_NOTES_COLUMNS if tempering else ())],
+                                             *(C3_NOTES_COLUMNS if tempering else ()),
+                                             *(INSTALLATION_NOTES_COLUMNS if rule else ())],
                      condition=self.stage.save_to_file)
         no_all = self.counter_accepted + self.counter_rejected + self.counter_prerejected
         notes = [self.counter_accepted, self.counter_rejected, self.counter_prerejected, no_all, self.seed,
@@ -628,6 +683,8 @@ class AlgorithmBase:
                  self.counter_audited, self.counter_audit_hidden, self.counter_polyak_updates]
         if tempering:
             notes.append(int(self.proposal.tempered_skipped))
+        if rule:
+            notes += [self.counter_installations, self.counter_versions_received]
         self.monitor(data_name="notes", row=notes, condition=self.stage.save_to_file)
         self.monitor.close_files()
 
@@ -724,8 +781,22 @@ class AlgorithmBase:
         ``evaluator = candidate.with_averageable_state(average)``. ``_commit_evaluator`` makes it
         current; a refused candidate is simply not committed, so it advances neither ``k`` nor
         the average.
+
+        Averaged installation (2026-10-23, paper §6.5, ``Stage.installation=AveragedInstallation``):
+        the same, with the gain ``zeta = rule.gain(k)`` in place of ``1/k``,
+        ``average = previous + zeta * (state - previous)``, and, with ``rule.weight_box = omega``, the
+        MODEL part of the received state (not the error-model entries) clipped to
+        ``[-omega, omega]`` componentwise before averaging -- also for ``k = 1``, the stage-start
+        evaluator, which is the paper's ``theta-bar_0`` and is installed projected. The ``j``-th
+        RECEIVED version of the stage (``j = k - 1``) gets ``zeta_j = rule.gain(j)`` exactly as in
+        def:averaged; ``zeta_1 = 1``, so the first received version replaces the stage-start network.
+        This differs from the legacy flag, whose running mean ``/ k`` keeps the stage-start network in
+        with weight ``1/k``; the legacy expression is untouched. Under a ``RandomisedInstallation``
+        (or no rule) nothing is averaged.
         """
-        if not getattr(self.stage, "polyak_averaging", False):
+        rule = self.installation if isinstance(self.installation, AveragedInstallation) else None
+        legacy = bool(getattr(self.stage, "polyak_averaging", False))
+        if not legacy and rule is None:
             return candidate, None
         state = candidate.averageable_state()
         if state is not None and not self.error_model_enabled:
@@ -737,11 +808,16 @@ class AlgorithmBase:
         if state is None:
             if not self._polyak_note_emitted:
                 self._polyak_note_emitted = True
-                print(f"rank {self.rank_world}, stage {self.stage.name}: polyak_averaging is set, but "
+                setting = "polyak_averaging" if legacy else "installation=AveragedInstallation(...)"
+                print(f"rank {self.rank_world}, stage {self.stage.name}: {setting} is set, but "
                       f"{type(candidate).__name__} exposes no averageable_state(); its evaluators are installed "
                       "unchanged (no averaging in this stage)", flush=True)
             return candidate, None
         state = {name: np.asarray(value, dtype=np.float64) for name, value in state.items()}
+        if rule is not None and rule.weight_box is not None:
+            omega = rule.weight_box  # the weight box Theta_omega of the paper; error-model entries are not weights
+            state = {name: value if name in ERROR_MODEL_STATE_KEYS else np.clip(value, -omega, omega)
+                     for name, value in state.items()}
         previous = None if restart else self._polyak_average
         if previous is not None and (set(previous) != set(state)
                                      or any(previous[name].shape != state[name].shape for name in state)):
@@ -751,9 +827,13 @@ class AlgorithmBase:
         if previous is None:
             k = 1
             average = {name: value.copy() for name, value in state.items()}
-        else:
+        elif rule is None:
             k = self.counter_polyak_updates + 1
             average = {name: previous[name] + (state[name] - previous[name]) / k for name in previous}
+        else:
+            k = self.counter_polyak_updates + 1
+            zeta = rule.gain(k - 1)  # the (k-1)-th received version of the stage (paper def:averaged)
+            average = {name: previous[name] + zeta * (state[name] - previous[name]) for name in previous}
         return candidate.with_averageable_state(average), (k, average)
 
     def _commit_evaluator(self, candidate, evaluator, pending) -> None:
@@ -836,6 +916,11 @@ class AlgorithmBase:
             previous_evaluator = getattr(self, "surrogate_evaluator", None)
             candidate = self.evaluator_provider.get_evaluator()
             self.evaluator_provider.request_evaluator()
+            self.counter_versions_received += 1  # notes column only under Stage.installation (2026-10-23)
+            if self.installation is not None:  # averaged rule: one versions row per receipt
+                self.monitor(data_name="versions",
+                             row=[self._current_iteration, self.counter_versions_received, _evaluator_version(candidate)],
+                             condition=self.stage.save_to_file)
             # S3: with polyak_averaging the AVERAGED evaluator is what is checked and installed
             evaluator, pending = self._polyak_candidate(candidate)
             if not self._evaluator_is_finite(evaluator):
@@ -848,8 +933,73 @@ class AlgorithmBase:
                 # nothing better exists yet: install it anyway, as before
             self._commit_evaluator(candidate, evaluator, pending)
             self.counter_evaluator_refreshes += 1
+            self.counter_installations += 1
+            if self.installation is not None:  # averaged rule: one installations row per install
+                self.monitor(data_name="installations",
+                             row=[self._current_iteration, self.counter_versions_received, _evaluator_version(candidate)],
+                             condition=self.stage.save_to_file)
             return True
         return False
+
+    def _receive_pending_evaluator(self) -> None:
+        """
+        Randomised installation (2026-10-23, paper §6.5): poll the provider once and, if an evaluator
+        has arrived, take it into the buffer ``_pending_candidate`` (replacing an older pending one:
+        the chain keeps the NEWEST received) and re-request at once -- the protocol of
+        ``_refresh_surrogate_evaluator_if_needed`` (at most one outstanding request), with receiving
+        decoupled from installing.
+        """
+        if self.evaluator_provider is None or not self.evaluator_provider.evaluator_is_available():
+            return
+        candidate = self.evaluator_provider.get_evaluator()
+        self.evaluator_provider.request_evaluator()
+        self.counter_versions_received += 1
+        self._pending_candidate = (self.counter_versions_received, candidate)
+        self.monitor(data_name="versions",
+                     row=[self._current_iteration, self.counter_versions_received, _evaluator_version(candidate)],
+                     condition=self.stage.save_to_file)
+
+    def _randomised_installation_step(self, iteration: int) -> bool:
+        """
+        Top of outer iteration ``iteration`` under ``RandomisedInstallation`` (2026-10-23, paper
+        §6.5, def:randomised); returns whether an evaluator was installed.
+
+        Polls once (``_receive_pending_evaluator``). At ``iteration >= 1`` draws exactly ONE uniform
+        ``u`` from the installation stream (``seed0 + 6``) -- whether or not a version is pending --
+        and installs the pending one iff ``u < lambda_{iteration-1}`` (the paper's coin ``U_n`` drawn
+        after step ``n`` decides the index of step ``n + 1``). At iteration 0 nothing is drawn: the
+        stage-start install is the start index. An install is checked for finiteness as in
+        ``_refresh_surrogate_evaluator_if_needed`` (a non-finite candidate is dropped and nothing is
+        installed), then committed, the proposals' deferred adaptation is applied
+        (``apply_pending_adaptation()``, when they have it), the chain state's surrogate terms are
+        marked for re-scoring (``_surrogate_rescore_pending``: the next sub-chain re-scores it, and an
+        exact step pre-scores its proposal with the new surrogate), and one row
+        ``[iteration, version]`` is written to ``installations``.
+        """
+        self._receive_pending_evaluator()
+        if iteration < 1:
+            return False
+        u = self._generator_install.uniform()
+        if not u < self.installation.probability(iteration - 1) or self._pending_candidate is None:
+            return False
+        version, candidate = self._pending_candidate
+        self._pending_candidate = None
+        evaluator, pending = self._polyak_candidate(candidate)  # passes the candidate through (no averaging)
+        if not self._evaluator_is_finite(evaluator):
+            self.counter_nonfinite_evaluators += 1
+            self._warn_about_nonfinite_evaluator(installed_anyway=False)
+            return False
+        self._commit_evaluator(candidate, evaluator, pending)
+        self.counter_evaluator_refreshes += 1
+        self.counter_installations += 1
+        self._surrogate_rescore_pending = True
+        for prop in (self.proposal, self.exact_proposal):
+            apply_pending = getattr(prop, "apply_pending_adaptation", None)
+            if apply_pending is not None:
+                apply_pending()
+        self.monitor(data_name="installations", row=[iteration, version, _evaluator_version(candidate)],
+                     condition=self.stage.save_to_file)
+        return True
 
     def _evaluator_is_finite(self, evaluator) -> bool:
         """
@@ -939,7 +1089,11 @@ class Algorithm_MH(AlgorithmBase):  # initiated by SAMPLERs
         max_steps = min(self.stage.max_samples, self.stage.max_evaluations)
         refresh_gradient_surrogate = self._gradient_surrogate_refresh_is_enabled()
         for i in range(max_steps):
-            if refresh_gradient_surrogate and self._refresh_surrogate_evaluator_if_needed():
+            self._current_iteration = i
+            # under Stage.installation=RandomisedInstallation (2026-10-23) the once-per-iteration poll
+            # receives into a buffer and installs only on the coin
+            if refresh_gradient_surrogate and (self._randomised_installation_step(i) if self._randomised_rule
+                                               else self._refresh_surrogate_evaluator_if_needed()):
                 # only the proposal's gradient field changes; the acceptance test below uses
                 # the exact model only, so the chain remains exact for any surrogate (WS7)
                 self._install_gradient_functions()
@@ -1078,7 +1232,12 @@ class Algorithm_DAMH(AlgorithmBase):  # initiated by SAMPLERs
         # a re-scoring left pending by a sub-chain none of whose steps was evaluated (all
         # non-finite or out of bounds) is done now, so the cached surrogate terms of the chain
         # state always belong to the installed evaluator:
-        bool_evaluator_changed = self._refresh_surrogate_evaluator_if_needed() or self._surrogate_rescore_pending
+        # Under Stage.installation=RandomisedInstallation (2026-10-23) nothing is polled here: the
+        # install happens at the top of the outer iteration and only flags the re-scoring.
+        if self._randomised_rule:
+            bool_evaluator_changed = self._surrogate_rescore_pending
+        else:
+            bool_evaluator_changed = self._refresh_surrogate_evaluator_if_needed() or self._surrogate_rescore_pending
         for _ in range(self.stage.subchain_length):
             subchain_proposed = self._propose_new_sample(subchain_current.parameters)
             if not self._parameters_are_finite(subchain_proposed):
@@ -1156,6 +1315,13 @@ class Algorithm_DAMH(AlgorithmBase):  # initiated by SAMPLERs
         a point chosen independently of the surrogate) -- then with the exact model, and accepted
         with the exact likelihoods and priors (the acceptance stream as for every other
         decision). The evaluator is not polled here; the next sub-chain does that.
+
+        With ``Stage.exact_step_proposal="prior"`` (2026-10-23, paper §6.5) ``self.exact_proposal`` is a
+        ``prior_proposal.PriorIndependence``: the same code, the ratio is ``log L(y) - log L(x)``, and
+        ``adapt`` is a no-op. A prior draw outside the S0 prior box is rejected unevaluated (tag -3,
+        acceptance probability 0, one uniform drawn) exactly like a random-walk draw; the target is
+        the prior truncated to the box, so that is the MH kernel of the truncated target with the
+        untruncated prior as proposal.
         """
         assert self.exact_proposal is not None
         self.proposed = Sample(parameters=self.exact_proposal.propose_sample(self.current.parameters))
@@ -1230,6 +1396,11 @@ class Algorithm_DAMH(AlgorithmBase):  # initiated by SAMPLERs
                              "step's proposal (exact_proposal=..., built by the runners with "
                              "proposal_builder.build_exact_step_proposal)")
         for i in range(self.stage.max_samples):
+            self._current_iteration = i
+            if self._randomised_rule:
+                # 2026-10-23, paper §6.5: the installation coin, before the kernel choice, so that
+                # exact-step iterations get it too (one uniform per iteration i >= 1, own stream)
+                self._randomised_installation_step(i)
             self.proposal.choose_group()  # only for block proposal, does nothing for non-block proposal
             # S2: the "which kernel" draw; nothing is drawn from this stream when the field is 0
             if exact_step_probability > 0.0 and self._generator_exact.uniform() < exact_step_probability:

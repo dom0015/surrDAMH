@@ -24,6 +24,8 @@ Where to look for what:
 - ``surrDAMH.Stage``              -- one sampling stage (also ``surrDAMH.stages.Stage``)
 - ``surrDAMH.proposals``          -- proposal settings of a stage: ``RandomWalk``, ``PCN``,
   ``Hamiltonian``, ``Block``, ``Mixture``
+- ``surrDAMH.installation``       -- how a stage installs retrained surrogates (``Stage.installation``):
+  ``RandomisedInstallation``, ``AveragedInstallation`` (2026-10-23, paper §6.5)
 - ``surrDAMH.Solver``             -- base class for your forward model;
   ``surrDAMH.SolverSpec`` describes one that must be built in another process
 - ``surrDAMH.surrogates``         -- surrogate updaters (``PolynomialSklearnUpdater``,
@@ -38,7 +40,7 @@ Where to look for what:
 Documentation: ``docs/README.md``; runnable examples: ``toy_examples/``.
 """
 
-from . import (distributions, post_processing, proposals, solver_specification,
+from . import (distributions, installation, post_processing, proposals, solver_specification,
                solvers, stages, surrogates)
 from .configuration import Configuration
 from .distributions import Distribution
@@ -60,6 +62,6 @@ __all__ = [
     # reading a finished run
     "read_run", "RunData", "RunFormatError",
     # subpackages
-    "distributions", "proposals", "stages", "solvers", "solver_specification",
+    "distributions", "proposals", "installation", "stages", "solvers", "solver_specification",
     "surrogates", "post_processing", "runner_local",
 ]

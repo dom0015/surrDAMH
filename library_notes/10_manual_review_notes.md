@@ -1604,3 +1604,27 @@ complete; robust pre-rejects ~70 %, fast ~20 %; posterior means differ at the Mo
     notes column/print, `describe()` line, 22 tests, docs/CHANGELOG entries; ~1 h; untempered streams unchanged so the
     pinned-hash tests stay valid) or keep it as a documented, non-default option. Untested for both mechanisms: a
     likelihood informing many directions with a barrier between modes; d > 30.
+24. **Defensive-mixture exact step (2026-10-21; `35_defensive_mixture_exact_step_2026-10-21.md`; nothing implemented, author
+    does not plan it soon).** Replace `PCN(beta=1)` by an exact independence sampler with proposal `g = (1-a)p + a h`:
+    same containment guarantee as the prior step (bound `e^{B+}/((1-a)Z)`, no condition on `h`), but the exact
+    evaluations become useful (mode jumps, minorisation constant up to ~`a` where `h` fits). Differs from the three-kernel
+    mixture `Mixture([DAMH, PCN(beta=1), Independence(h)])` (separate acceptances; there `h` contributes nothing to
+    containment and needs no normalisation; `g` needs `h` normalised relative to `p` and keeps accepting where `h ~ 0`).
+    Needs an `Independence(density)` proposal spec and a `DefensiveMixture` density (~150-250 lines + tests).
+25. **Paper §6.5 mechanisms implemented (2026-10-23; `37_paper_mechanisms_implementation_2026-10-23.md`; CHANGELOG
+    "Additions"; uncommitted; flagged for the author's review).** `Stage(exact_step_proposal="prior")`,
+    `Stage(installation=RandomisedInstallation(n_lambda, a_lambda) | AveragedInstallation(j0, a_zeta, weight_box))`,
+    deferred sub-chain adaptation (`Proposal.set_deferred_adaptation` / `apply_pending_adaptation`, applied at
+    installs under the randomised rule), `NeuralNetworkUpdater(input_clip=b)`, seed stream `seed0 + 6`,
+    `installations/` CSV and two `notes` columns (only when a rule is set). All off by default; CSVs byte-identical
+    at defaults; `run_manifest.json` gains keys. Decisions the manager took, to revisit: (a) the install coin is drawn
+    at the top of every outer iteration i >= 1 BEFORE the S2 kernel choice (exact-step iterations included), so the
+    kernel of every step is the mixture; (b) `AveragedInstallation` follows Def 6.7 literally (stage-start network =
+    theta-bar_0, j-th RECEIVED version gets zeta_j; `AveragedInstallation(1, 1.0)` therefore differs from the legacy
+    `polyak_averaging=True`, which keeps the start network in its mean; the two are refused together, the legacy flag
+    is unchanged); (c) `AveragedInstallation` + Hamiltonian proposal allowed with a `describe()` note (paper covers
+    density sub-chains only); (d) `Auto` still uses the S2 random walk + legacy Polyak -- switching its production
+    chunks to the paper's step (prior step + randomised rule) is the author's call; (e) `exact_step_proposal="prior"`
+    + `exact_step_scale` raises also on an MH stage (treated as a user error, not reset). Not verified: a real
+    NN-collector run where versions arrive faster than the coin (the MPI test installed 101/101 received versions);
+    efficiency of any of it (paper §8). Section 6.5 of the paper rewritten to the interface (PLAN.md 2026-10-23).

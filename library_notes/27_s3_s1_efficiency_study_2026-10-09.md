@@ -286,7 +286,12 @@ integrator="dimension_robust", mass=1.0)`, sub-chain 1; (c) = (b) with `polyak_a
    * S2 weights (0.05/0.05) were not varied in this study; nothing to recommend from it.
    * The robust mode's layout is the larger issue than either flag: on P2 it reaches only 0.015–0.021
      ESS/eval (≈ MH's 0.015), while the same random walk with sub-chain length 20 reaches 0.139 (6.8×); the
-     fast mode reaches 0.66–0.70 (~34×). Auto fast beats the best manual Hamiltonian setting by 1.15× per
+     fast mode reaches 0.66–0.70 (~34×). *(Added 2026-10-19: the layout rule "sub-chain length 1" in note 25 §5 was
+     adopted because sub-chain proposals adapted on the outer acceptance and over-scaled at long sub-chains;
+     S6 has since fixed that, so the rule's original reason is gone. The remaining reasons for 1 are robustness
+     to surrogate error (local moves) and surrogate cost; note 26 §5 gives the cost rule `K* = argmax
+     (1 − ρ^K)/(R + K)` with `R = c_exact / c_traj`, which on this 0.2 ms model would still give K = 1 for a
+     Hamiltonian trajectory but K ≈ 20 for a random-walk step, consistent with this table.)* Auto fast beats the best manual Hamiltonian setting by 1.15× per
      exact evaluation of the whole budget (0.699 vs 0.609; its warm-up is 400 instead of 2 000 per chain),
      while per DAMH-stage evaluation the manual stage is ahead (0.94 vs 0.77, §5).
 4. Open, not checked here: the expensive-model regime (many more network installs per evaluation, where S3

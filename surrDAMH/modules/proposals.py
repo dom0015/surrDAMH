@@ -207,6 +207,53 @@ class Proposal:
         """
         return {}
 
+    # -- deferred adaptation (2026-10-23, paper §6.5) -----------------------------------
+    def set_deferred_adaptation(self, deferred: bool) -> None:
+        """
+        Switch deferred adaptation on or off (2026-10-23, paper §6.5, "One step of the
+        production stage", step (4)).
+
+        In deferred mode the parameters an adaptive proposal actually proposes with (its LIVE
+        parameters) change only at :meth:`apply_pending_adaptation` (= an installation), and
+        the acceptance-FEEDBACK recursion (Robbins-Monro scale / logit, dual averaging) advances
+        ONCE per installation, on the mean acceptance probability ``adapt()`` gathered since the
+        previous one: the recursion's index counts installations, so the adaptation is
+        closed-loop at the installation time scale (a per-sub-step recursion fed by acceptances
+        of frozen parameters would be open-loop and run off, 2026-10-23 smoke run). State-based
+        estimates (the random walk's covariance shape) and the ``adaptation_stats`` periods keep
+        following ``adapt()``. Switching it off applies once (with the gathered acceptances)
+        and returns to the default behaviour.
+
+        Base implementation: a fixed proposal has nothing to defer, so this does nothing.
+        """
+
+    def apply_pending_adaptation(self) -> bool:
+        """
+        Install the recursion's current values as the live parameters (deferred mode only,
+        2026-10-23, paper §6.5); returns ``True`` iff the live parameters changed.
+
+        Base implementation: a fixed proposal has nothing pending, returns ``False``.
+        """
+        return False
+
+    # accumulator of the acceptance probabilities gathered between installations (deferred mode)
+    _deferred_alpha_sum: float = 0.0
+    _deferred_alpha_count: int = 0
+    _deferred_index: int = 0  # installations that advanced the feedback recursion
+
+    def _gather_deferred_alpha(self, alpha: float) -> None:
+        self._deferred_alpha_sum += alpha
+        self._deferred_alpha_count += 1
+
+    def _take_deferred_mean_alpha(self) -> float | None:
+        """Mean of the gathered acceptance probabilities (``None`` if none), accumulator reset."""
+        if self._deferred_alpha_count == 0:
+            return None
+        mean_alpha = self._deferred_alpha_sum / self._deferred_alpha_count
+        self._deferred_alpha_sum = 0.0
+        self._deferred_alpha_count = 0
+        return mean_alpha
+
 
 class GaussRandomWalk(Proposal):  # initiated by SAMPLERs
     """Symmetric Gaussian random-walk proposal (no prior assumption): ``x' = x + N(0, sd_or_cov)``."""
@@ -378,11 +425,24 @@ class GaussRandomWalk_adaptive(GaussRandomWalk):  # initiated by SAMPLERs
     ``set_pooled_state()`` exchange only the effective log-scale (averaged), and with several
     rows ``set_pooled_state`` re-installs the shape from the (already pooled) statistics.
     ``n_scale`` is not pooled.
+
+    Deferred adaptation (2026-10-23, paper §6.5; ``set_deferred_adaptation``): the live pair
+    ``(_live_log_sigma, _live_L)`` changes only at ``apply_pending_adaptation``, which makes ONE
+    Robbins-Monro step ``log_sigma += j**(-0.7) * (mean alpha - target_rate)`` on the acceptance
+    probabilities gathered since the previous installation, ``j`` counting installations
+    (closed-loop at the installation time scale); the shape install stays per period.
     """
 
     #: column names of ``adaptive_stats/<stage>/rank%04d.csv`` (see docs/outputs.md)
     adaptation_stats_header = ["n", "mean_acceptance_probability", "log_sigma",
                               "trace_C_over_d", "shrinkage_delta"]
+
+    #: deferred adaptation (2026-10-23, paper §6.5): ``True`` = ``propose_sample`` draws with the
+    #: live pair ``(_live_log_sigma, _live_L)``, changed only by ``apply_pending_adaptation``, and
+    #: ``log_sigma`` makes ONE Robbins-Monro step per installation, ``log_sigma += j**(-0.7) *
+    #: (mean alpha since the last installation - target_rate)``, ``j = _deferred_index`` counting
+    #: installations; the covariance shape is still installed at ``adapt()`` period boundaries
+    _deferred_adaptation: bool = False
 
     def __init__(self, no_parameters: int, sd_or_cov: npt.ArrayLike = 1.0, seed: int = 0,
                  target_rate: float = 0.234, period: int = 10, warmup: int = 100,
@@ -475,19 +535,73 @@ class GaussRandomWalk_adaptive(GaussRandomWalk):  # initiated by SAMPLERs
 
     def propose_sample(self, current_sample: npt.NDArray) -> npt.NDArray:
         z = self._generator.standard_normal(self.no_parameters)
+        if self._deferred_adaptation:
+            return current_sample + np.exp(self._live_log_sigma) * (self._live_L @ z)
         return current_sample + np.exp(self.log_sigma) * (self.L @ z)
+
+    # -- deferred adaptation (2026-10-23, paper §6.5) -----------------------------------
+    def set_deferred_adaptation(self, deferred: bool) -> None:
+        """See ``Proposal.set_deferred_adaptation``. The live parameters are the pair
+        ``(_live_log_sigma, _live_L)``; ``log_sigma``, ``L``, ``base_cov`` and ``sd_or_cov`` keep
+        following the recursion (so in deferred mode ``sd_or_cov`` is the RECURSION's covariance,
+        not the one drawn with -- see :attr:`live_covariance`). ``adapted_state``,
+        ``set_pooled_state``, ``carry_over`` and ``adapted_summary`` operate on the recursion."""
+        if deferred and not self._deferred_adaptation:
+            self._take_deferred_mean_alpha()  # start with an empty accumulator
+            self._install_live()
+            self._deferred_adaptation = True
+        elif not deferred and self._deferred_adaptation:
+            self.apply_pending_adaptation()
+            self._deferred_adaptation = False
+
+    def _install_live(self) -> bool:
+        changed = bool(getattr(self, "_live_log_sigma", None) != self.log_sigma
+                       or not np.array_equal(getattr(self, "_live_L", None), self.L))
+        self._live_log_sigma = self.log_sigma
+        self._live_L = self.L.copy()
+        return changed
+
+    def apply_pending_adaptation(self) -> bool:
+        """One Robbins-Monro step of ``log_sigma`` on the mean acceptance probability gathered
+        since the last installation (if any), then ``(log_sigma, L)`` -> the live pair (deferred
+        mode only, 2026-10-23, paper §6.5); ``True`` iff the live pair changed."""
+        if not self._deferred_adaptation:
+            return False
+        mean_alpha = self._take_deferred_mean_alpha()
+        if mean_alpha is not None:
+            self._deferred_index += 1
+            self.log_sigma += self._deferred_index ** (-0.7) * (mean_alpha - self.target_rate)
+            self._update_public_covariance()
+        return self._install_live()
+
+    @property
+    def live_covariance(self) -> npt.NDArray:
+        """Diagnostic (2026-10-23, paper §6.5): the covariance ``propose_sample`` actually draws
+        with, ``exp(2 log_sigma) L L^T`` of the live pair in deferred mode (of the recursion
+        otherwise, where it equals ``sd_or_cov`` up to rounding)."""
+        if self._deferred_adaptation:
+            return np.exp(2.0 * self._live_log_sigma) * (self._live_L @ self._live_L.T)
+        return np.exp(2.0 * self.log_sigma) * (self.L @ self.L.T)
 
     # -- adaptation ---------------------------------------------------------------------
     def adapt(self, proposed_sample: npt.NDArray, log_acceptance_probability: float,
               current_sample: npt.NDArray,
               subchain_log_acceptance_probabilities: list[float] | None = None) -> None:
-        # scale: one Robbins-Monro step per acceptance probability of THIS proposal's own moves
-        for alpha in _own_acceptance_probabilities(log_acceptance_probability,
-                                                   subchain_log_acceptance_probabilities):
-            self.n_scale += 1
-            self.log_sigma += self.n_scale ** (-0.7) * (alpha - self.target_rate)
-            self._period_alpha_sum += alpha
-            self._period_alpha_count += 1
+        if self._deferred_adaptation:
+            # deferred (2026-10-23): gather only; the scale steps once per installation
+            for alpha in _own_acceptance_probabilities(log_acceptance_probability,
+                                                       subchain_log_acceptance_probabilities):
+                self._gather_deferred_alpha(alpha)
+                self._period_alpha_sum += alpha
+                self._period_alpha_count += 1
+        else:
+            # scale: one Robbins-Monro step per acceptance probability of THIS proposal's own moves
+            for alpha in _own_acceptance_probabilities(log_acceptance_probability,
+                                                       subchain_log_acceptance_probabilities):
+                self.n_scale += 1
+                self.log_sigma += self.n_scale ** (-0.7) * (alpha - self.target_rate)
+                self._period_alpha_sum += alpha
+                self._period_alpha_count += 1
         self.n += 1
 
         # Welford update of the POST-decision chain state: done here only for a private object;
@@ -594,6 +708,10 @@ class GaussRandomWalk_adaptive(GaussRandomWalk):  # initiated by SAMPLERs
             self.log_sigma = pooled_effective_log_scale - 0.5 * np.log(float(np.trace(self.base_cov)))
         # single row: this chain's own log_sigma and base_cov are kept exactly as they are
         self._refactor()
+        if self._deferred_adaptation:
+            # stage over: live = pooled recursion, gathered acceptances dropped (2026-10-23)
+            self._take_deferred_mean_alpha()
+            self._install_live()
 
     def carry_over(self) -> dict:
         """Stage fields this adapted proposal hands to the following stages."""
@@ -630,9 +748,19 @@ class PCN_adaptive(PCN):
     acceptance probabilities of the sub-chain, which are this proposal's own; the outer DAMH
     acceptance is reported, not targeted. ``n`` (outer iterations) keys the ``adaptation_stats``
     rows, whose ``mean_acceptance_probability`` is the mean of the period's ``alphas``.
+
+    Deferred adaptation (2026-10-23, paper §6.5): ``beta`` changes only at
+    ``apply_pending_adaptation``, which makes ONE step ``logit_beta += j**(-0.7) * (mean alpha -
+    target_rate)``, ``j`` counting installations.
     """
 
     adaptation_stats_header = ["n", "mean_acceptance_probability", "beta"]
+
+    #: deferred adaptation (2026-10-23, paper §6.5): ``True`` = ``adapt()`` only gathers the
+    #: acceptance probabilities; ``apply_pending_adaptation`` makes ONE Robbins-Monro step
+    #: ``logit_beta += j**(-0.7) * (mean alpha - target_rate)`` (``j = _deferred_index`` counts
+    #: installations) and installs the live ``beta``
+    _deferred_adaptation: bool = False
 
     def __init__(self, no_parameters: int, beta: float, prior_mean: npt.NDArray,
                  prior_sd_or_cov: npt.ArrayLike, seed: int = 0,
@@ -653,27 +781,67 @@ class PCN_adaptive(PCN):
     def adapt(self, proposed_sample: npt.NDArray, log_acceptance_probability: float,
               current_sample: npt.NDArray,
               subchain_log_acceptance_probabilities: list[float] | None = None) -> None:
-        for alpha in _own_acceptance_probabilities(log_acceptance_probability,
-                                                   subchain_log_acceptance_probabilities):
-            self.n_scale += 1
-            self.logit_beta += self.n_scale ** (-0.7) * (alpha - self.target_rate)
-            self._period_alpha_sum += alpha
-            self._period_alpha_count += 1
+        if self._deferred_adaptation:
+            # deferred (2026-10-23): gather only; the logit steps once per installation
+            for alpha in _own_acceptance_probabilities(log_acceptance_probability,
+                                                       subchain_log_acceptance_probabilities):
+                self._gather_deferred_alpha(alpha)
+                self._period_alpha_sum += alpha
+                self._period_alpha_count += 1
+        else:
+            for alpha in _own_acceptance_probabilities(log_acceptance_probability,
+                                                       subchain_log_acceptance_probabilities):
+                self.n_scale += 1
+                self.logit_beta += self.n_scale ** (-0.7) * (alpha - self.target_rate)
+                self._period_alpha_sum += alpha
+                self._period_alpha_count += 1
         self.n += 1
-        self._set_beta_from_logit()
+        if self._deferred_adaptation:
+            recursion_beta = self._beta_from_logit()  # recorded, not installed (2026-10-23)
+        else:
+            self._set_beta_from_logit()
+            recursion_beta = self.beta
         if self.n % self.period == 0:
             self.adaptation_stats_rows.append((
-                self.n, self._period_alpha_sum / max(self._period_alpha_count, 1), self.beta))
+                self.n, self._period_alpha_sum / max(self._period_alpha_count, 1), recursion_beta))
             self._period_alpha_sum = 0.0
             self._period_alpha_count = 0
 
-    def _set_beta_from_logit(self) -> None:
+    def _beta_from_logit(self) -> float:
         # numerically stable sigmoid: never 0 or 1 for a finite logit
         if self.logit_beta >= 0.0:
-            self.beta = 1.0 / (1.0 + float(np.exp(-self.logit_beta)))
-        else:
-            exponential = float(np.exp(self.logit_beta))
-            self.beta = exponential / (1.0 + exponential)
+            return 1.0 / (1.0 + float(np.exp(-self.logit_beta)))
+        exponential = float(np.exp(self.logit_beta))
+        return exponential / (1.0 + exponential)
+
+    def _set_beta_from_logit(self) -> None:
+        self.beta = self._beta_from_logit()
+
+    # -- deferred adaptation (2026-10-23, paper §6.5) -----------------------------------
+    def set_deferred_adaptation(self, deferred: bool) -> None:
+        """See ``Proposal.set_deferred_adaptation``. The live parameter is ``beta``; the
+        recursion is ``logit_beta`` (``adapted_state``, ``set_pooled_state``, ``carry_over`` and
+        ``adapted_summary`` follow the recursion)."""
+        if deferred and not self._deferred_adaptation:
+            self._take_deferred_mean_alpha()  # start with an empty accumulator
+        if not deferred and self._deferred_adaptation:
+            self.apply_pending_adaptation()
+        self._deferred_adaptation = bool(deferred)
+
+    def apply_pending_adaptation(self) -> bool:
+        """One Robbins-Monro step of ``logit_beta`` on the mean acceptance probability gathered
+        since the last installation (if any), then ``beta = sigmoid(logit_beta)`` (deferred mode
+        only, 2026-10-23, paper §6.5); ``True`` iff ``beta`` changed."""
+        if not self._deferred_adaptation:
+            return False
+        mean_alpha = self._take_deferred_mean_alpha()
+        if mean_alpha is None:
+            return False
+        self._deferred_index += 1
+        self.logit_beta += self._deferred_index ** (-0.7) * (mean_alpha - self.target_rate)
+        previous = self.beta
+        self._set_beta_from_logit()
+        return bool(self.beta != previous)
 
     def adapted_state(self) -> npt.NDArray:
         return np.array([float(self.n), float(self.logit_beta)])
@@ -685,12 +853,17 @@ class PCN_adaptive(PCN):
             raise ValueError(f"expected adapted-state rows of length 2, got {states.shape}")
         self.logit_beta = float(states[:, 1].mean())
         self._set_beta_from_logit()
+        self._take_deferred_mean_alpha()  # stage over: gathered acceptances dropped (2026-10-23)
 
     def carry_over(self) -> dict:
+        if self._deferred_adaptation:
+            return {"beta": self._beta_from_logit()}  # the recursion's value (2026-10-23)
         return {"beta": self.beta}  # key = PCN.beta (2026-09-21)
 
     def adapted_summary(self) -> dict:
         """Diagnostic-only snapshot (see ``Proposal.adapted_summary``)."""
+        if self._deferred_adaptation:
+            return {"beta": float(self._beta_from_logit())}
         return {"beta": float(self.beta)}
 
 
@@ -1090,10 +1263,20 @@ class _DualAveragingStepSize:
     restart at ``mu = log(10 eps0)``); after a larger change it starts a fresh recursion
     (:meth:`restart_recursion`) from the carried step size rescaled to the new mass, with the small
     restart offset ``DA_RESTART_FACTOR`` (``proposal_builder``).
+
+    Deferred adaptation (2026-10-23, paper §6.5): ``adapt()`` only gathers the acceptance
+    probabilities and ``apply_pending_adaptation`` makes ONE update on their mean, so ``m`` (and
+    the gain ``m**(-kappa)``, the ``sqrt(m)`` factor) counts installations.
     """
 
     adaptation_stats_header = ["m", "mean_acceptance_probability", "log_step_size",
                               "log_step_size_bar"]
+
+    #: deferred adaptation (2026-10-23, paper §6.5): ``True`` = ``adapt()`` only gathers the
+    #: acceptance probabilities; ``apply_pending_adaptation`` makes ONE ``_dual_averaging_update``
+    #: on their mean (so ``m`` counts installations) and thereby installs the live ``step_size``
+    #: (and ``num_steps`` derived from it with ``integration_time``)
+    _deferred_adaptation: bool = False
 
     def __init__(self, *args, target_rate: float = 0.8, gamma: float = 0.05, t0: float = 10.0,
                  kappa: float = 0.75, period: int = 10, **kwargs) -> None:
@@ -1148,6 +1331,11 @@ class _DualAveragingStepSize:
             log_probabilities = [log_acceptance_probability]
         else:
             log_probabilities = list(subchain_log_acceptance_probabilities)
+        if self._deferred_adaptation:
+            # deferred (2026-10-23): gather only; one update per installation
+            for log_probability in log_probabilities:
+                self._gather_deferred_alpha(acceptance_probability(log_probability))
+            return
         for log_probability in log_probabilities:
             self._dual_averaging_update(acceptance_probability(log_probability))
 
@@ -1190,6 +1378,35 @@ class _DualAveragingStepSize:
         self._pooled_recursion = [float(value) for value in states.mean(axis=0)]
         self._pooled_recursion[2] = self.log_eps_bar
         self.set_step_size(np.exp(self.log_eps_bar))
+        self._take_deferred_mean_alpha()  # stage over: gathered acceptances dropped (2026-10-23)
+
+    # -- deferred adaptation (2026-10-23, paper §6.5) -----------------------------------
+    def set_deferred_adaptation(self, deferred: bool) -> None:
+        """See ``Proposal.set_deferred_adaptation``. The live parameters are ``step_size`` and,
+        with ``integration_time``, ``num_steps``; the recursion (``m``, ``H_bar``,
+        ``log_eps_bar``, ``mu``) advances once per installation, ``m`` counting installations
+        (and keying the ``adaptation_stats`` rows, each the mean of ``period`` installations'
+        mean acceptance probabilities); ``adapted_state``, ``set_pooled_state``, ``carry_over``
+        and ``adapted_summary`` use it unchanged."""
+        if deferred and not self._deferred_adaptation:
+            self._take_deferred_mean_alpha()  # start with an empty accumulator
+        if not deferred and self._deferred_adaptation:
+            self.apply_pending_adaptation()
+        self._deferred_adaptation = bool(deferred)
+
+    def apply_pending_adaptation(self) -> bool:
+        """ONE ``_dual_averaging_update`` on the mean acceptance probability gathered since the
+        last installation, which sets the live step (deferred mode only, 2026-10-23, paper §6.5);
+        ``False`` without any gathered acceptance, else ``True`` iff the step size or
+        ``num_steps`` changed."""
+        if not self._deferred_adaptation:
+            return False
+        mean_alpha = self._take_deferred_mean_alpha()
+        if mean_alpha is None:
+            return False
+        previous = (self.step_size, self.num_steps)  # type: ignore[attr-defined]
+        self._dual_averaging_update(mean_alpha)
+        return bool((self.step_size, self.num_steps) != previous)  # type: ignore[attr-defined]
 
     def carry_over(self) -> dict:
         """``step_size`` (key = ``Hamiltonian.step_size``, 2026-09-21), plus (C1) the recursion
@@ -1430,6 +1647,16 @@ class BlockProposal(Proposal):
         for k in self._adaptive_components:
             merged.update(self.list_of_proposals[k].carry_over())
         return merged
+
+    def set_deferred_adaptation(self, deferred: bool) -> None:
+        """Forward to every component (2026-10-23, paper §6.5)."""
+        for proposal in self.list_of_proposals:
+            proposal.set_deferred_adaptation(deferred)
+
+    def apply_pending_adaptation(self) -> bool:
+        """Forward to every component; ``True`` iff any component's live parameters changed."""
+        changed = [proposal.apply_pending_adaptation() for proposal in self.list_of_proposals]
+        return any(changed)
 
     def adapted_summary(self) -> dict:
         """``{"component<k>.<key>": value}`` of every component's ``adapted_summary()``."""

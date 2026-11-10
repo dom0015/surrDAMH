@@ -27,6 +27,7 @@ from surrDAMH.distributions.normal import Normal, StandardizedNormal
 from surrDAMH.distributions.parent import Distribution
 from surrDAMH.modules import proposals
 from surrDAMH.modules.posterior_statistics import MASS_MIN_STATES, PosteriorStatistics
+from surrDAMH.modules.prior_proposal import PriorIndependence
 from surrDAMH.modules.proposals import Proposal
 from surrDAMH.proposals import PCN, STEP_FIELD, Block, Hamiltonian, Mixture, RandomWalk
 from surrDAMH.stages import Stage
@@ -423,7 +424,7 @@ def build_proposal(stage: Stage, conf: "Configuration", prior: Distribution, see
 def build_exact_step_proposal(conf: "Configuration", prior: Distribution, seed: int,
                               carried: dict | None = None, stage_index: int | None = None,
                               statistics: PosteriorStatistics | None = None,
-                              scale: float | None = None) -> Proposal:
+                              scale: float | None = None, kind: str = "random_walk") -> Proposal:
     """
     The exact step's own proposal of a DAMH stage with ``Stage.exact_step_probability > 0``
     (S2, 2026-10-09): the spec ``RandomWalk()`` -- adaptive, starting from the carried
@@ -448,7 +449,19 @@ def build_exact_step_proposal(conf: "Configuration", prior: Distribution, seed: 
     else the identity with a printed note. Same ``seed``. The proposal carries a ``resolution`` dict
     (``exact_step_scale``, ``exact_step_covariance_source``, ``exact_step_covariance_trace``).
     ``scale=None``: the adaptive random walk above (unchanged).
+
+    Prior proposal (``Stage.exact_step_proposal``, 2026-10-23, paper §6.5): ``kind="prior"`` returns
+    a ``prior_proposal.PriorIndependence`` (independence sampler ``y ~ prior`` in the internal space,
+    acceptance ``min{1, L(y)/L(x)}``, nothing adapts) seeded with the same ``seed``; ``carried`` and
+    ``statistics`` are not used, and ``scale`` must be ``None`` (``Stage`` refuses the combination).
+    ``kind="random_walk"`` (default) is everything above, unchanged.
     """
+    if kind == "prior":
+        if scale is not None:
+            raise ValueError("build_exact_step_proposal: kind='prior' takes no scale (exact_step_scale must be None)")
+        return PriorIndependence(prior, no_parameters=int(conf.no_parameters), seed=seed)
+    if kind != "random_walk":
+        raise ValueError(f"build_exact_step_proposal: kind must be 'random_walk' or 'prior', got {kind!r}")
     if scale is not None:
         d = int(conf.no_parameters)
         factor = float(scale) * 2.38 ** 2 / d

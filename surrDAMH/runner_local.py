@@ -51,7 +51,7 @@ from surrDAMH.modules.manifest import (build_run_manifest, finalize_run_manifest
                                        write_run_manifest)
 from surrDAMH.modules.proposal_builder import build_exact_step_proposal, build_proposal
 from surrDAMH.modules.seeds import (EXACT_PROPOSAL_SEED_OFFSET, EXACT_STEP_SEED_OFFSET,
-                                    conf_seed_offset, initial_sample_seed, seed_no_stages,
+                                    INSTALLATION_SEED_OFFSET, conf_seed_offset, initial_sample_seed, seed_no_stages,
                                     stage_seed0)
 from surrDAMH.modules.torch_threads import apply_torch_threads
 from surrDAMH.solvers import Solver
@@ -81,6 +81,10 @@ class StageResult:
     counter_audit_hidden: int = 0
     # S3 (2026-10-09): evaluators averaged into the installed one (Stage.polyak_averaging), 0 when off
     counter_polyak_updates: int = 0
+    # 2026-10-23 (Stage.installation): committed installs / versions received during the stage
+    # (both without the stage-start one); 0 when no rule is set
+    counter_installations: int = 0
+    counter_versions_received: int = 0
 
 
 @dataclass
@@ -247,13 +251,15 @@ def run_local(conf: Configuration, prior: Distribution, likelihood: Distribution
         posterior_statistics.begin_stage()  # as in process_SAMPLER
         proposal = build_proposal(stage=stage, conf=conf, prior=prior, seed=seed0+1,
                                   carried=carried, stage_index=i_global, statistics=posterior_statistics)
-        # S2: the exact step's own random walk (seed0 + 5), only when the stage uses it
+        # S2: the exact step's own random walk (seed0 + 5), only when the stage uses it; or its prior
+        # proposal (Stage.exact_step_proposal="prior", 2026-10-23) on the same stream
         exact_proposal = None
         if stage.algorithm == "DAMH" and stage.exact_step_probability > 0.0:
             exact_proposal = build_exact_step_proposal(conf=conf, prior=prior, seed=seed0 + EXACT_PROPOSAL_SEED_OFFSET,
                                                        carried=carried, stage_index=i_global,
                                                        statistics=posterior_statistics,
-                                                       scale=stage.exact_step_scale)
+                                                       scale=stage.exact_step_scale,
+                                                       kind=stage.exact_step_proposal)
 
         # choice of services for this stage (mirrors process_SAMPLER):
         snapshot_collector_stage = surrogate_manager if stage.send_snapshots_to_collector else None
@@ -286,7 +292,9 @@ def run_local(conf: Configuration, prior: Distribution, likelihood: Distribution
                                  initial_sample_is_carried_over=initial_sample_is_carried_over,
                                  exact_step_seed=seed0 + EXACT_STEP_SEED_OFFSET,
                                  exact_proposal=exact_proposal,
-                                 posterior_statistics=posterior_statistics)
+                                 posterior_statistics=posterior_statistics,
+                                 # 2026-10-23: coins of Stage.installation=RandomisedInstallation
+                                 installation_seed=seed0 + INSTALLATION_SEED_OFFSET)
         alg_instance.run()
 
         # C1: the "pooling" of the posterior statistics over one chain (the same stage-end code as
@@ -344,7 +352,11 @@ def run_local(conf: Configuration, prior: Distribution, likelihood: Distribution
                                                 counter_exact_accepted=alg_instance.counter_exact_accepted,
                                                 counter_audited=alg_instance.counter_audited,
                                                 counter_audit_hidden=alg_instance.counter_audit_hidden,
-                                                counter_polyak_updates=alg_instance.counter_polyak_updates))
+                                                counter_polyak_updates=alg_instance.counter_polyak_updates,
+                                                counter_installations=(alg_instance.counter_installations
+                                                                       if stage.installation is not None else 0),
+                                                counter_versions_received=(alg_instance.counter_versions_received
+                                                                           if stage.installation is not None else 0)))
         print("Stage", stage.name, "finished - acc/rej/prerej samples:", alg_instance.counter_accepted,
               alg_instance.counter_rejected, alg_instance.counter_prerejected,
               "- non-finite proposals:", alg_instance.counter_nonfinite_proposals,
@@ -353,6 +365,7 @@ def run_local(conf: Configuration, prior: Distribution, likelihood: Distribution
               f"- exact steps: {alg_instance.counter_exact_accepted}/{alg_instance.counter_exact_steps} accepted",
               f"- audited: {alg_instance.counter_audited} (hidden: {alg_instance.counter_audit_hidden})"
               + (f" - polyak updates: {alg_instance.counter_polyak_updates}" if stage.polyak_averaging else "")
+              + (f" - installations: {alg_instance.counter_installations}/{alg_instance.counter_versions_received} versions received" if stage.installation is not None else "")
               + (f" - tempered skipped: {alg_instance.proposal.tempered_skipped}"
                  if getattr(alg_instance.proposal, "tempering_on", False) else ""),
               flush=True)

@@ -281,6 +281,7 @@ class LocalSurrogateManager(SnapshotCollector, EvaluatorProvider):
         self.evaluator: Evaluator | None = None
         self._pending_evaluator: Evaluator | None = None
         self._request_pending = False
+        self._version_counter = 0  # 2026-10-23: Evaluator.version of every evaluator trained here
 
         self.no_snapshots_total = 0
         self.no_snapshots_used = 0
@@ -367,6 +368,8 @@ class LocalSurrogateManager(SnapshotCollector, EvaluatorProvider):
             self.no_snapshots_used = self.no_snapshots_total
             self.snapshot_count_since_last_update = 0
             self._pending_evaluator = self.updater.get_evaluator()
+            self._version_counter += 1
+            self._pending_evaluator.version = self._version_counter  # 2026-10-23: as the collector's index
             self._attach_error_model(self._pending_evaluator)
 
     def _attach_error_model(self, evaluator: Evaluator) -> None:

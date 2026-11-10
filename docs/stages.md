@@ -40,6 +40,8 @@ entry, `docs/outputs.md`). Refused together with `burn_in=True` (`ValueError`). 
 | `exact_step_scale` | `float > 0` or `None` | `None` | DAMH only, used only with `exact_step_probability > 0` (study 29, 2026-10-12). `None` = the exact step's random walk adapts as described for `exact_step_probability`. A number `s` = that random walk is **non-adaptive** with covariance `s * (2.38^2/d) * Sigma_hat`, `Sigma_hat` = the chain's pooled posterior-statistics covariance estimate at stage start (identity, with a note, while fewer than 100 states have been seen). Recorded per stage in `run_manifest.json` `proposal_resolution` (`exact_step_scale`, `exact_step_covariance_source`, `exact_step_covariance_trace`). Reset to `None` with a warning on an MH stage. | **yes** (acceptance) |
 | `polyak_averaging` | `bool` | `False` | S3 (2026-10-09): install, instead of each received surrogate evaluator, the running **mean** of the parameters of the evaluators this chain received in this stage (weight `1/k` for the `k`-th, restarted at every stage), so the installed surrogate changes by `O(1/k)` per update — the diminishing-adaptation condition (A5) of the ergodicity argument for on-the-fly retraining (`library_notes/18_*` §6 N1, `20_*` §6). Meaningful on a stage that receives evaluators (DAMH, or MH with a gradient proposal and `surrogate_model_updates=True`); ignored elsewhere. Only evaluators with `averageable_state()` (the `NeuralNetworkUpdater` network) are averaged; others are installed unchanged with one printed note per stage. The averaged evaluator is what is checked for finiteness, what the sub-chain, the exact step's pre-scoring and the Hamiltonian gradients use; the delayed-acceptance correction stays exact because the installed surrogate still changes only between sub-chains. Each chain averages what IT received — chains may receive different subsets of the collector's versions, so their averages can differ. `notes` column `polyak_updates` = `k` at stage end. Auto sets `True` on its DAMH chunks. | **yes** (surrogate used; not the chain's law for a fixed surrogate) |
 | `surrogate_error_model` | `bool` | `False` | S1 (2026-10-09): use the global Gaussian approximation-error model of the surrogate. Every **surrogate** log-likelihood of the stage — the DAMH sub-chain, the delayed-acceptance correction, `log_likelihood_approx` in `raw_data`, the Hamiltonian potential and its gradient (`J~ᵀ Σ_tot⁻¹ (G~ + ε̄ − y)`), the S2 exact step's surrogate scoring — becomes `N(y; G~(u) + ε̄, Σ_noise + Σ_surr)`, where `ε̄`/`Σ_surr` are the mean/covariance of the residuals `G − G~` of the installed evaluator, estimated by the collector (or the local surrogate manager) after every retraining on all the updater's snapshots plus the held-out set (`surrogate_test_data`), Ledoit–Wolf shrinkage up to 50 observations, diagonal above (`surrDAMH.modules.error_model`, `Evaluator.error_model`). The exact likelihood is never changed and the correction uses the same corrected surrogate likelihood, so the chain still targets the exact posterior; what changes is which proposals pass the surrogate stage (a biased or over-confident surrogate pre-rejects less wrongly). Needs a `Normal` likelihood — otherwise one printed note and the flag is ignored; an evaluator without a model (e.g. a user-given fixed evaluator) is used uncorrected with one note per stage. With `polyak_averaging` the error model is averaged together with the network. Auto sets `True` on its DAMH chunks. | **yes** (acceptance; not the chain's target) |
+| `exact_step_proposal` | `"random_walk"\|"prior"` | `"random_walk"` | DAMH only, used only with `exact_step_probability > 0` (2026-10-23, paper §6.5). `"random_walk"` = the exact step's random walk described for `exact_step_probability`/`exact_step_scale` (unchanged). `"prior"` = the exact step proposes `y ~ prior` — an independence sampler drawn in the chain's internal space from the exact-proposal stream (`np.random.default_rng(seed0 + 5)`) — and accepts with `min{1, L(y)/L(x)}`: the prior cancels against the proposal density for every shipped prior. Nothing adapts. Under a log-likelihood bounded above this step makes every kernel of the stage simultaneously uniformly ergodic (paper thm:prior-step), whatever the surrogate and whatever is installed. A draw outside the prior bound (`Problem(prior_bound=...)`) is rejected unevaluated (tag `-3`), the correct kernel for the prior truncated to the box. Refused together with `exact_step_scale` (`ValueError`); any other value → `ValueError`; reset with a warning on an MH stage. Recorded per stage in `run_manifest.json` `proposal_resolution` (`exact_step_proposal: "prior"`; no key for `"random_walk"`). | **yes** (acceptance) |
+| `installation` | `RandomisedInstallation\|AveragedInstallation\|None` | `None` | 2026-10-23, paper §6.5: the rule by which the surrogate versions received during the stage are installed (`surrDAMH.installation`); see "Installation rules (2026-10-23)" below. `None` = every received version is installed at the next poll (as before). Refused together with `polyak_averaging=True` (`ValueError`); reset to `None` with a warning on a stage that receives no versions (`surrogate_model_updates` resolved to `False`); `AveragedInstallation` on an adaptive proposal, or with `exact_step_probability > 0` and the adaptive exact random walk (neither `exact_step_proposal="prior"` nor `exact_step_scale`), → `ValueError`. Recorded in the manifest's `stages` (type name + fields); the install coins use the stream `installation_seed = seed0 + 6`. | **yes** (surrogate/sub-chain parameters used) |
 | `name` | `str\|None` | `None` | Set by the library (`stage_name`), not by the user — the stage's output-directory name. | n/a |
 
 **`burn_in` vs. `is_excluded`.** Both flags only change the report's *default* selection — they
@@ -218,6 +220,60 @@ step 1.5× / 6.7× too large at `subchain_length` 5 / 20 and drove pCN's β to 1
 separate cost knob. Cross-check `subchain_acc_rate`/`outer_acc_given_move` in the run summary and
 the per-period `adaptive_stats/` trace (`docs/outputs.md`).
 
+## Installation rules (2026-10-23)
+
+`Stage.installation` (paper §6.5, `pdf_reports/adaptive_nn_ergodicity_paper/main.tex`
+def:randomised and def:averaged) decides when a DAMH-SMU stage (or an MH stage with a gradient
+proposal and `surrogate_model_updates=True`) installs the surrogate versions it receives, so that
+the installed surrogate satisfies diminishing adaptation:
+
+```python
+from surrDAMH.installation import RandomisedInstallation, AveragedInstallation
+Stage(algorithm="DAMH", max_evaluations=20_000, exact_step_probability=0.05, exact_step_proposal="prior",
+      installation=RandomisedInstallation(n_lambda=50, a_lambda=0.5))
+Stage(algorithm="DAMH", proposal=RandomWalk(scale=0.5), max_evaluations=20_000,
+      installation=AveragedInstallation(j0=5, a_zeta=0.6, weight_box=10.0))
+```
+
+**`RandomisedInstallation(n_lambda, a_lambda)`** (`n_lambda >= 1`, `a_lambda` in `(0, 1]`),
+`lambda_n = min{1, (n/n_lambda)^(-a_lambda)}`. The request protocol is unchanged (one outstanding
+request), but receiving is decoupled from installing: at the top of every outer iteration the chain
+polls once and keeps the newest received version in a buffer (an older pending one is dropped),
+re-requesting at once. At outer iteration `i >= 1` it then draws exactly one uniform `u` from its
+installation stream (`np.random.RandomState(seed0 + 6)`, per chain and stage; nothing is drawn at
+`i = 0`, whose index is the stage-start install), and installs the pending version iff `u < lambda_{i-1}`
+(the paper's coin `U_n` after step `n`). The coin comes before the S2 kernel choice, so exact-step
+iterations get it too; there is no poll inside the sub-chain. An install is checked for finiteness
+(a non-finite version is dropped), then the chain state is re-scored with the new surrogate by the
+next sub-chain, and the adaptive sub-chain parameters are applied: with the rule, the stage proposal
+and the exact step's proposal run in deferred mode (`Proposal.set_deferred_adaptation(True)`, see
+"Deferred adaptation" below) and `apply_pending_adaptation()` is called at every install, so the
+step/scale/beta the sub-chain uses changes only at installs. `n` counts outer iterations from the
+stage start.
+
+**`AveragedInstallation(j0=1, a_zeta=1.0, weight_box=None)`** (`j0 >= 1` integer, `a_zeta` in
+`(0, 1]`, `weight_box` `None` or positive). Every received version is installed at the next poll as
+without a rule, but what is installed is the running average of the received versions with gain
+`zeta_j = min{1, (j/j0)^(-a_zeta)}` for the `j`-th version received in the stage (paper
+def:averaged): `average_j = average_{j-1} + zeta_j (version_j - average_{j-1})`, `average_0` being
+the network in use at the stage start; `zeta_1 = 1`, so the first received version replaces it,
+and for `j <= j0` every version is installed unchanged (the warm-up). With `weight_box = omega` the
+MODEL part of every state (not the S1 error-model entries) is clipped to `[-omega, omega]`
+componentwise before averaging, the stage-start one included. Only evaluators with
+`averageable_state()` (the neural network) are averaged; others are installed unchanged with one
+printed note. The paper's argument needs fixed sub-chain parameters and a sub-chain with a
+proposal density: an adaptive proposal is refused, a Hamiltonian proposal is accepted with a
+`describe()` note. The legacy flag `polyak_averaging=True` differs from `AveragedInstallation(1, 1.0)`
+in one point only: its running mean keeps the stage-start network in (weight `1/k` for the `k`-th
+evaluator, the stage-start one being `k = 1`); the two are refused together. `notes.polyak_updates`
+counts the evaluators averaged (`j + 1`) under this rule too.
+
+Outputs (only when a rule is set; other stages' files are unchanged): `notes` gains
+`installations, versions_received` (last), and `installations/<stage>/rank%04d.csv` has one row
+`iteration, version` per install during the stage (`docs/outputs.md`). The sampler's stage-end line
+gains ` - installations: I/V versions received`. The stage start is unchanged: the chain starts from
+the last version it received (blocking for the first one if none).
+
 ## Invalid combinations that raise
 
 Raised at `build_proposal`/`stage_name` time — i.e. when `Problem.run_sampling()` or
@@ -247,6 +303,11 @@ Raised at `build_proposal`/`stage_name` time — i.e. when `Problem.run_sampling
   and a resolved `adaptive=True` (C3) — `ValueError` at spec construction.
 - `Hamiltonian` with `likelihood_weight` outside `[0, 1]`, or with `likelihood_weight < 1` and a resolved
   `adaptive=True` (2026-10-13) — `ValueError` at spec construction.
+- `Stage.exact_step_proposal` other than `"random_walk"`/`"prior"`, `"prior"` together with
+  `exact_step_scale`, `Stage.installation` together with `polyak_averaging=True`, and
+  `AveragedInstallation` with an adaptive proposal or the adaptive exact random walk (2026-10-23) —
+  `ValueError` at `Stage()` construction (also the invalid `RandomisedInstallation`/`AveragedInstallation`
+  arguments, at spec construction).
 - `Block(..., adaptive=True)` — `Block` has no `adaptive` field/kwarg (`adaptive` is a read-only
   property), so this raises `TypeError: __init__() got an
   unexpected keyword argument 'adaptive'` immediately, not a `ValueError` from `build_proposal`.
@@ -322,3 +383,23 @@ fields, e.g. `proposal=RandomWalk(scale=None, adaptive=True, target_rate=None)`)
 posterior-affecting ones with `*` and appending `[note]` lines for the fields that do not apply
 to the stage as configured. `Problem.run_sampling()` and `run_sampling_local()` print one block
 per stage on rank 0 at start-up — see [`configuration.md`](configuration.md#configurationdescribe--stagedescribe).
+
+## Deferred adaptation (2026-10-23, paper §6.5)
+
+`Proposal.set_deferred_adaptation(True)` makes the parameters an adaptive proposal proposes with
+— its *live* parameters — change only at `apply_pending_adaptation()` (an installation; returns
+`True` iff they changed). Between installations `adapt()` only gathers the acceptance
+probabilities; each `apply_pending_adaptation()` advances the feedback recursion ONCE on their
+mean and installs the result, so the recursion's index counts installations and the adaptation is
+closed-loop at the installation time scale (gain `j^(-0.7)` with `j` = installations for the
+Robbins-Monro scale / logit; the dual averaging's own `m`, which then counts installations). A
+per-sub-step recursion fed by acceptances of frozen parameters is open-loop and ran off to the clip
+in a smoke run. The random walk's covariance shape (state-based) is still installed at its
+`adapt()` period boundaries, with the trace-continuous `log σ` shift. Live parameters:
+`GaussRandomWalk_adaptive._live_log_sigma` / `._live_L` (diagnostic `live_covariance`;
+`sd_or_cov` stays the recursion's), `PCN_adaptive.beta` (recursion: `logit_beta`), the
+Hamiltonian `step_size` / `num_steps` (recursion: `m`, `H̄`, `log ε̄`). Without a gathered
+acceptance an apply changes nothing. `set_deferred_adaptation(False)` applies once and clears
+the mode; `set_pooled_state` drops the gathered acceptances and sets live = pooled recursion.
+`BlockProposal`/`Mixture` forwards to every component; fixed proposals ignore it. Default off:
+behaviour unchanged.

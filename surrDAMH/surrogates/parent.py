@@ -66,6 +66,12 @@ class Evaluator:
 
     #: S1: residual statistics attached after (re)training; ``None`` when unavailable
     error_model = None
+    #: 2026-10-23 (paper experiments, tooling T1): the publisher's version number of this
+    #: evaluator -- the collector's ``surrogate_update_index`` (1 = the first published one) or the
+    #: local surrogate manager's count; ``None`` for an evaluator nobody published (e.g. a fixed
+    #: user-given one). Shipped with the pickled evaluator; written as ``collector_version`` to the
+    #: ``installations/`` and ``versions/`` CSVs of a stage with ``Stage.installation`` set.
+    version = None
 
     def __init__(self, no_parameters: int, no_observations: int) -> None:
         self.no_parameters = int(no_parameters)

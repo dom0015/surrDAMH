@@ -22,6 +22,7 @@ toy_examples/report.pdf
 
 # experiment outputs and binary artefacts (never commit)
 out_*/
+tmp_*/
 *.npz
 *.pt
 *.pth
@@ -31,3 +32,6 @@ out_*/
 
 # archived obsolete experiments (moved 2026-09-13)
 TSX_experiments_archived/
+
+# Lean build artefacts
+lean_proofs/**/.lake/
